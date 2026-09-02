@@ -222,3 +222,23 @@ func TestTerminalLedgerResultMustMatchReducer(t *testing.T) {
 		t.Fatalf("error = %v, want ErrLedgerInvalid", err)
 	}
 }
+
+func TestLedgerEventSHA256BindsEnvelopeAndPayload(t *testing.T) {
+	t.Parallel()
+	evidence := Evidence{ProposalState: ProposalComplete, Candidates: []Candidate{}, Audio: []AudioAssessment{}, Video: VideoNoSignal}
+	event := LedgerEvent{
+		ID: "event-terminal", RunID: "run-1", Ordinal: 2, Kind: LedgerTerminal,
+		Terminal:  &TerminalResult{Evidence: evidence, Result: Reduce(evidence), EventIDs: []string{"event-plan", "event-proposal"}},
+		CreatedAt: time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC),
+	}
+	first, err := LedgerEventSHA256(event)
+	if err != nil || !validSHA256(first) {
+		t.Fatalf("digest=%q err=%v", first, err)
+	}
+	changed := event
+	changed.ID = "event-terminal-other"
+	second, err := LedgerEventSHA256(changed)
+	if err != nil || first == second {
+		t.Fatalf("identity was not bound: first=%s second=%s err=%v", first, second, err)
+	}
+}

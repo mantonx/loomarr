@@ -174,8 +174,9 @@ func (s *sqlStore) ReserveSpokenSafetyInference(
 			EvaluationID: evaluation.ID, RequestSHA256: command.RequestSHA256,
 			RequestedProvider: evaluation.RequestedProvider, RequestedModel: evaluation.RequestedModel,
 			UpstreamProvider: evaluation.UpstreamProvider, CapabilitySHA256: evaluation.Versions.CapabilitySnapshot,
-			PromptSHA256: evaluation.Versions.Prompt, CandidateID: command.CandidateID,
-			Modalities: evaluation.Modalities, RequestedNanoUSD: requestedNanoUSD,
+			PromptSHA256: evaluation.Versions.Prompt, SchemaSHA256: evaluation.Versions.Schema,
+			CandidateID: command.CandidateID,
+			Modalities:  evaluation.Modalities, RequestedNanoUSD: requestedNanoUSD,
 			ReservedNanoUSD: evaluation.ReservedNanoUSD, State: state,
 		},
 	}
@@ -200,7 +201,8 @@ func sameSpokenSafetyReservationCommand(
 		reservation.EvaluationID == evaluation.ID && reservation.RequestSHA256 == command.RequestSHA256 &&
 		reservation.RequestedProvider == evaluation.RequestedProvider && reservation.RequestedModel == evaluation.RequestedModel &&
 		reservation.UpstreamProvider == evaluation.UpstreamProvider && reservation.CapabilitySHA256 == evaluation.Versions.CapabilitySnapshot &&
-		reservation.PromptSHA256 == evaluation.Versions.Prompt && reservation.CandidateID == command.CandidateID &&
+		reservation.PromptSHA256 == evaluation.Versions.Prompt && reservation.SchemaSHA256 == evaluation.Versions.Schema &&
+		reservation.CandidateID == command.CandidateID &&
 		slices.Equal(reservation.Modalities, evaluation.Modalities) && reservation.RequestedNanoUSD == requestedNanoUSD
 }
 

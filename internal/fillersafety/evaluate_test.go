@@ -51,7 +51,10 @@ func TestEvaluatePresenceOutranksFailureAndSkipsVideo(t *testing.T) {
 	secondID := proposalCandidateID(plan.AuthoritySHA256, intervals[1])
 	extractor := wavRecorder(map[string]bool{firstID: true})
 	audio := &recordfixture.Recorder[Candidate, audioAttempt]{Respond: func(candidate Candidate) (audioAttempt, error) {
-		return audioAttempt{Assessment: AudioAssessment{CandidateID: candidate.ID, State: map[string]AudioState{secondID: AudioDetected}[candidate.ID]}, MatchedRuleIDs: []string{}}, nil
+		return audioAttempt{
+			Assessment:     AudioAssessment{CandidateID: candidate.ID, State: map[string]AudioState{secondID: AudioDetected}[candidate.ID]},
+			MatchedRuleIDs: []string{"rule-000000000000000000000001"},
+		}, nil
 	}}
 	video := videoRecorder(VideoNoSignal)
 	got, err := evaluatorFromRecorders(identity, proposalRecorder(identity, intervals), extractor, audio, video).evaluate(context.Background(), plan, unrecordedCascadeJournal{})
@@ -60,6 +63,9 @@ func TestEvaluatePresenceOutranksFailureAndSkipsVideo(t *testing.T) {
 	}
 	if got.Result.Outcome != OutcomeQuarantine || !slices.Equal(got.Result.Reasons, []Reason{ReasonAudioFailure, ReasonAudioProhibitedSignal}) || video.Calls() != 0 {
 		t.Fatalf("evaluation=%+v video=%d", got, video.Calls())
+	}
+	if !slices.Equal(got.Evidence.Audio[1].MatchedRuleIDs, []string{"rule-000000000000000000000001"}) {
+		t.Fatalf("matched rules=%v", got.Evidence.Audio[1].MatchedRuleIDs)
 	}
 }
 
@@ -81,7 +87,10 @@ func TestEvaluateAdapterErrorsCannotSmugglePresence(t *testing.T) {
 	plan, identity := proposalTestPlan(t), validProposerIdentityFixture()
 	interval := proposedInterval{StartMS: 100, EndMS: 800}
 	audio := &recordfixture.Recorder[Candidate, audioAttempt]{Respond: func(candidate Candidate) (audioAttempt, error) {
-		return audioAttempt{Assessment: AudioAssessment{CandidateID: candidate.ID, State: AudioDetected}, MatchedRuleIDs: []string{}}, errors.New("private provider detail")
+		return audioAttempt{
+			Assessment:     AudioAssessment{CandidateID: candidate.ID, State: AudioDetected},
+			MatchedRuleIDs: []string{"rule-000000000000000000000001"},
+		}, errors.New("private provider detail")
 	}}
 	video := videoRecorder(VideoNoSignal)
 	got, err := evaluatorFromRecorders(identity, proposalRecorder(identity, []proposedInterval{interval}), wavRecorder(nil), audio, video).evaluate(context.Background(), plan, unrecordedCascadeJournal{})
@@ -90,6 +99,9 @@ func TestEvaluateAdapterErrorsCannotSmugglePresence(t *testing.T) {
 	}
 	if got.Result.Outcome != OutcomeHold || !slices.Equal(got.Result.Reasons, []Reason{ReasonAudioFailure}) || video.Calls() != 0 {
 		t.Fatalf("evaluation=%+v video=%d", got, video.Calls())
+	}
+	if len(got.Evidence.Audio[0].MatchedRuleIDs) != 0 {
+		t.Fatalf("provider error retained matched rules: %v", got.Evidence.Audio[0].MatchedRuleIDs)
 	}
 }
 
@@ -146,5 +158,26 @@ func evaluatorFromRecorders(identity proposerIdentity, proposer *recordfixture.R
 				return video.Call(plan)
 			},
 		},
+	}
+}
+
+func TestNormalizedAudioAttemptRejectsUnattributedOrMalformedDetection(t *testing.T) {
+	t.Parallel()
+	candidate := Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}
+	for name, ruleIDs := range map[string][]string{
+		"missing":   {},
+		"unknown":   {"rule-not-opaque"},
+		"duplicate": {"rule-000000000000000000000001", "rule-000000000000000000000001"},
+		"unsorted":  {"rule-000000000000000000000002", "rule-000000000000000000000001"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			attempt := normalizedAudioAttempt(candidate, audioAttempt{
+				Assessment:     AudioAssessment{CandidateID: candidate.ID, State: AudioDetected},
+				MatchedRuleIDs: ruleIDs,
+			}, nil)
+			if attempt.Assessment.State != AudioInvalidResponse || len(attempt.Assessment.MatchedRuleIDs) != 0 {
+				t.Fatalf("attempt=%+v", attempt)
+			}
+		})
 	}
 }

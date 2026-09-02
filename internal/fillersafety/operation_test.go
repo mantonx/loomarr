@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ func TestEvaluationOperationRecordsSerialCascadeBeforeReturningEvidence(t *testi
 		t.Fatal(err)
 	}
 	if report.Result.Outcome != OutcomeCandidateRejected || report.Run.ID != fixture.request.RunID ||
+		report.TerminalEventID == "" || !validSHA256(report.TerminalSHA256) ||
 		fixture.proposer.Calls() != 1 || fixture.audio.Calls() != 1 || fixture.video.Calls() != 1 {
 		t.Fatalf("report=%+v calls=%d/%d/%d", report, fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
 	}
@@ -38,10 +40,13 @@ func TestEvaluationOperationRecordsSerialCascadeBeforeReturningEvidence(t *testi
 	if !slices.Equal(kinds, wantKinds) {
 		t.Fatalf("event kinds=%v", kinds)
 	}
-	terminal := events[len(events)-1].Terminal
+	terminalEvent := events[len(events)-1]
+	terminal := terminalEvent.Terminal
+	digest, digestErr := LedgerEventSHA256(terminalEvent)
 	if terminal == nil || !sameResult(terminal.Result, report.Result) ||
-		len(terminal.EventIDs) != len(events)-1 {
-		t.Fatalf("terminal=%+v", terminal)
+		len(terminal.EventIDs) != len(events)-1 || digestErr != nil ||
+		report.TerminalEventID != terminalEvent.ID || report.TerminalSHA256 != digest {
+		t.Fatalf("terminal=%+v digest=%s err=%v", terminalEvent, digest, digestErr)
 	}
 	reservations := fixture.repository.Reservations()
 	if len(reservations) != 2 ||
@@ -134,8 +139,5 @@ func TestEvaluationOperationDetectsHeaderConflictBeforeSourceWork(t *testing.T) 
 }
 
 func reflectEvaluationReport(first, second EvaluationReport) bool {
-	return first.Run == second.Run && sameResult(first.Result, second.Result) &&
-		first.Evidence.ProposalState == second.Evidence.ProposalState &&
-		slices.Equal(first.Evidence.Candidates, second.Evidence.Candidates) &&
-		slices.Equal(first.Evidence.Audio, second.Evidence.Audio) && first.Evidence.Video == second.Evidence.Video
+	return reflect.DeepEqual(first, second)
 }

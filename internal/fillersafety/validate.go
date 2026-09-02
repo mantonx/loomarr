@@ -1,6 +1,9 @@
 package fillersafety
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 func validateEvidence(evidence Evidence) ([]Reason, bool) {
 	if evidence.ProposalState != ProposalComplete && evidence.ProposalState != ProposalFailed {
@@ -58,9 +61,26 @@ func validAudio(candidates []Candidate, audio []AudioAssessment) bool {
 		return false
 	}
 	for index, assessment := range audio {
-		if assessment.CandidateID != candidates[index].ID || !validAudioState(assessment.State) {
+		if assessment.CandidateID != candidates[index].ID || !validAudioState(assessment.State) ||
+			!validStoredMatchedRuleIDs(assessment.State, assessment.MatchedRuleIDs) {
 			return false
 		}
+	}
+	return true
+}
+
+// Historical terminal events predate rule attribution, so nil remains valid
+// durable evidence. Certification treats nil attribution as a miss, never a hit.
+func validStoredMatchedRuleIDs(state AudioState, ruleIDs []string) bool {
+	if ruleIDs == nil {
+		return true
+	}
+	if !slices.IsSorted(ruleIDs) || len(slices.Compact(slices.Clone(ruleIDs))) != len(ruleIDs) ||
+		slices.ContainsFunc(ruleIDs, func(id string) bool { return !ValidPolicyRuleID(id) }) {
+		return false
+	}
+	if state == AudioAbsent || state == AudioFailed || state == AudioInvalidResponse {
+		return len(ruleIDs) == 0
 	}
 	return true
 }

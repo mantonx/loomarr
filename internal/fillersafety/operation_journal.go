@@ -81,7 +81,8 @@ func (j *ledgerCascadeJournal) audio(
 		return attempt, nil
 	}
 	if isBudgetHeld(reservation) {
-		attempt.Assessment = AudioAssessment{CandidateID: candidate.ID, State: AudioFailed}
+		attempt.Assessment = AudioAssessment{CandidateID: candidate.ID, State: AudioFailed, MatchedRuleIDs: []string{}}
+		attempt.MatchedRuleIDs = []string{}
 		return attempt, nil
 	}
 	if !attempt.Transport.ChargeKnown {
@@ -92,7 +93,8 @@ func (j *ledgerCascadeJournal) audio(
 		return audioAttempt{}, err
 	}
 	if settled.Settle.Failure == FailureBudget {
-		attempt.Assessment = AudioAssessment{CandidateID: candidate.ID, State: AudioFailed}
+		attempt.Assessment = AudioAssessment{CandidateID: candidate.ID, State: AudioFailed, MatchedRuleIDs: []string{}}
+		attempt.MatchedRuleIDs = []string{}
 	}
 	return attempt, nil
 }
@@ -244,7 +246,8 @@ func validateReservationReceipt(command HostedCallReservation, event LedgerEvent
 	if reservation.EvaluationID != command.EvaluationID || reservation.RequestSHA256 != command.RequestSHA256 ||
 		reservation.RequestedProvider != command.RequestedProvider || reservation.RequestedModel != command.RequestedModel ||
 		reservation.UpstreamProvider != command.UpstreamProvider || reservation.CapabilitySHA256 != command.Versions.CapabilitySHA256 ||
-		reservation.PromptSHA256 != command.Versions.PromptSHA256 || reservation.CandidateID != command.CandidateID ||
+		reservation.PromptSHA256 != command.Versions.PromptSHA256 || reservation.SchemaSHA256 != command.Versions.SchemaSHA256 ||
+		reservation.CandidateID != command.CandidateID ||
 		!slices.Equal(reservation.Modalities, command.Modalities) || reservation.RequestedNanoUSD != command.RequestedNanoUSD {
 		return ErrEvaluationInvalid
 	}

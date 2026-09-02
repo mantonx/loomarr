@@ -1,6 +1,9 @@
 package fillersafety
 
-import "context"
+import (
+	"context"
+	"slices"
+)
 
 type audioAdjudicator interface {
 	identity(int64) hostedCallIdentity
@@ -79,7 +82,7 @@ func (e *evaluator) evaluate(ctx context.Context, plan *CompleteMediaPlan, journ
 
 	evidence.Audio = make([]AudioAssessment, 0, len(evidence.Candidates))
 	for _, candidate := range evidence.Candidates {
-		assessment := AudioAssessment{CandidateID: candidate.ID, State: AudioFailed}
+		assessment := AudioAssessment{CandidateID: candidate.ID, State: AudioFailed, MatchedRuleIDs: []string{}}
 		wav, err := e.audioExtractor(ctx, plan, candidate)
 		if err != nil {
 			evidence.Audio = append(evidence.Audio, assessment)
@@ -144,12 +147,37 @@ func (unrecordedCascadeJournal) video(
 
 func normalizedAudioAttempt(candidate Candidate, attempt audioAttempt, callErr error) audioAttempt {
 	if callErr != nil && attempt.Assessment.State != AudioInvalidResponse {
-		attempt.Assessment = AudioAssessment{CandidateID: candidate.ID, State: AudioFailed}
+		attempt.Assessment = AudioAssessment{CandidateID: candidate.ID, State: AudioFailed, MatchedRuleIDs: []string{}}
+		attempt.MatchedRuleIDs = []string{}
 	}
 	if attempt.Assessment.CandidateID != candidate.ID || !validAudioState(attempt.Assessment.State) {
-		attempt.Assessment = AudioAssessment{CandidateID: candidate.ID, State: AudioInvalidResponse}
+		attempt.Assessment = AudioAssessment{CandidateID: candidate.ID, State: AudioInvalidResponse, MatchedRuleIDs: []string{}}
+		attempt.MatchedRuleIDs = []string{}
+		return attempt
 	}
+	if !validLiveMatchedRuleIDs(attempt.Assessment.State, attempt.MatchedRuleIDs) {
+		attempt.Assessment = AudioAssessment{CandidateID: candidate.ID, State: AudioInvalidResponse, MatchedRuleIDs: []string{}}
+		attempt.MatchedRuleIDs = []string{}
+		return attempt
+	}
+	attempt.MatchedRuleIDs = slices.Clone(attempt.MatchedRuleIDs)
+	attempt.Assessment.MatchedRuleIDs = slices.Clone(attempt.MatchedRuleIDs)
 	return attempt
+}
+
+func validLiveMatchedRuleIDs(state AudioState, ruleIDs []string) bool {
+	if ruleIDs == nil || !slices.IsSorted(ruleIDs) || len(slices.Compact(slices.Clone(ruleIDs))) != len(ruleIDs) ||
+		slices.ContainsFunc(ruleIDs, func(id string) bool { return !ValidPolicyRuleID(id) }) {
+		return false
+	}
+	switch state {
+	case AudioDetected:
+		return len(ruleIDs) > 0
+	case AudioAbsent, AudioFailed, AudioInvalidResponse:
+		return len(ruleIDs) == 0
+	default:
+		return true
+	}
 }
 
 func normalizedVideoAttempt(attempt videoAttempt, callErr error) videoAttempt {

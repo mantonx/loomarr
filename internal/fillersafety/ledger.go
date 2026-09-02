@@ -79,6 +79,7 @@ type InferenceReserved struct {
 	UpstreamProvider  string           `json:"upstreamProvider"`
 	CapabilitySHA256  string           `json:"capabilitySha256"`
 	PromptSHA256      string           `json:"promptSha256"`
+	SchemaSHA256      string           `json:"schemaSha256,omitempty"`
 	CandidateID       string           `json:"candidateId,omitempty"`
 	Modalities        []string         `json:"modalities"`
 	RequestedNanoUSD  int64            `json:"requestedNanoUsd"`

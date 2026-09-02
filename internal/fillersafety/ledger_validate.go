@@ -133,7 +133,8 @@ func validReservation(reservation InferenceReserved) bool {
 	if !boundedLedgerID(reservation.EvaluationID) || !validSHA256(reservation.RequestSHA256) ||
 		!boundedPublicIdentity(reservation.RequestedProvider) || !boundedPublicIdentity(reservation.RequestedModel) ||
 		!boundedPublicIdentity(reservation.UpstreamProvider) || !validSHA256(reservation.CapabilitySHA256) ||
-		!validSHA256(reservation.PromptSHA256) || reservation.RequestedNanoUSD < 0 || reservation.ReservedNanoUSD < 0 ||
+		!validSHA256(reservation.PromptSHA256) || !optionalSHA256(reservation.SchemaSHA256) ||
+		reservation.RequestedNanoUSD < 0 || reservation.ReservedNanoUSD < 0 ||
 		(reservation.CandidateID != "" && !boundedLedgerID(reservation.CandidateID)) || len(reservation.Modalities) == 0 ||
 		(reservation.State != ReservationAccepted && reservation.State != ReservationHeldBudget) {
 		return false

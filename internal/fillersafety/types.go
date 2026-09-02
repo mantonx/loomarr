@@ -70,8 +70,9 @@ type Candidate struct {
 
 // AudioAssessment binds one adjudication result to its proposed candidate.
 type AudioAssessment struct {
-	CandidateID string
-	State       AudioState
+	CandidateID    string
+	State          AudioState
+	MatchedRuleIDs []string
 }
 
 // Evidence is the complete ordered input to deterministic cascade reduction.

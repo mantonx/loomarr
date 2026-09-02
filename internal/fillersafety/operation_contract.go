@@ -32,9 +32,11 @@ type EvaluationRequest struct {
 
 // EvaluationReport is the canonical path-free result of one terminal run.
 type EvaluationReport struct {
-	Run      LedgerRun
-	Evidence Evidence
-	Result   Result
+	Run             LedgerRun
+	Evidence        Evidence
+	Result          Result
+	TerminalEventID string
+	TerminalSHA256  string
 }
 
 // HostedCallBudget carries the existing V62 spend ceilings into the domain-
