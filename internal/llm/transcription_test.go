@@ -59,3 +59,18 @@ func TestOpenAI_TranscribeAudioRejectsUntimedText(t *testing.T) {
 		t.Fatal("untimed transcription accepted")
 	}
 }
+
+func TestOpenAI_TranscribeAudioReadsOpenRouterGenerationHeader(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Generation-Id", "gen-header")
+		_, _ = w.Write([]byte(`{"text":"words","segments":[{"start":0,"end":1,"text":"words"}],"usage":{"cost":0.00001}}`))
+	}))
+	defer srv.Close()
+	result, err := NewOpenAIForProvider("openrouter", srv.URL, "stt", "").TranscribeAudio(context.Background(), TranscriptionRequest{Audio: []byte("wav")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Attribution.GenerationID != "gen-header" || result.Attribution.Charge == nil {
+		t.Fatalf("attribution = %+v", result.Attribution)
+	}
+}

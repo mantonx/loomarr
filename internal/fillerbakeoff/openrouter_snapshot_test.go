@@ -56,6 +56,35 @@ func TestFetchOpenRouterSnapshotLocksEndpointIdentityPriceCapabilityAndZDR(t *te
 	}
 }
 
+func TestFetchOpenRouterSnapshotFiltersTheTranscriptionCatalog(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/models":
+			if got := request.URL.Query().Get("output_modalities"); got != "transcription" {
+				t.Fatalf("output_modalities = %q", got)
+			}
+			_, _ = io.WriteString(writer, `{"data":[{"id":"openai/whisper-large-v3","canonical_slug":"openai/whisper-large-v3","name":"Whisper","created":1}]}`)
+		case "/endpoints/zdr":
+			_, _ = io.WriteString(writer, `{"data":[`+strings.Replace(snapshotEndpointFixture("openai/whisper-large-v3", "Pinned Provider", "pinned-provider"), `"context_length":8192`, `"context_length":0`, 1)+`]}`)
+		case "/models/openai/whisper-large-v3/endpoints":
+			_, _ = io.WriteString(writer, `{"data":{"id":"openai/whisper-large-v3","name":"Whisper","created":1,"architecture":{"input_modalities":["audio"],"output_modalities":["transcription"]},"endpoints":[`+strings.Replace(snapshotEndpointFixture("openai/whisper-large-v3", "Pinned Provider", "pinned-provider"), `"context_length":8192`, `"context_length":0`, 1)+`]}}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	snapshot, err := FetchOpenRouterSnapshot(context.Background(), OpenRouterSnapshotConfig{
+		BaseURL: server.URL, APIKey: "secret", Models: []string{"openai/whisper-large-v3"}, OutputModality: "transcription", RetrievedAt: time.Now().UTC(), Client: server.Client(), AllowInsecureTestURL: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(snapshot.Models[0].InputModalities, []string{"audio"}) || !slices.Equal(snapshot.Models[0].OutputModalities, []string{"transcription"}) {
+		t.Fatalf("transcription modalities = %+v", snapshot.Models[0])
+	}
+}
+
 func TestValidateOpenRouterRunSnapshotBindsDigestFreshnessAndRoute(t *testing.T) {
 	t.Parallel()
 	snapshot := validOpenRouterSnapshot()
