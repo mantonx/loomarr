@@ -227,7 +227,7 @@ audio models. It withheld control labels until after each response; required a
 strict JSON schema; ran serially with fallback and data collection disabled;
 verified the selected ZDR route; stored reports mode `0600`; and mapped every
 unclear or operational failure to a hold. The branch and runner are preserved
-at commit `ceeb9f1c` on `prototype/spoken-safety-cascade`; they are evidence,
+at commit `53040761` on `prototype/spoken-safety-cascade`; they are evidence,
 not mergeable production code.
 
 The deterministic 17-case pilot contained all eight clean controls and one
@@ -261,17 +261,38 @@ four Voxtral rejections because it marked their video coverage insufficient.
 No prior model assessment is a label, so even the four agreements remain
 uncertified candidate rejections.
 
+Gemini 3.8 Flash then screened the complete source video and audio for every
+one of the 38 Voxtral-negative candidates using the same closed suitability
+flags as the earlier direct-video lane. All 38 reported complete visual and
+spoken-language coverage, no prohibited flag, and no operational failure. The
+two-model cascade therefore leaves 50 candidates held and rejects 38, but it
+still does not establish that those 38 are clean or admission-safe.
+
+An all-negative result is meaningless if the corroborator is insensitive, so
+the exact Gemini 3.8 route and prompt were replayed on the three prohibited-
+signal anchors from the prior 48-case result. It recovered both spoken anchors
+with valid audio intervals. It also returned eleven explicit-nudity flags for
+the visual anchor, but one interval was inverted; the stricter prototype
+correctly converted the whole response to an operational hold. This supports
+the model's use as a high-recall hold/rejection lane and exposes a necessary
+production distinction: a valid presence signal may quarantine immediately,
+while malformed location evidence cannot be projected as a precise interval.
+
 The private Voxtral control report SHA-256 is
 `23e882eea55b76e7f2d33aeb9065367231aa6b6ba3642f01bb1f63258e9d9852`;
 the real-candidate report SHA-256 is
 `935eb06c1f068bcb6b9c94474751cd11aa498361d6834946c36e63c4933ecf1a`.
+The complete-video corroboration report SHA-256 is
+`2b26fb046d9875dee9cf9773ad6a4ba3bfb685579879a994d8b3985b46e95e3b`;
+the final positive-anchor challenge report SHA-256 is
+`1d34998b32f50dd8e4a8f310541e3c71505d74925271bec264129f25d68b43dc`.
 The independent audio-route snapshot SHA-256 is
 `e8cacc30c939983f8f88d897c9d44cecbb46abc9d1eb82e811bf843027ac0c70`.
 It records `mistralai/voxtral-small-24b-2507` on Mistral's ZDR route with native
 audio and structured outputs. OpenAI's audio model was excluded because its
-available route was not ZDR. The new exact paid inference is $0.077279860;
-program-wide exact charges plus conservative reservations are now $3.84878886
-of the existing $20 ceiling.
+available route was not ZDR. Native-audio and complete-video prototype calls
+charged $0.266244985 in total; program-wide exact charges plus conservative
+reservations are now $4.037753985 of the existing $20 ceiling.
 
 ### Timing evidence is available
 
@@ -319,7 +340,7 @@ boundaries/endpoints, and frozen before certification.
 
 | Rank | Candidate | Evidence shape and trade-off | Current verdict |
 | --- | --- | --- | --- |
-| 1 | **Bounded acoustic proposal + two-model adjudication** | sherpa supplies short source-relative intervals; Voxtral directly hears each window; a distinct model examines only Voxtral-negative candidates. Every positive, disagreement, coverage failure, or operational failure remains held. | **Retain and finish the diagnostic.** The first two stages reduced the unlabelled real queue by 43.7% while retaining the known positive. Corroborate all 38 negative candidates, then freeze an independently sourced real positive/clean certification set. |
+| 1 | **Bounded acoustic proposal + two-model adjudication** | sherpa supplies short source-relative intervals; Voxtral directly hears each window; Gemini screens the complete video and audio only for Voxtral-negative candidates. Every positive, disagreement, coverage failure, or operational failure remains held. | **Diagnostic retained.** The real replay leaves 50 held candidates and 38 two-model candidate rejections. Stop model bake-offs; freeze the module boundary and an independently sourced real positive/clean certification set. |
 | 2 | **sherpa-onnx Zipformer KWS** | Distinct GigaSpeech-trained acoustic model, arbitrary private BPE keywords, token timing, tiny footprint, and release-Linux 43/59 with 0/8 generated clean controls. The same frozen setting proposes 88/298 real cases; a stricter setting still proposes 78. | **Reject as a standalone verdict lane.** Retain only as an interval proposer for automated second-stage verification. Weight-license provenance still blocks shipping. |
 | 3 | **Vosk small English with locked grammar** | Kaldi/Vosk supplies word start/end/confidence and an explicit unknown path, but the frozen comparator still proposes 141/298 real cases after 35/59 generated recall. | **Reject as a standalone lane.** Do not tune another grammar. [Vosk API](https://github.com/alphacep/vosk-api/blob/master/src/vosk_api.h#L132-L209), [model catalogue](https://alphacephei.com/vosk/models). |
 | 4 | **PocketSphinx keyphrase search** | Direct HMM/phonetic search with frame segmentation and permissive source/model terms, but older US/Canadian-English acoustics, pronunciation-dictionary work, and no maintained upstream Go boundary. | **Do not run.** Two newer distinct decoders already establish the real-corpus failure mode. [KWS options](https://github.com/cmusphinx/pocketsphinx/blob/main/src/config_macro.h#L146-L158), [segment APIs](https://github.com/cmusphinx/pocketsphinx/blob/main/include/pocketsphinx.h#L964-L1008). |
@@ -336,11 +357,14 @@ corpus shows that it cannot decide safely by itself. An existing audio-capable
 LLM can still be useful as a second opinion over only the proposed intervals;
 that is inference and calibration, not fine-tuning.
 
-The standalone decoder search is closed. Continue the measured cascade: sherpa
-proposes bounded audio intervals; snapshot-pinned ZDR Voxtral judges only those
-intervals; and a distinct direct-video model checks all 38 Voxtral-negative
-candidates. Only agreement can reject a candidate, while a positive,
-disagreement, insufficient coverage, or operational failure remains held.
+The standalone decoder search and real-candidate diagnostic are closed. The
+measured cascade is sherpa bounded-interval proposal, snapshot-pinned ZDR
+Voxtral audio adjudication, and snapshot-pinned ZDR Gemini complete-video
+screening only for Voxtral-negative candidates. Only agreement rejects a
+candidate, while a positive, disagreement, insufficient coverage, or
+operational failure remains held. The replay produced 38 agreements and no
+negative-path disagreement or failure; positive-anchor replay proved the video
+lane can emit both spoken and visual holds.
 Current OpenRouter catalog data lists Gemini 3.8 Flash with native audio and
 video input, while Qwen 3.8 exposes video but not direct audio; Claude currently
 offers neither audio nor video input there.
@@ -350,7 +374,7 @@ Authenticated snapshot SHA-256
 confirms a live ZDR Google Vertex route for pinned
 `google/gemini-3.8-flash-20260902` with strict structured output. It also
 confirms Qwen 3.8 27B as video-only and the newer Claude Fable 5.1 as
-text/image/file-only. Paid native-audio inference has now established the
-second stage, not production accuracy. Lock the cascade before the independent
-real positive and clean challenge. Do not enter another model/threshold
+text/image/file-only. These paid diagnostics establish a viable module shape,
+not production accuracy. Next lock the design contract and independently
+sourced real positive/clean challenge. Do not enter another model/threshold
 bake-off, and do not ship sherpa until its model-weight rights are explicit.
