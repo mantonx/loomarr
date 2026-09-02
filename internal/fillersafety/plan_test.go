@@ -1,8 +1,12 @@
 package fillersafety
 
 import (
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,16 +20,25 @@ func TestPlanCompleteMediaBindsPathIndependentAuthorityToFullSpans(t *testing.T)
 	authority := validSourceAuthority()
 	firstPath := filepath.Join(t.TempDir(), "first.mp4")
 	secondPath := filepath.Join(t.TempDir(), "second.mp4")
-	first, err := PlanCompleteMedia(SourceRequest{Authority: authority, Path: firstPath})
+	contents := []byte("complete source")
+	authority.SourceSHA256, authority.SourceBytes = sourceIdentity(contents)
+	for _, path := range []string{firstPath, secondPath} {
+		if err := os.WriteFile(path, contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := PlanCompleteMedia(context.Background(), SourceRequest{Authority: authority, Path: firstPath})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := PlanCompleteMedia(SourceRequest{Authority: authority, Path: secondPath})
+	t.Cleanup(func() { _ = first.Close() })
+	second, err := PlanCompleteMedia(context.Background(), SourceRequest{Authority: authority, Path: secondPath})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = second.Close() })
 	wantSpan := Span{StartMS: 0, EndMS: authority.DurationMS}
-	if first.AuthoritySHA256 == "" || first.AuthoritySHA256 != second.AuthoritySHA256 || first.SourcePath != firstPath || first.SourceSHA256 != authority.SourceSHA256 || first.SourceBytes != authority.SourceBytes || first.Audio != wantSpan || first.Video != wantSpan {
+	if first.AuthoritySHA256 == "" || first.AuthoritySHA256 != second.AuthoritySHA256 || first.SourcePath == firstPath || second.SourcePath == secondPath || first.SourceSHA256 != authority.SourceSHA256 || first.SourceBytes != authority.SourceBytes || first.Audio != wantSpan || first.Video != wantSpan {
 		t.Fatalf("first=%+v second=%+v", first, second)
 	}
 	public, err := json.Marshal(first)
@@ -71,13 +84,90 @@ func TestPlanCompleteMediaRejectsInvalidAuthorityWithoutLeakingValues(t *testing
 			t.Parallel()
 			authority, path := base, validPath
 			test.mutate(&authority, &path)
-			_, err := PlanCompleteMedia(SourceRequest{Authority: authority, Path: path})
+			_, err := PlanCompleteMedia(context.Background(), SourceRequest{Authority: authority, Path: path})
 			var authorityErr *AuthorityError
 			if !errors.As(err, &authorityErr) || authorityErr.Code != test.code || strings.Contains(err.Error(), secret) {
 				t.Fatalf("err=%v", err)
 			}
 		})
 	}
+}
+
+func TestPlanCompleteMediaRejectsSourceIdentityDriftWithoutLeakingValues(t *testing.T) {
+	t.Parallel()
+	contents := []byte("actual source bytes")
+	path := filepath.Join(t.TempDir(), "source.mp4")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authority := validSourceAuthority()
+	authority.SourceSHA256, authority.SourceBytes = sourceIdentity(contents)
+	tests := []struct {
+		name   string
+		mutate func(*SourceAuthority)
+	}{
+		{name: "digest", mutate: func(item *SourceAuthority) { item.SourceSHA256 = strings.Repeat("f", 64) }},
+		{name: "bytes", mutate: func(item *SourceAuthority) { item.SourceBytes++ }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			changed := authority
+			test.mutate(&changed)
+			_, err := PlanCompleteMedia(context.Background(), SourceRequest{Authority: changed, Path: path})
+			var authorityErr *AuthorityError
+			if !errors.As(err, &authorityErr) || authorityErr.Code != AuthoritySourceInvalid {
+				t.Fatalf("expected closed source error, got %v", err)
+			}
+			for _, secret := range []string{path, changed.SourceSHA256} {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatalf("error leaked source authority: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestPlanCompleteMediaRejectsSymlinkAndRemovesSnapshotOnClose(t *testing.T) {
+	t.Parallel()
+	contents := []byte("actual source bytes")
+	path := filepath.Join(t.TempDir(), "source.mp4")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authority := validSourceAuthority()
+	authority.SourceSHA256, authority.SourceBytes = sourceIdentity(contents)
+
+	symlink := filepath.Join(t.TempDir(), "source-link.mp4")
+	if err := os.Symlink(path, symlink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PlanCompleteMedia(context.Background(), SourceRequest{Authority: authority, Path: symlink}); err == nil {
+		t.Fatal("expected symlink source to fail closed")
+	}
+
+	plan, err := PlanCompleteMedia(context.Background(), SourceRequest{Authority: authority, Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotPath := plan.SourcePath
+	if _, err := os.Stat(snapshotPath); err != nil {
+		t.Fatalf("verified snapshot is unavailable: %v", err)
+	}
+	if err := plan.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := plan.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(snapshotPath); !os.IsNotExist(err) {
+		t.Fatalf("snapshot survived close: %v", err)
+	}
+}
+
+func sourceIdentity(contents []byte) (string, int64) {
+	sum := sha256.Sum256(contents)
+	return fmt.Sprintf("%x", sum), int64(len(contents))
 }
 
 func validSourceAuthority() SourceAuthority {
