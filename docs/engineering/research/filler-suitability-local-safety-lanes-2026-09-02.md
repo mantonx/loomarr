@@ -183,7 +183,8 @@ Two model-side changes were measured against the same controls:
 | same weights + private policy-vocabulary prompt | 24/59 | 0/8 | development diagnostic only |
 | OpenRouter `openai/whisper-large-v3` | 22/59 | 0/8 | development diagnostic only; $0.002960712 |
 | pinned local `large-v3-turbo` | 17/59 | 0/8 | development diagnostic only; 1.6 GB model |
-| union of all four | 33/59 | 0/8 | still 26 positive misses |
+| same large weights + private policy-vocabulary prompt | 22/59 | 0/8 | development diagnostic only |
+| union of all five | 35/59 | 0/8 | still 24 positive misses |
 
 The prompted transcript-set SHA-256 is
 `ad1fefdd04690da20e9a30cb8dd84d70caf1da3f2d900c1d7c06979b949fea20`.
@@ -223,6 +224,21 @@ controls, with 0/8 clean false positives. It overlapped only 9 of the baseline
 three-lane union. That diversity lifts the four-lane union to 33/59, but does
 not justify replacing the shipped 466 MB model with a 1.6 GB model or adding an
 ASR ensemble that still misses 26 positives.
+
+Private vocabulary context raises the large model to 22/59 and recovers two
+additional cases beyond that four-lane union. Its transcript-set SHA-256 is
+`34b027baa5e067d68b387e516ca6a35f97135a07d5c277f036857a7ae0f2e0b0`;
+the private transcript file SHA-256 is
+`fd4e2172b206d6f0731de8ea20def307fbf2f149a38ca2347212d19eb503af8a`
+and the private score SHA-256 is
+`da66f275d76aa7873ea96211d94254090035eba85745806618d2c6bb7e863ebf`.
+The five-lane union therefore reaches 35/59, still leaving 24 misses. A
+grammar-constrained keyword probe was also rejected before a full run: after
+correcting whisper.cpp's required leading-space tokenization, the clean
+homophone produced a higher-confidence constrained token stream than a known
+positive. No threshold could retain that positive without also holding the
+clean control. This closes the Whisper model-size, prompt, fuzzy-match, forced
+grammar, and ensemble branches for this policy.
 
 Next build a purpose-built phonetic/keyword spotter, using ambiguous acoustic
 matches as holds rather than silently broadening prohibited policy. Apple
