@@ -17,20 +17,20 @@ func TestOpenRouterAudioAdjudicatorSendsPrivatePolicyAndReturnsOpaquePresence(t 
 	secret := "private restricted phrase"
 	policy := audioPolicyFixture(secret)
 	transport := httpfixture.NewScriptedTransport(httpfixture.Step{Response: openRouterResponse(t, `{"decision":"detected","audibility":"clear","matchedRuleIds":["rule-0123456789abcdef01234567"]}`)})
-	reservedCandidate, reservedRequest := "", ""
+	reservedRequest := ""
 	config := validOpenRouterAudioConfig(&http.Client{Transport: transport}, policy)
-	config.Reserve = func(candidateID, requestSHA256 string) error {
-		reservedCandidate, reservedRequest = candidateID, requestSHA256
+	reserve := func(requestSHA256 string) error {
+		reservedRequest = requestSHA256
 		return nil
 	}
 	adjudicator := &openRouterAudioAdjudicator{config: config}
 
-	attempt, err := adjudicator.adjudicate(t.Context(), Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}, validCandidateWAV())
+	attempt, err := adjudicator.adjudicate(t.Context(), Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}, validCandidateWAV(), reserve)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if attempt.Assessment.State != AudioDetected || attempt.Assessment.CandidateID != "candidate-one" || len(attempt.MatchedRuleIDs) != 1 || attempt.MatchedRuleIDs[0] != policy.Rules[0].ID || reservedCandidate != "candidate-one" || reservedRequest == "" || reservedRequest != attempt.Transport.RequestSHA256 || !attempt.Transport.ChargeKnown {
-		t.Fatalf("attempt=%+v reservation=%q/%q", attempt, reservedCandidate, reservedRequest)
+	if attempt.Assessment.State != AudioDetected || attempt.Assessment.CandidateID != "candidate-one" || len(attempt.MatchedRuleIDs) != 1 || attempt.MatchedRuleIDs[0] != policy.Rules[0].ID || reservedRequest == "" || reservedRequest != attempt.Transport.RequestSHA256 || !attempt.Transport.ChargeKnown {
+		t.Fatalf("attempt=%+v reservation=%q", attempt, reservedRequest)
 	}
 	requests := transport.Requests()
 	if len(requests) != 1 {
@@ -84,15 +84,15 @@ func TestOpenRouterAudioAdjudicatorRejectsMalformedOutputAndAuthorityBeforeUse(t
 	transport := httpfixture.NewScriptedTransport(httpfixture.Step{Response: openRouterResponse(t, `{"decision":"absent","audibility":"clear","matchedRuleIds":[],"extra":true}`)})
 	config := validOpenRouterAudioConfig(&http.Client{Transport: transport}, policy)
 	adjudicator := &openRouterAudioAdjudicator{config: config}
-	attempt, err := adjudicator.adjudicate(t.Context(), Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}, validCandidateWAV())
+	attempt, err := adjudicator.adjudicate(t.Context(), Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}, validCandidateWAV(), func(string) error { return nil })
 	if err == nil || attempt.Assessment.State != AudioInvalidResponse || attempt.Transport.ResponseSHA256 == "" {
 		t.Fatalf("attempt=%+v err=%v", attempt, err)
 	}
 
 	config.CapabilitySHA256 = strings.Repeat("f", 64)
 	called := false
-	config.Reserve = func(string, string) error { called = true; return nil }
-	attempt, err = (&openRouterAudioAdjudicator{config: config}).adjudicate(t.Context(), Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}, validCandidateWAV())
+	reserve := func(string) error { called = true; return nil }
+	attempt, err = (&openRouterAudioAdjudicator{config: config}).adjudicate(t.Context(), Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}, validCandidateWAV(), reserve)
 	if err == nil || called || attempt.Assessment.State != AudioFailed {
 		t.Fatalf("invalid authority reached reservation: attempt=%+v err=%v", attempt, err)
 	}
@@ -106,8 +106,7 @@ func TestOpenRouterAudioAdjudicatorRejectsMissingAudioCapabilityBeforeUse(t *tes
 	config.Snapshot.Models[0].InputModalities = []string{"text", "video"}
 	config.CapabilitySHA256 = openroutermedia.CapabilitySnapshotSHA256(config.Snapshot)
 	reserved := false
-	config.Reserve = func(string, string) error { reserved = true; return nil }
-	attempt, err := (&openRouterAudioAdjudicator{config: config}).adjudicate(t.Context(), Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}, validCandidateWAV())
+	attempt, err := (&openRouterAudioAdjudicator{config: config}).adjudicate(t.Context(), Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}, validCandidateWAV(), func(string) error { reserved = true; return nil })
 	if err == nil || reserved || len(transport.Requests()) != 0 || attempt.Assessment.State != AudioFailed {
 		t.Fatalf("attempt=%+v err=%v reserved=%t requests=%d", attempt, err, reserved, len(transport.Requests()))
 	}
@@ -133,7 +132,6 @@ func validOpenRouterAudioConfig(client *http.Client, policy Policy) openRouterAu
 		CapabilitySHA256: openroutermedia.CapabilitySnapshotSHA256(snapshot), Policy: policy,
 		PolicySHA256: policySHA256(policy), PromptSHA256: audioPromptSHA256(policy),
 		MaxChargeNanoUSD: 2_000_000, DisableReasoning: true,
-		Reserve: func(string, string) error { return nil },
 	}
 }
 
