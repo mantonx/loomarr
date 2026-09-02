@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/loomarr/loomarr/internal/testkit/execfixture"
 )
 
 const (
@@ -24,11 +26,7 @@ const (
 // tool. Keep these doubles in testkit rather than growing one private shell mock per caller.
 func Executable(t *testing.T, name, script string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatalf("write executable %s: %v", name, err)
-	}
-	return path
+	return execfixture.Executable(t, name, script)
 }
 
 // CopyingMediaExecutable builds a portable local-tool double that copies the argument following
