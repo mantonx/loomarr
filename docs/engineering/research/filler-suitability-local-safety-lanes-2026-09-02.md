@@ -153,9 +153,66 @@ without complete packet media and 6 construction-only programme parents), and
 297 no-signal observations. The 36 constructed derivatives contain none from
 the prohibited source; 12 remain coverage-held and 24 have no observed spoken
 signal. The report contains no policy phrase or transcript text and grants no
-training, ingestion, scheduling, or production authority. The 59-source-family
-positive challenge remains unrun, so this is diagnostic containment evidence,
-not certification.
+training, ingestion, scheduling, or production authority.
+
+The first generated development challenge has now run. It is explicitly not a
+certification corpus: its 59 positive controls are TTS transformations rather
+than independent real source families, and its eight clean controls can expose
+obvious regressions but cannot establish a 1% false-positive bound. The first
+generated version proved the scorer's independence guard by being rejected when
+two silence controls and two music controls repeated media hashes. The repaired
+v2 authority has 67 distinct source hashes/family IDs, covers all nine positive
+and four clean slices, and remains permanently marked `development`.
+
+The pinned local `small.en` lane detected 17/59 positives (28.81%; one-sided
+95% exact lower bound 19.26%), missed 42, produced 0/8 clean false positives,
+and had no challenge coverage holds. Projection SHA-256 is
+`91a95bfc5263df75213a23d35471bb30582fc9c2c62a4043730fae528e4a5c24`;
+the corrected score SHA-256 is
+`e8e5fa81f11cde3a2fbfaa5cae69408403ad459d442c8624c44514389fd73a40`.
+Both reproduce byte-for-byte. The scorer now reports the actual
+Clopper-Pearson lower bound on failed runs rather than collapsing every miss to
+zero; certification still requires zero misses and a lower bound of at least
+95%.
+
+Two model-side changes were measured against the same controls:
+
+| Transcript candidate | Positive detections | Clean false positives | Authority consequence |
+| --- | ---: | ---: | --- |
+| pinned local `small.en` | 17/59 | 0/8 | locked development score |
+| same weights + private policy-vocabulary prompt | 24/59 | 0/8 | development diagnostic only |
+| OpenRouter `openai/whisper-large-v3` | 22/59 | 0/8 | development diagnostic only; $0.002960712 |
+| union of all three | 31/59 | 0/8 | still 28 positive misses |
+
+The prompted transcript-set SHA-256 is
+`ad1fefdd04690da20e9a30cb8dd84d70caf1da3f2d900c1d7c06979b949fea20`.
+The hosted diagnostic report SHA-256 is
+`d28514f2973b9120d2af2a12c25a19fbf5cb143bf0b688370149fd4d0da13f3b`;
+its pre-run capability snapshot SHA-256 is
+`4e2cd072d2279a737859e109f0caac5ed173e9582f9bfd2ba9b71da0476fcb44`
+and listed every then-available endpoint as live and ZDR. It is deliberately
+not certification evidence: OpenRouter documents that `/audio/transcriptions`
+currently ignores chat-style provider ordering, fallback, data-collection, and
+per-request ZDR controls, so the run cannot prove one pinned upstream route.
+[OpenRouter STT](https://openrouter.ai/docs/guides/overview/multimodal/stt),
+[transcription routing limitation](https://openrouter.ai/blog/tutorials/transcription-on-openrouter/).
+
+The failure is recognition, not missing audio: hosted large-v3 returned
+non-empty transcripts for all 37 misses. A deterministic edit-distance probe
+found only two prompted positive misses one edit from the restricted root,
+while one clean near-match was also one edit away. Broad fuzzy matching would
+therefore buy little recall and immediately violate the clean boundary. An LLM
+fine-tune is not justified by this evidence: a text model cannot recover an
+acoustic token the transcript lost, and direct-audio model training would be a
+different, much larger evidence program. Next compare a digest-pinned local
+larger ASR and a purpose-built phonetic/keyword spotter, using ambiguous acoustic
+matches as holds rather than silently broadening prohibited policy. Apple
+Speech remains optional, but its on-device recognizer on the current host is
+available and its `contextualStrings` API is specifically designed to bias
+short unusual vocabulary; a development-only comparison may be useful after
+one-time authorization, with `requiresOnDeviceRecognition=true` and no network
+fallback. [Apple contextual strings](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/contextualstrings),
+[on-device requirement](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/requiresondevicerecognition).
 
 ## Tracked implementation issues
 
