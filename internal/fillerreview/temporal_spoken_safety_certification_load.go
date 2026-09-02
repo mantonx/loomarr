@@ -51,7 +51,7 @@ func loadTemporalSpokenSafetyCertification(config TemporalSpokenSafetyCertificat
 }
 
 func validateTemporalSpokenSafetyChallengeAuthority(authority TemporalSpokenSafetyChallengeAuthority, projection TemporalSpokenSafetyReport, scoredAt time.Time) error {
-	if authority.SchemaVersion != TemporalSpokenSafetyCertificationSchemaVersion || authority.ContractVersion != TemporalSpokenSafetyCertificationContractVersion || authority.AuthoredAt.IsZero() || authority.AuthoredAt.After(projection.ProjectedAt) || scoredAt.Before(projection.ProjectedAt) || authority.CorpusManifestSHA256 != projection.CorpusManifestSHA256 || authority.PolicySHA256 != projection.PolicySHA256 || len(authority.Cases) == 0 {
+	if authority.SchemaVersion != TemporalSpokenSafetyCertificationSchemaVersion || authority.ContractVersion != TemporalSpokenSafetyCertificationContractVersion || authority.AuthoredAt.IsZero() || authority.AuthoredAt.After(projection.ProjectedAt) || scoredAt.Before(projection.ProjectedAt) || authority.ChallengeKind != TemporalSpokenSafetyChallengeDevelopment && authority.ChallengeKind != TemporalSpokenSafetyChallengeCertification || authority.CorpusManifestSHA256 != projection.CorpusManifestSHA256 || authority.PolicySHA256 != projection.PolicySHA256 || len(authority.Cases) == 0 {
 		return fmt.Errorf("spoken-safety challenge does not bind its projection, policy, and time")
 	}
 	// Further case-level validation is kept beside scoring vocabulary.

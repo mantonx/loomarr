@@ -89,6 +89,19 @@ func TestPublishTemporalSpokenSafetyCertificationRejectsPostProjectionAuthority(
 	}
 }
 
+func TestPublishTemporalSpokenSafetyCertificationCannotPromoteDevelopmentControls(t *testing.T) {
+	fixture := newTemporalSpokenSafetyCertificationFixture(t)
+	fixture.authority.ChallengeKind = TemporalSpokenSafetyChallengeDevelopment
+	writeTemporalSpokenSafetyJSON(t, fixture.authorityPath, fixture.authority)
+	report, _, err := PublishTemporalSpokenSafetyCertification(fixture.config(filepath.Join(t.TempDir(), "score.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.CertificationStatus != TemporalSpokenSafetyDiagnosticPassed || report.ProductionAdmissionAllowed {
+		t.Fatalf("development report = %+v", report)
+	}
+}
+
 type temporalSpokenSafetyCertificationFixture struct {
 	projection     TemporalSpokenSafetyReport
 	authority      TemporalSpokenSafetyChallengeAuthority
@@ -135,7 +148,8 @@ func newTemporalSpokenSafetyCertificationFixture(t *testing.T) *temporalSpokenSa
 	writeTemporalSpokenSafetyJSON(t, projectionPath, projection)
 	authority := TemporalSpokenSafetyChallengeAuthority{
 		SchemaVersion: TemporalSpokenSafetyCertificationSchemaVersion, ContractVersion: TemporalSpokenSafetyCertificationContractVersion,
-		AuthoredAt: projectedAt.Add(-time.Hour), CorpusManifestSHA256: projection.CorpusManifestSHA256, PolicySHA256: projection.PolicySHA256,
+		AuthoredAt: projectedAt.Add(-time.Hour), ChallengeKind: TemporalSpokenSafetyChallengeCertification,
+		CorpusManifestSHA256: projection.CorpusManifestSHA256, PolicySHA256: projection.PolicySHA256,
 	}
 	positiveSlices := temporalSpokenSafetyRequiredPositiveSlices()
 	for index := 0; index < temporalSpokenSafetyMinimumPositiveFamilies; index++ {

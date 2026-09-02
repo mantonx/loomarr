@@ -4830,7 +4830,8 @@ exact Clopper-Pearson lower bound. Clean false-positive rates are reproduced ind
 locked locale/slice and may not exceed 1%. The canonical certification report retains only opaque
 case identities, counts, rates, authority digests, and outcomes. It never reproduces source identity,
 transcript text, or policy phrases and grants no production permission even when the diagnostic
-challenge passes.
+challenge passes. Generated/TTS controls are permanently marked `development` and can produce only
+a diagnostic result; they cannot satisfy or be relabeled as the independent-source certification.
 
 The temporal `unusable` answer is diagnostic history, not media-integrity truth. Media integrity,
 presentation/source defects, broadcast suitability, semantic unit/role, and rights are five

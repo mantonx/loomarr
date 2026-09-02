@@ -10,10 +10,13 @@ const (
 	TemporalSpokenSafetyCertificationSchemaVersion   = 1
 	TemporalSpokenSafetyCertificationContractVersion = "filler-spoken-safety-certification-v1"
 
-	TemporalSpokenSafetyChallengePositive = "positive"
-	TemporalSpokenSafetyChallengeClean    = "clean"
+	TemporalSpokenSafetyChallengePositive      = "positive"
+	TemporalSpokenSafetyChallengeClean         = "clean"
+	TemporalSpokenSafetyChallengeDevelopment   = "development"
+	TemporalSpokenSafetyChallengeCertification = "certification"
 
 	TemporalSpokenSafetyCertificationPassed = "passed"
+	TemporalSpokenSafetyDiagnosticPassed    = "diagnostic_passed"
 	TemporalSpokenSafetyCertificationFailed = "failed"
 
 	TemporalSpokenSafetyOutcomeDetected      = "detected"
@@ -45,6 +48,7 @@ type TemporalSpokenSafetyChallengeAuthority struct {
 	SchemaVersion        int                                          `json:"schemaVersion"`
 	ContractVersion      string                                       `json:"contractVersion"`
 	AuthoredAt           time.Time                                    `json:"authoredAt"`
+	ChallengeKind        string                                       `json:"challengeKind"`
 	CorpusManifestSHA256 string                                       `json:"corpusManifestSha256"`
 	PolicySHA256         string                                       `json:"policySha256"`
 	Cases                []TemporalSpokenSafetyChallengeAuthorityCase `json:"cases"`
@@ -80,6 +84,7 @@ type TemporalSpokenSafetyCertificationReport struct {
 	AuthoritySHA256            string                                  `json:"authoritySha256"`
 	SpokenSafetyReportSHA256   string                                  `json:"spokenSafetyReportSha256"`
 	PolicySHA256               string                                  `json:"policySha256"`
+	ChallengeKind              string                                  `json:"challengeKind"`
 	PositiveSources            int                                     `json:"positiveSources"`
 	PositiveFamilies           int                                     `json:"positiveFamilies"`
 	DetectedPositiveSources    int                                     `json:"detectedPositiveSources"`

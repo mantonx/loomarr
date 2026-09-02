@@ -133,7 +133,7 @@ func temporalSpokenSafetyCoversSlices(observed map[string]struct{}, required []s
 }
 
 func validateTemporalSpokenSafetyCertificationReport(report TemporalSpokenSafetyCertificationReport) error {
-	if report.SchemaVersion != TemporalSpokenSafetyCertificationSchemaVersion || report.ContractVersion != TemporalSpokenSafetyCertificationContractVersion || report.ScoredAt.IsZero() || !reviewSHA256(report.AuthoritySHA256) || !reviewSHA256(report.SpokenSafetyReportSHA256) || !reviewSHA256(report.PolicySHA256) || report.PositiveSources < temporalSpokenSafetyMinimumPositiveFamilies || report.PositiveFamilies != report.PositiveSources || report.PositiveIntervals <= 0 || report.CleanSources <= 0 || report.CertificationStatus != TemporalSpokenSafetyCertificationPassed && report.CertificationStatus != TemporalSpokenSafetyCertificationFailed || report.TrainingAllowed || report.IngestionAllowed || report.SchedulingAllowed || report.ProductionAdmissionAllowed || report.NextAction != TemporalSpokenSafetyCertificationNextAction {
+	if report.SchemaVersion != TemporalSpokenSafetyCertificationSchemaVersion || report.ContractVersion != TemporalSpokenSafetyCertificationContractVersion || report.ScoredAt.IsZero() || !reviewSHA256(report.AuthoritySHA256) || !reviewSHA256(report.SpokenSafetyReportSHA256) || !reviewSHA256(report.PolicySHA256) || report.ChallengeKind != TemporalSpokenSafetyChallengeDevelopment && report.ChallengeKind != TemporalSpokenSafetyChallengeCertification || report.PositiveSources < temporalSpokenSafetyMinimumPositiveFamilies || report.PositiveFamilies != report.PositiveSources || report.PositiveIntervals <= 0 || report.CleanSources <= 0 || report.CertificationStatus != TemporalSpokenSafetyCertificationPassed && report.CertificationStatus != TemporalSpokenSafetyDiagnosticPassed && report.CertificationStatus != TemporalSpokenSafetyCertificationFailed || report.TrainingAllowed || report.IngestionAllowed || report.SchedulingAllowed || report.ProductionAdmissionAllowed || report.NextAction != TemporalSpokenSafetyCertificationNextAction {
 		return fmt.Errorf("spoken-safety certification identity, counts, permissions, or status is invalid")
 	}
 	if report.DetectedPositiveSources+report.MissedPositiveSources != report.PositiveSources || report.DetectedPositiveIntervals > report.PositiveIntervals || report.SourceRecall != float64(report.DetectedPositiveSources)/float64(report.PositiveSources) || report.CleanFalsePositiveSources > report.CleanSources || len(report.Cases) != report.PositiveSources+report.CleanSources || len(report.CleanSlices) == 0 {
@@ -200,7 +200,13 @@ func validateTemporalSpokenSafetyCertificationReport(report TemporalSpokenSafety
 		allCleanPassed = allCleanPassed && metric.Passed
 	}
 	wantPassed := report.MissedPositiveSources == 0 && report.SourceRecallExactLower95 >= 0.95 && report.CoverageHolds == 0 && allCleanPassed
-	if (report.CertificationStatus == TemporalSpokenSafetyCertificationPassed) != wantPassed {
+	wantStatus := TemporalSpokenSafetyCertificationFailed
+	if wantPassed && report.ChallengeKind == TemporalSpokenSafetyChallengeCertification {
+		wantStatus = TemporalSpokenSafetyCertificationPassed
+	} else if wantPassed {
+		wantStatus = TemporalSpokenSafetyDiagnosticPassed
+	}
+	if report.CertificationStatus != wantStatus {
 		return fmt.Errorf("spoken-safety certification status does not reproduce")
 	}
 	return nil

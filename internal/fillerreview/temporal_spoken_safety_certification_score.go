@@ -14,8 +14,12 @@ func scoreTemporalSpokenSafetyCertification(loaded temporalSpokenSafetyCertifica
 	report := TemporalSpokenSafetyCertificationReport{
 		SchemaVersion: TemporalSpokenSafetyCertificationSchemaVersion, ContractVersion: TemporalSpokenSafetyCertificationContractVersion,
 		ScoredAt: scoredAt, AuthoritySHA256: loaded.authoritySHA, SpokenSafetyReportSHA256: loaded.projectionSHA,
-		PolicySHA256: loaded.projection.PolicySHA256, CertificationStatus: TemporalSpokenSafetyCertificationPassed,
-		NextAction: TemporalSpokenSafetyCertificationNextAction,
+		PolicySHA256: loaded.projection.PolicySHA256, ChallengeKind: loaded.authority.ChallengeKind,
+		CertificationStatus: TemporalSpokenSafetyCertificationPassed,
+		NextAction:          TemporalSpokenSafetyCertificationNextAction,
+	}
+	if report.ChallengeKind == TemporalSpokenSafetyChallengeDevelopment {
+		report.CertificationStatus = TemporalSpokenSafetyDiagnosticPassed
 	}
 	cleanBuckets := map[string]*temporalSpokenSafetyCleanBucket{}
 	for _, challenge := range loaded.authority.Cases {
