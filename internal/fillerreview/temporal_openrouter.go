@@ -12,6 +12,7 @@ import (
 
 	"github.com/loomarr/loomarr/internal/fillerbakeoff"
 	"github.com/loomarr/loomarr/internal/fillereval"
+	"github.com/loomarr/loomarr/internal/openroutermedia"
 )
 
 const (
@@ -251,7 +252,7 @@ func callOpenRouterTemporalClaim(ctx context.Context, client *http.Client, baseU
 	}
 	call.Axis, call.Attempt = axis, attemptNumber
 	started := time.Now()
-	result, err := callOpenRouterStructured(ctx, client, baseURL, openRouterStructuredCallConfig{
+	result, err := openroutermedia.Call(ctx, client, baseURL, openroutermedia.Config{
 		APIKey: config.APIKey, Model: config.Model, ResolvedModel: openRouterTemporalModel(config.Snapshot, config.Model).CanonicalSlug,
 		UpstreamProvider: config.UpstreamProvider, ProviderSlug: config.UpstreamProviderSlug,
 		SchemaName: schemaName, Schema: schema, SystemPrompt: prompt, Content: content, Images: images,
@@ -274,7 +275,7 @@ func callOpenRouterTemporalClaim(ctx context.Context, client *http.Client, baseU
 	})
 	call.LatencyMS = max(int64(0), time.Since(started).Milliseconds())
 	call.ResponseSHA256 = result.ResponseSHA256
-	call.PromptTokens, call.CompletionTokens = result.Wire.Usage.PromptTokens, result.Wire.Usage.CompletionTokens
+	call.PromptTokens, call.CompletionTokens = result.PromptTokens, result.CompletionTokens
 	if err == nil {
 		if decodeErr := decodeStrictReviewJSON([]byte(result.StructuredOutput), target); decodeErr != nil {
 			err = fmt.Errorf("%s assessment JSON is invalid: %w", axis, decodeErr)
@@ -291,10 +292,10 @@ func callOpenRouterTemporalClaim(ctx context.Context, client *http.Client, baseU
 		return call, failure, fmt.Errorf("OpenRouter temporal call for alias %q axis %q did not acquire a durable reservation: %w", item.Alias, axis, err)
 	}
 	attempt := &checkpoint.Attempts[len(checkpoint.Attempts)-1]
-	attempt.ResponseSHA256, attempt.GenerationID = result.ResponseSHA256, result.Wire.ID
+	attempt.ResponseSHA256, attempt.GenerationID = result.ResponseSHA256, result.GenerationID
 	attempt.LatencyMS, attempt.PromptTokens, attempt.CompletionTokens = call.LatencyMS, call.PromptTokens, call.CompletionTokens
 	if result.ChargeKnown {
-		attempt.ChargedAmountUSD, attempt.ChargedNanoUSD = result.Wire.Usage.Cost.String(), result.ChargedNanoUSD
+		attempt.ChargedAmountUSD, attempt.ChargedNanoUSD = result.ChargedAmountUSD, result.ChargedNanoUSD
 	}
 	if failure == nil {
 		attempt.State = temporalOpenRouterAttemptAccepted
@@ -329,14 +330,14 @@ func temporalFailedAssessment(alias string, assessedAt time.Time, calls []filler
 	}
 }
 
-func classifyTemporalOpenRouterFailure(ctx context.Context, result openRouterStructuredCallResult, err error) *temporalCallError {
+func classifyTemporalOpenRouterFailure(ctx context.Context, result openroutermedia.Result, err error) *temporalCallError {
 	if errors.Is(err, errTemporalOpenRouterBudget) {
 		return &temporalCallError{code: fillereval.TemporalFailureContextExhausted, detail: err.Error()}
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return &temporalCallError{code: fillereval.TemporalFailureTimeout, detail: "per-case inference deadline exceeded", retryable: true}
 	}
-	var statusErr *openRouterStructuredStatusError
+	var statusErr *openroutermedia.StatusError
 	if errors.As(err, &statusErr) {
 		retryable := statusErr.StatusCode == http.StatusRequestTimeout || statusErr.StatusCode == http.StatusTooManyRequests || statusErr.StatusCode >= 500
 		return &temporalCallError{code: fillereval.TemporalFailureProvider, detail: err.Error(), retryable: retryable}

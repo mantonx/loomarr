@@ -647,24 +647,3 @@ func TestRunOpenRouterReviewPinsZDRRouteAndPaidAccounting(t *testing.T) {
 		t.Fatalf("run=%+v submissions=%+v", run, submissions)
 	}
 }
-
-func TestValidReviewAttemptLedgerAcceptsOmittedOrExactOptionalDetail(t *testing.T) {
-	t.Parallel()
-	config := OpenRouterReviewConfig{Model: "review/vendor-model", UpstreamProvider: "Provider Route", Snapshot: fillerbakeoff.OpenRouterSnapshot{Models: []fillerbakeoff.OpenRouterModelSnapshot{{ID: "review/vendor-model", CanonicalSlug: "review/vendor-model-202608"}}}}
-	var wire openRouterReviewResponse
-	if !validReviewAttemptLedger(wire, config) {
-		t.Fatal("omitted optional attempt detail was rejected")
-	}
-	wire.Metadata.Attempts = append(wire.Metadata.Attempts, struct {
-		Provider string `json:"provider"`
-		Model    string `json:"model"`
-		Status   int    `json:"status"`
-	}{Provider: config.UpstreamProvider, Model: "review/vendor-model-202608", Status: 200})
-	if !validReviewAttemptLedger(wire, config) {
-		t.Fatal("exact attempt detail was rejected")
-	}
-	wire.Metadata.Attempts[0].Provider = "Other"
-	if validReviewAttemptLedger(wire, config) {
-		t.Fatal("mismatched attempt detail was accepted")
-	}
-}
