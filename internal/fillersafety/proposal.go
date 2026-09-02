@@ -7,7 +7,10 @@ import (
 	"slices"
 )
 
-const maxProposedCandidates = 4096
+const (
+	maxProposedCandidates = 4096
+	maxProposedIntervalMS = 30_000
+)
 
 type proposerIdentity struct {
 	Implementation string
@@ -66,7 +69,7 @@ func runProposal(ctx context.Context, proposer acousticProposer, expected propos
 	})
 	candidates := make([]Candidate, 0, len(intervals))
 	for index, interval := range intervals {
-		if interval.StartMS < 0 || interval.EndMS <= interval.StartMS || interval.EndMS > plan.Audio.EndMS {
+		if interval.StartMS < 0 || interval.EndMS <= interval.StartMS || interval.EndMS > plan.Audio.EndMS || interval.EndMS-interval.StartMS > maxProposedIntervalMS {
 			return failed
 		}
 		if index > 0 && interval == intervals[index-1] {
