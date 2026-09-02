@@ -5,9 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/loomarr/loomarr/internal/openroutermedia"
 )
 
 const evaluationImplementation = "spoken-safety-evaluator-v1"
@@ -184,6 +187,9 @@ func validHostedIdentity(identity hostedCallIdentity) bool {
 func closedFailure(attemptState string, callErr error) SettlementFailure {
 	if callErr == nil {
 		return FailureNone
+	}
+	if errors.Is(callErr, openroutermedia.ErrRouteMismatch) {
+		return FailureRouteMismatch
 	}
 	if attemptState == string(AudioInvalidResponse) || attemptState == string(AudioDetectedUnprojectable) ||
 		attemptState == string(VideoInvalidResponse) || attemptState == string(VideoProhibitedUnprojectable) {

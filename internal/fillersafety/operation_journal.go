@@ -211,7 +211,7 @@ func (j *ledgerCascadeJournal) settle(
 	if failure != FailureNone {
 		outcome = ""
 	}
-	if failure == FailureTransport {
+	if failure == FailureTransport || failure == FailureRouteMismatch {
 		resolvedProvider, resolvedModel, upstreamProvider = "", "", ""
 	}
 	command := HostedCallSettlement{
