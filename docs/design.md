@@ -4970,8 +4970,11 @@ in memory, and discards stderr without logging it because sherpa prints source p
 one-JSON-object-per-hit: unknown fields, an unknown/non-opaque keyword label, non-finite or unordered timing,
 token/timestamp cardinality drift, output beyond the ceiling, or a non-zero/partial run fails the complete
 proposal. Candidate intervals run from the first token timestamp through one 40 ms subsampled frame after the
-last and are clamped only at the verified source endpoint. These implementation details stay behind the
-private acoustic-proposer seam; the external evaluator interface remains one evaluation operation.
+last and are clamped only at the verified source endpoint. Native-audio adjudication extracts each of those
+evidence intervals with the calibrated one second of context on both sides, clamped to the complete source;
+the candidate identity and ledger interval remain the unexpanded acoustic evidence rather than pretending the
+context was detected speech. These implementation details stay behind the private acoustic-proposer seam;
+the external evaluator interface remains one evaluation operation.
 
 Production certification uses a locked, source-family-disjoint challenge of real speech, not generated
 or transformed copies pretending to be independent observations. Positive coverage includes distinct
