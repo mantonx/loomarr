@@ -104,6 +104,25 @@ func TestNormalizeTranscriptClampsFinalSpokenSegmentToMeasuredAudio(t *testing.T
 	}
 }
 
+func TestValidateTranscriptArtifactRejectsNonCanonicalOrUnboundEvidence(t *testing.T) {
+	artifact := TranscriptArtifact{
+		SchemaVersion: TranscriptSchemaVersion, CaseID: "case-1", PacketSHA256: strings.Repeat("a", 64),
+		EvidenceVersion: "evidence-1", AudioSignalID: "audio", AudioSHA256: strings.Repeat("b", 64),
+		AudioBytes: 100, AudioDurationMS: 2_000, GeneratedAt: time.Unix(1, 0).UTC(),
+		Engine:   TranscriptEngineIdentity{Provider: "whisper.cpp", ImplementationVersion: "v1", BinarySHA256: strings.Repeat("c", 64), Model: "model.bin", ModelSHA256: strings.Repeat("d", 64)},
+		Segments: []TranscriptSegment{{StartMS: 100, EndMS: 500, Text: "spoken text"}}, Text: "spoken text",
+	}
+	digest := sha256.Sum256([]byte(artifact.Text))
+	artifact.TextSHA256 = hex.EncodeToString(digest[:])
+	if err := ValidateTranscriptArtifact(artifact); err != nil {
+		t.Fatal(err)
+	}
+	artifact.Segments[0].Text = " changed "
+	if err := ValidateTranscriptArtifact(artifact); err == nil {
+		t.Fatal("non-canonical transcript accepted")
+	}
+}
+
 func TestBuildTranscriptsOmitsSelectedCaseWithoutCertifiedWAV(t *testing.T) {
 	packet := Packet{
 		SchemaVersion: PacketSchemaVersion, CaseID: "case-1", EvidenceVersion: "evidence-1", ContentSHA256: strings.Repeat("a", 64),

@@ -71,6 +71,28 @@ type TranscriptConfig struct {
 	PerCaseTimeout  time.Duration
 }
 
+// ValidateTranscriptArtifact verifies the self-contained authority of one
+// complete packet-audio transcript. Joins to a corpus packet remain the
+// caller's responsibility; this check is reusable by later safety evaluators
+// that consume the immutable artifact without rebuilding it.
+func ValidateTranscriptArtifact(artifact TranscriptArtifact) error {
+	if artifact.SchemaVersion != TranscriptSchemaVersion || strings.TrimSpace(artifact.CaseID) == "" || !validSHA256(artifact.PacketSHA256) || strings.TrimSpace(artifact.EvidenceVersion) == "" || strings.TrimSpace(artifact.AudioSignalID) == "" || !validSHA256(artifact.AudioSHA256) || artifact.AudioBytes <= 0 || artifact.AudioDurationMS <= 0 || artifact.GeneratedAt.IsZero() || artifact.LatencyMS < 0 {
+		return fmt.Errorf("transcript artifact has invalid schema, source, audio, time, or latency authority")
+	}
+	if strings.TrimSpace(artifact.Engine.Provider) == "" || strings.TrimSpace(artifact.Engine.ImplementationVersion) == "" || strings.TrimSpace(artifact.Engine.Model) == "" || !validSHA256(artifact.Engine.BinarySHA256) || !validSHA256(artifact.Engine.ModelSHA256) {
+		return fmt.Errorf("transcript artifact has incomplete speech engine identity")
+	}
+	normalized, text, err := normalizeTranscript(artifact.Segments, artifact.AudioDurationMS)
+	if err != nil || !slices.Equal(normalized, artifact.Segments) || text != artifact.Text {
+		return fmt.Errorf("transcript artifact is not canonical")
+	}
+	textHash := sha256.Sum256([]byte(artifact.Text))
+	if artifact.TextSHA256 != hex.EncodeToString(textHash[:]) {
+		return fmt.Errorf("transcript artifact text digest does not match")
+	}
+	return nil
+}
+
 // BuildTranscripts produces one complete, sorted, content-bound transcript set.
 // It does not mutate raw packets or call a classifier.
 func BuildTranscripts(ctx context.Context, config TranscriptConfig) ([]TranscriptArtifact, error) {
@@ -190,11 +212,11 @@ func validateTranscriptSet(config Config, selected map[string]fillereval.Case) (
 		if slices.ContainsFunc(packet.Signals, func(signal Signal) bool { return signal.ID == "shared-transcript" }) {
 			return nil, fmt.Errorf("raw packet %q already contains the derived shared transcript", artifact.CaseID)
 		}
-		if artifact.SchemaVersion != TranscriptSchemaVersion || artifact.PacketSHA256 != PacketSHA256(packet) || artifact.EvidenceVersion != config.Run.EvidenceVersion || artifact.GeneratedAt.IsZero() || artifact.GeneratedAt.After(config.Run.GeneratedAt) || artifact.LatencyMS < 0 {
-			return nil, fmt.Errorf("transcript case %q has invalid schema, packet, evidence, time, or latency binding", artifact.CaseID)
+		if err := ValidateTranscriptArtifact(artifact); err != nil {
+			return nil, fmt.Errorf("transcript case %q: %w", artifact.CaseID, err)
 		}
-		if strings.TrimSpace(artifact.Engine.Provider) == "" || strings.TrimSpace(artifact.Engine.ImplementationVersion) == "" || strings.TrimSpace(artifact.Engine.Model) == "" || !validSHA256(artifact.Engine.BinarySHA256) || !validSHA256(artifact.Engine.ModelSHA256) {
-			return nil, fmt.Errorf("transcript case %q has incomplete speech engine identity", artifact.CaseID)
+		if artifact.PacketSHA256 != PacketSHA256(packet) || artifact.EvidenceVersion != config.Run.EvidenceVersion || artifact.GeneratedAt.After(config.Run.GeneratedAt) {
+			return nil, fmt.Errorf("transcript case %q has invalid schema, packet, evidence, time, or latency binding", artifact.CaseID)
 		}
 		audio, hasAudio, err := certifiedAudioSignal(packet)
 		if err != nil {
@@ -205,14 +227,6 @@ func validateTranscriptSet(config Config, selected map[string]fillereval.Case) (
 		}
 		if artifact.AudioSignalID != audio.ID || artifact.AudioSHA256 != audio.SHA256 || artifact.AudioBytes != audio.Bytes || artifact.AudioDurationMS != audio.DurationMS {
 			return nil, fmt.Errorf("transcript case %q does not bind its packet WAV", artifact.CaseID)
-		}
-		normalized, text, err := normalizeTranscript(artifact.Segments, audio.DurationMS)
-		if err != nil || !slices.Equal(normalized, artifact.Segments) || text != artifact.Text {
-			return nil, fmt.Errorf("transcript case %q is not canonical", artifact.CaseID)
-		}
-		textHash := sha256.Sum256([]byte(artifact.Text))
-		if artifact.TextSHA256 != hex.EncodeToString(textHash[:]) {
-			return nil, fmt.Errorf("transcript case %q text digest does not match", artifact.CaseID)
 		}
 		identityData, _ := json.Marshal(artifact.Engine)
 		if i == 0 {
