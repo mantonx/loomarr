@@ -33,6 +33,9 @@ func loadTemporalSuitabilityComparison(config TemporalSuitabilityComparisonConfi
 	if first.SelectionSHA256 != second.SelectionSHA256 || first.SelectionSHA256 != temporalTruthJSONSHA(first.SelectionAliases) || second.SelectionSHA256 != temporalTruthJSONSHA(second.SelectionAliases) {
 		return temporalSuitabilityComparisonLoaded{}, fmt.Errorf("suitability results do not bind one complete selection")
 	}
+	if config.ComparedAt.Before(first.CompletedAt) || config.ComparedAt.Before(second.CompletedAt) {
+		return temporalSuitabilityComparisonLoaded{}, fmt.Errorf("suitability comparison predates a completed result")
+	}
 	return temporalSuitabilityComparisonLoaded{first: first, second: second, evidenceSHA: evidenceSHA, selectionSHA: first.SelectionSHA256, firstSHA: firstSHA, secondSHA: secondSHA}, nil
 }
 
@@ -45,7 +48,7 @@ func loadTemporalSuitabilityResultAuthority(path string, manifest TemporalTruthE
 	if err != nil {
 		return TemporalSuitabilityResult{}, "", err
 	}
-	if result.EvidenceManifestSHA256 != evidenceSHA || len(result.Assessments) != expectedCases || len(result.SelectionAliases) != expectedCases || len(result.Attempts) != expectedCases || result.Requests != expectedCases || result.ProductionAdmissionAllowed {
+	if result.EvidenceManifestSHA256 != evidenceSHA || len(result.Assessments) != expectedCases || len(result.SelectionAliases) != expectedCases || len(result.Attempts) != expectedCases || result.Requests != expectedCases || result.CompletedAt.IsZero() || result.ProductionAdmissionAllowed {
 		return TemporalSuitabilityResult{}, "", fmt.Errorf("suitability result identity, counts, or admission boundary is invalid")
 	}
 	caseByAlias := make(map[string]TemporalTruthEvidenceCase, len(manifest.Cases))
