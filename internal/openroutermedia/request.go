@@ -28,7 +28,13 @@ type structuredPart struct {
 	Type     string              `json:"type"`
 	Text     string              `json:"text,omitempty"`
 	ImageURL *structuredMediaURL `json:"image_url,omitempty"`
+	Audio    *structuredAudio    `json:"input_audio,omitempty"`
 	VideoURL *structuredMediaURL `json:"video_url,omitempty"`
+}
+
+type structuredAudio struct {
+	Data   string `json:"data"`
+	Format string `json:"format"`
 }
 
 type structuredMediaURL struct {
@@ -59,6 +65,12 @@ func buildRequest(config Config) ([]byte, error) {
 	for _, image := range config.Images {
 		parts = append(parts, structuredPart{Type: "image_url", ImageURL: &structuredMediaURL{URL: "data:image/jpeg;base64," + image}})
 	}
+	for _, audio := range config.Audios {
+		if !validAudioFormat(audio.Format) || strings.TrimSpace(audio.Base64) == "" {
+			return nil, fmt.Errorf("OpenRouter structured audio input has an invalid format or empty payload")
+		}
+		parts = append(parts, structuredPart{Type: "input_audio", Audio: &structuredAudio{Data: audio.Base64, Format: audio.Format}})
+	}
 	for _, video := range config.Videos {
 		if !validVideoMIME(video.MIMEType) || strings.TrimSpace(video.Base64) == "" {
 			return nil, fmt.Errorf("OpenRouter structured video input has an invalid MIME type or empty payload")
@@ -79,6 +91,15 @@ func buildRequest(config Config) ([]byte, error) {
 		payload.Reasoning = &structuredReasoning{Enabled: false}
 	}
 	return json.Marshal(payload)
+}
+
+func validAudioFormat(value string) bool {
+	switch value {
+	case "wav", "mp3", "aiff", "aac", "ogg", "flac", "m4a", "pcm16", "pcm24":
+		return true
+	default:
+		return false
+	}
 }
 
 func validVideoMIME(value string) bool {

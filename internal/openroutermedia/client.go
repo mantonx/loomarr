@@ -26,12 +26,19 @@ type Config struct {
 	SystemPrompt     string
 	Content          string
 	Images           []string
+	Audios           []Audio
 	Videos           []Video
 	MaxTokens        int
 	MaxChargeNanoUSD int64
 	DisableReasoning bool
 	Title            string
 	Reserve          func(string) error
+}
+
+// Audio is one base64-encoded audio payload with an explicit provider format.
+type Audio struct {
+	Format string
+	Base64 string
 }
 
 // Video is one base64-encoded video payload with an explicit supported MIME type.

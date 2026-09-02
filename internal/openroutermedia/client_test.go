@@ -42,6 +42,7 @@ func TestCallReservesExactRequestBeforeHTTP(t *testing.T) {
 		return nil
 	})
 	config.Images = []string{"aW1hZ2U="}
+	config.Audios = []Audio{{Format: "wav", Base64: "YXVkaW8="}}
 	config.Videos = []Video{{MIMEType: "video/mp4", Base64: "dmlkZW8="}}
 	config.DisableReasoning = true
 	result, err := Call(t.Context(), server.Client(), server.URL, config)
@@ -52,8 +53,20 @@ func TestCallReservesExactRequestBeforeHTTP(t *testing.T) {
 	if result.RequestSHA256 != reservedHash || result.ResponseSHA256 != hashBytes(result.RawResponse) || !result.ChargeKnown || result.ChargedNanoUSD != 1_000_000 || result.ChargedAmountUSD != "0.001" || result.StructuredOutput != `{"ok":true}` || result.GenerationID != "generation" || result.PromptTokens != 10 || result.CompletionTokens != 2 {
 		t.Fatalf("result=%+v", result)
 	}
-	if len(parts) != 3 || parts[1].ImageURL == nil || parts[1].ImageURL.URL != "data:image/jpeg;base64,aW1hZ2U=" || parts[2].VideoURL == nil || parts[2].VideoURL.URL != "data:video/mp4;base64,dmlkZW8=" || requestWire.Provider.AllowFallbacks || !requestWire.Provider.RequireParameters || !requestWire.Provider.ZDR || requestWire.Provider.DataCollection != "deny" || requestWire.Reasoning == nil || requestWire.Reasoning.Enabled || !requestWire.ResponseFormat.JSONSchema.Strict {
+	if len(parts) != 4 || parts[1].ImageURL == nil || parts[1].ImageURL.URL != "data:image/jpeg;base64,aW1hZ2U=" || parts[2].Audio == nil || parts[2].Audio.Format != "wav" || parts[2].Audio.Data != "YXVkaW8=" || parts[3].VideoURL == nil || parts[3].VideoURL.URL != "data:video/mp4;base64,dmlkZW8=" || requestWire.Provider.AllowFallbacks || !requestWire.Provider.RequireParameters || !requestWire.Provider.ZDR || requestWire.Provider.DataCollection != "deny" || requestWire.Reasoning == nil || requestWire.Reasoning.Enabled || !requestWire.ResponseFormat.JSONSchema.Strict {
 		t.Fatalf("request=%+v", requestWire)
+	}
+}
+
+func TestCallRejectsInvalidAudioBeforeReservation(t *testing.T) {
+	t.Parallel()
+	reserved := false
+	_, err := Call(t.Context(), http.DefaultClient, "https://openrouter.ai/api/v1", Config{
+		Audios:  []Audio{{Format: "exe", Base64: "YWJj"}},
+		Reserve: func(string) error { reserved = true; return nil },
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid format") || reserved {
+		t.Fatalf("err=%v reserved=%t", err, reserved)
 	}
 }
 
