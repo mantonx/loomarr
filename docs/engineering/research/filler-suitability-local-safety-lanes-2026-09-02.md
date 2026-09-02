@@ -130,25 +130,55 @@ The existing plan already reserves direct video for named temporal ambiguity and
 requires a second model family only for listed uncertainty/safety cases.
 [`filler-model-led-identification-plan-2026-08-31.md:127-133`](../filler-model-led-identification-plan-2026-08-31.md#L127-L133)
 
-## Exact next implementation issues
+## First implemented spoken diagnostic
 
-Create these three issues, in this order, as dependents of #905 and #903. They
-are deliberately separate so an optional Apple-only evaluator cannot redefine
-portable speech or written-text certification.
+Issue [#908](https://github.com/loomarr/loomarr/issues/908) now implements the
+portable spoken-language seam. The scanner population is the exact 300-case
+corpus rather than the 48-case review sample; that distinction mattered because
+the confirmed prohibited source was outside the review sample. The module
+strictly revalidates the corpus manifest, every label-blind packet and external
+media file, 298 complete-span transcript artifacts with one common engine
+identity, the review evidence projection, construction authority, and a private
+opaque-rule policy before atomically publishing a private report.
 
-1. `filler-suitability-sca-capability-prototype`: build an evaluation-only signed
+The initial real policy intentionally represents only the one confirmed
+prohibited root and is not a comprehensive broadcast-language policy. An
+exact-word diagnostic exposed an ASR token carrying a morphological suffix, so
+the policy contract now distinguishes `exact_words` from an explicitly chosen
+`token_prefix`; it does not silently broaden every rule. Two byte-identical
+full-corpus executions produce private report SHA-256
+`5c73b2fea954e6faa2b86462de0c814bb8e134ab5ca2270d881401d384e24482`:
+306 sources comprise 1 prohibited source, 8 coverage holds (2 corpus cases
+without complete packet media and 6 construction-only programme parents), and
+297 no-signal observations. The 36 constructed derivatives contain none from
+the prohibited source; 12 remain coverage-held and 24 have no observed spoken
+signal. The report contains no policy phrase or transcript text and grants no
+training, ingestion, scheduling, or production authority. The 59-source-family
+positive challenge remains unrun, so this is diagnostic containment evidence,
+not certification.
+
+## Tracked implementation issues
+
+These three issues are dependents of #905 and #903. They are deliberately
+separate so an optional Apple-only evaluator cannot redefine portable speech or
+written-text certification.
+
+1. [#907](https://github.com/loomarr/loomarr/issues/907),
+   `filler-suitability-sca-capability-prototype`: build an evaluation-only signed
    macOS prototype and rights-cleared fixtures that establish entitlement,
    policy, local-video completion, result shape, and repeatability. Stop without
    production integration if the entitlement cannot be obtained or policy
    cannot be controlled for a locked run.
-2. `filler-suitability-whisper-spoken-language-certification`: add a versioned,
+2. [#908](https://github.com/loomarr/loomarr/issues/908),
+   `filler-suitability-whisper-spoken-language-certification`: add a versioned,
    complete-source safety transcript contract using the existing pinned Whisper
    engine/artifact machinery, then a restricted lexicon matcher; exact
    interval/source binding; wordless/ambiguous/error handling; private locked
    challenge builder and all spoken/projection rows above. Do not treat the
    selective catalog transcript as complete. No Apple Speech dependency or
    network fallback.
-3. `filler-suitability-written-text-certification`: define and measure bounded
+3. [#909](https://github.com/loomarr/loomarr/issues/909),
+   `filler-suitability-written-text-certification`: define and measure bounded
    full-duration frame/OCR coverage, apply the same restricted matcher to
    timestamped OCR spans, and certify the written-text rows above. Sparse
    scene-selected Vision observations remain evidence only.
