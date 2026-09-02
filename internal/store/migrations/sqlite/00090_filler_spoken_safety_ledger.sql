@@ -8,11 +8,13 @@ CREATE TABLE IF NOT EXISTS filler_spoken_safety_runs (
   authority_sha256      TEXT NOT NULL,
   source_sha256         TEXT NOT NULL,
   source_bytes          INTEGER NOT NULL,
+  duration_ms           INTEGER NOT NULL,
   certification_sha256  TEXT NOT NULL,
   policy_sha256         TEXT NOT NULL,
+  proposer_sha256       TEXT NOT NULL,
   implementation        TEXT NOT NULL,
   created_at            INTEGER NOT NULL,
-  CHECK (source_bytes > 0)
+  CHECK (source_bytes > 0 AND duration_ms > 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_filler_spoken_safety_runs_clip

@@ -4063,7 +4063,7 @@ func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
 	hash := strings.Repeat("a", 64)
 	run := fillersafety.LedgerRun{
 		ID: "safety-run-1", ClipHash: "clip-safety-1", AuthoritySHA256: hash, SourceSHA256: hash,
-		SourceBytes: 4096, CertificationSHA256: hash, PolicySHA256: hash,
+		SourceBytes: 4096, DurationMS: 10_000, CertificationSHA256: hash, PolicySHA256: hash, ProposerSHA256: hash,
 		Implementation: "spoken-safety-v1", CreatedAt: at,
 	}
 	if err := s.PutSpokenSafetyRun(ctx, run); err != nil {
@@ -4137,6 +4137,189 @@ func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
 	}
 	if _, err := s.GetSpokenSafetyRun(ctx, "missing-run"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing run = %v, want ErrNotFound", err)
+	}
+
+	callRun := run
+	callRun.ID, callRun.ClipHash, callRun.CreatedAt = "safety-run-call", "clip-safety-call", at.Add(time.Second)
+	if err := s.PutSpokenSafetyRun(ctx, callRun); err != nil {
+		t.Fatal(err)
+	}
+	candidate := fillersafety.Candidate{ID: "candidate-call", StartMS: 100, EndMS: 500}
+	callPlan := plan
+	callPlan.ID, callPlan.RunID, callPlan.CreatedAt = "call-plan", callRun.ID, callRun.CreatedAt.Add(time.Nanosecond)
+	callProposal := proposal
+	callProposal.ID, callProposal.RunID, callProposal.CreatedAt = "call-proposal", callRun.ID, callRun.CreatedAt.Add(2*time.Nanosecond)
+	callProposal.Proposal = &fillersafety.ProposalCompleted{State: fillersafety.ProposalComplete, ProposerSHA256: hash, Candidates: []fillersafety.Candidate{candidate}}
+	for _, event := range []fillersafety.LedgerEvent{callPlan, callProposal} {
+		if err := s.AppendSpokenSafetyEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reserveAt := callRun.CreatedAt.Add(3 * time.Nanosecond)
+	evaluation := InferenceEvaluation{
+		ID: "safety-inference-1", ClipHash: callRun.ClipHash, RunID: callRun.ID,
+		Role: "spoken-safety", Rung: "native-audio", RequestedProvider: "openrouter",
+		RequestedModel: "model-1", UpstreamProvider: "provider-1", Modalities: []string{"audio"},
+		DerivativeBytes: 1024, DerivativeDurationMS: 400, ReservedNanoUSD: 100,
+		Versions: InferenceVersions{
+			Evidence: hash, Extractor: hash, Prompt: hash, Schema: hash,
+			Taxonomy: hash, AdmissionPolicy: hash, RolePolicy: hash, CapabilitySnapshot: hash,
+		},
+		CreatedAt: reserveAt,
+	}
+	reserveCommand := SpokenSafetyInferenceReservation{
+		EventID: "call-reserve", RunID: callRun.ID, CandidateID: candidate.ID,
+		RequestSHA256: hash, Ordinal: 2, CreatedAt: reserveAt,
+	}
+	reserved, reserveEvent, err := s.ReserveSpokenSafetyInference(ctx, reserveCommand, evaluation,
+		InferenceBudget{PerClipNanoUSD: 1000, PerDayNanoUSD: 1000, PerRunNanoUSD: 1000})
+	if err != nil || reserved.State != InferenceReserved || reserveEvent.Reserve == nil ||
+		reserveEvent.Reserve.State != fillersafety.ReservationAccepted {
+		t.Fatalf("atomic reservation = %+v, %+v, %v", reserved, reserveEvent, err)
+	}
+	if again, event, err := s.ReserveSpokenSafetyInference(ctx, reserveCommand, evaluation,
+		InferenceBudget{PerClipNanoUSD: 1000, PerDayNanoUSD: 1000, PerRunNanoUSD: 1000}); err != nil || again.ID != reserved.ID || event.ID != reserveEvent.ID {
+		t.Fatalf("idempotent atomic reservation = %+v, %+v, %v", again, event, err)
+	}
+
+	settleAt := callRun.CreatedAt.Add(4 * time.Nanosecond)
+	settlement := InferenceSettlement{
+		ResolvedProvider: "openrouter", ResolvedModel: "model-1", UpstreamProvider: "provider-1",
+		Tokens: InferenceTokens{Prompt: 20, Completion: 4, Audio: 10}, ChargedAmount: "0.00000005",
+		ChargedCurrency: "USD", ChargedNanoUSD: 50, Attempts: 1, GenerationID: "generation-1",
+		Outcome: string(fillersafety.AudioAbsent), State: InferenceCompleted, UpdatedAt: settleAt,
+	}
+	settleCommand := SpokenSafetyInferenceSettlement{
+		EventID: "call-settle", RunID: callRun.ID, ReservationEventID: reserveEvent.ID,
+		ResponseSHA256: strings.Repeat("b", 64), ChargeKnown: true, Ordinal: 3, CreatedAt: settleAt,
+	}
+	settled, settleEvent, err := s.SettleSpokenSafetyInference(ctx, settleCommand, settlement)
+	if err != nil || settled.State != InferenceCompleted || settleEvent.Settle == nil ||
+		settleEvent.Settle.State != fillersafety.SettlementCompleted {
+		t.Fatalf("atomic settlement = %+v, %+v, %v", settled, settleEvent, err)
+	}
+
+	callEvidence := fillersafety.Evidence{
+		ProposalState: fillersafety.ProposalComplete, Candidates: []fillersafety.Candidate{candidate},
+		Audio: []fillersafety.AudioAssessment{{CandidateID: candidate.ID, State: fillersafety.AudioAbsent}},
+		Video: fillersafety.VideoNoSignal,
+	}
+	callTerminal := fillersafety.LedgerEvent{
+		ID: "call-terminal", RunID: callRun.ID, Ordinal: 4, Kind: fillersafety.LedgerTerminal,
+		Terminal: &fillersafety.TerminalResult{Evidence: callEvidence, Result: fillersafety.Reduce(callEvidence),
+			EventIDs: []string{callPlan.ID, callProposal.ID, reserveEvent.ID, settleEvent.ID}},
+		CreatedAt: callRun.CreatedAt.Add(5 * time.Nanosecond),
+	}
+	if err := s.AppendSpokenSafetyEvent(ctx, callTerminal); err != nil {
+		t.Fatalf("terminal after settled reservation: %v", err)
+	}
+
+	rollbackRun := run
+	rollbackRun.ID, rollbackRun.ClipHash, rollbackRun.CreatedAt = "safety-run-rollback", "clip-rollback", at.Add(2*time.Second)
+	if err := s.PutSpokenSafetyRun(ctx, rollbackRun); err != nil {
+		t.Fatal(err)
+	}
+	rollbackEvaluation := evaluation
+	rollbackEvaluation.ID, rollbackEvaluation.RunID, rollbackEvaluation.ClipHash = "safety-inference-rollback", rollbackRun.ID, rollbackRun.ClipHash
+	rollbackEvaluation.CreatedAt = rollbackRun.CreatedAt
+	_, _, err = s.ReserveSpokenSafetyInference(ctx, SpokenSafetyInferenceReservation{
+		EventID: "rollback-event", RunID: rollbackRun.ID, CandidateID: candidate.ID, RequestSHA256: hash, Ordinal: 4,
+		CreatedAt: rollbackRun.CreatedAt,
+	}, rollbackEvaluation, InferenceBudget{PerClipNanoUSD: 1000, PerDayNanoUSD: 1000, PerRunNanoUSD: 1000})
+	if !errors.Is(err, fillersafety.ErrLedgerConflict) {
+		t.Fatalf("invalid ledger append = %v, want ErrLedgerConflict", err)
+	}
+	if _, err := s.GetInferenceEvaluation(ctx, rollbackEvaluation.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rolled-back inference = %v, want ErrNotFound", err)
+	}
+
+	heldRun := run
+	heldRun.ID, heldRun.ClipHash, heldRun.CreatedAt = "safety-run-held", "clip-held", at.Add(3*time.Second)
+	if err := s.PutSpokenSafetyRun(ctx, heldRun); err != nil {
+		t.Fatal(err)
+	}
+	heldPlan, heldProposal := plan, proposal
+	heldPlan.ID, heldPlan.RunID, heldPlan.CreatedAt = "held-plan", heldRun.ID, heldRun.CreatedAt.Add(time.Nanosecond)
+	heldProposal.ID, heldProposal.RunID, heldProposal.CreatedAt = "held-proposal", heldRun.ID, heldRun.CreatedAt.Add(2*time.Nanosecond)
+	heldProposal.Proposal = &fillersafety.ProposalCompleted{State: fillersafety.ProposalComplete, ProposerSHA256: hash, Candidates: []fillersafety.Candidate{candidate}}
+	for _, event := range []fillersafety.LedgerEvent{heldPlan, heldProposal} {
+		if err := s.AppendSpokenSafetyEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	heldEvaluation := evaluation
+	heldEvaluation.ID, heldEvaluation.RunID, heldEvaluation.ClipHash = "safety-inference-held", heldRun.ID, heldRun.ClipHash
+	heldEvaluation.CreatedAt = heldRun.CreatedAt.Add(3 * time.Nanosecond)
+	held, heldEvent, err := s.ReserveSpokenSafetyInference(ctx, SpokenSafetyInferenceReservation{
+		EventID: "held-reserve", RunID: heldRun.ID, CandidateID: candidate.ID,
+		RequestSHA256: hash, Ordinal: 2, CreatedAt: heldEvaluation.CreatedAt,
+	}, heldEvaluation, InferenceBudget{})
+	if err != nil || held.State != InferenceHeldBudget || heldEvent.Reserve == nil ||
+		heldEvent.Reserve.State != fillersafety.ReservationHeldBudget || heldEvent.Reserve.ReservedNanoUSD != 0 {
+		t.Fatalf("held reservation = %+v, %+v, %v", held, heldEvent, err)
+	}
+	heldEvidence := fillersafety.Evidence{
+		ProposalState: fillersafety.ProposalComplete, Candidates: []fillersafety.Candidate{candidate},
+		Audio: []fillersafety.AudioAssessment{{CandidateID: candidate.ID, State: fillersafety.AudioFailed}},
+		Video: fillersafety.VideoNotRun,
+	}
+	heldTerminal := fillersafety.LedgerEvent{
+		ID: "held-terminal", RunID: heldRun.ID, Ordinal: 3, Kind: fillersafety.LedgerTerminal,
+		Terminal: &fillersafety.TerminalResult{Evidence: heldEvidence, Result: fillersafety.Reduce(heldEvidence),
+			EventIDs: []string{heldPlan.ID, heldProposal.ID, heldEvent.ID}},
+		CreatedAt: heldRun.CreatedAt.Add(4 * time.Nanosecond),
+	}
+	if err := s.AppendSpokenSafetyEvent(ctx, heldTerminal); err != nil {
+		t.Fatalf("budget-held terminal: %v", err)
+	}
+
+	recoveredAt := at.Add(10 * time.Second)
+	if count, err := s.RecoverInterruptedSpokenSafetyRuns(ctx, recoveredAt); err != nil || count != 1 {
+		t.Fatalf("recover header-only run = %d, %v", count, err)
+	}
+	recoveredEvents, err := s.ListSpokenSafetyEvents(ctx, rollbackRun.ID)
+	if err != nil || len(recoveredEvents) != 3 || recoveredEvents[2].Terminal == nil ||
+		recoveredEvents[2].Terminal.Result.Outcome != fillersafety.OutcomeHold {
+		t.Fatalf("header-only recovery = %+v, %v", recoveredEvents, err)
+	}
+
+	interruptedRun := run
+	interruptedRun.ID, interruptedRun.ClipHash, interruptedRun.CreatedAt = "safety-run-interrupted", "clip-interrupted", at.Add(4*time.Second)
+	if err := s.PutSpokenSafetyRun(ctx, interruptedRun); err != nil {
+		t.Fatal(err)
+	}
+	interruptedPlan, interruptedProposal := callPlan, callProposal
+	interruptedPlan.ID, interruptedPlan.RunID, interruptedPlan.CreatedAt = "interrupted-plan", interruptedRun.ID, interruptedRun.CreatedAt.Add(time.Nanosecond)
+	interruptedProposal.ID, interruptedProposal.RunID, interruptedProposal.CreatedAt = "interrupted-proposal", interruptedRun.ID, interruptedRun.CreatedAt.Add(2*time.Nanosecond)
+	for _, event := range []fillersafety.LedgerEvent{interruptedPlan, interruptedProposal} {
+		if err := s.AppendSpokenSafetyEvent(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	interruptedEvaluation := evaluation
+	interruptedEvaluation.ID, interruptedEvaluation.RunID, interruptedEvaluation.ClipHash = "safety-inference-interrupted", interruptedRun.ID, interruptedRun.ClipHash
+	interruptedEvaluation.CreatedAt = interruptedRun.CreatedAt.Add(3 * time.Nanosecond)
+	_, _, err = s.ReserveSpokenSafetyInference(ctx, SpokenSafetyInferenceReservation{
+		EventID: "interrupted-reserve", RunID: interruptedRun.ID, CandidateID: candidate.ID,
+		RequestSHA256: hash, Ordinal: 2, CreatedAt: interruptedEvaluation.CreatedAt,
+	}, interruptedEvaluation, InferenceBudget{PerClipNanoUSD: 1000, PerDayNanoUSD: 1000, PerRunNanoUSD: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := s.RecoverInterruptedSpokenSafetyRuns(ctx, recoveredAt.Add(time.Second)); err != nil || count != 1 {
+		t.Fatalf("recover unsettled run = %d, %v", count, err)
+	}
+	interruptedEvents, err := s.ListSpokenSafetyEvents(ctx, interruptedRun.ID)
+	if err != nil || len(interruptedEvents) != 5 || interruptedEvents[3].Settle == nil ||
+		interruptedEvents[3].Settle.State != fillersafety.SettlementUnknown ||
+		interruptedEvents[3].Settle.AccountedNanoUSD != evaluation.ReservedNanoUSD ||
+		interruptedEvents[4].Terminal == nil || interruptedEvents[4].Terminal.Result.Outcome != fillersafety.OutcomeHold {
+		t.Fatalf("unsettled recovery = %+v, %v", interruptedEvents, err)
+	}
+	recoveredInference, err := s.GetInferenceEvaluation(ctx, interruptedEvaluation.ID)
+	if err != nil || recoveredInference.State != InferenceFailed ||
+		recoveredInference.ReservedNanoUSD != evaluation.ReservedNanoUSD || recoveredInference.ChargedNanoUSD != 0 {
+		t.Fatalf("recovered accounting = %+v, %v", recoveredInference, err)
 	}
 }
 

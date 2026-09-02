@@ -36,11 +36,11 @@ type LedgerRepository interface {
 
 // LedgerRun is the immutable, path-free identity of one complete-source attempt.
 type LedgerRun struct {
-	ID, ClipHash, AuthoritySHA256, SourceSHA256 string
-	CertificationSHA256, PolicySHA256           string
-	Implementation                              string
-	SourceBytes                                 int64
-	CreatedAt                                   time.Time
+	ID, ClipHash, AuthoritySHA256, SourceSHA256       string
+	CertificationSHA256, PolicySHA256, ProposerSHA256 string
+	Implementation                                    string
+	SourceBytes, DurationMS                           int64
+	CreatedAt                                         time.Time
 }
 
 type LedgerEventKind string
@@ -79,17 +79,26 @@ type ProposalCompleted struct {
 }
 
 type InferenceReserved struct {
-	EvaluationID      string   `json:"evaluationId"`
-	RequestSHA256     string   `json:"requestSha256"`
-	RequestedProvider string   `json:"requestedProvider"`
-	RequestedModel    string   `json:"requestedModel"`
-	UpstreamProvider  string   `json:"upstreamProvider"`
-	CapabilitySHA256  string   `json:"capabilitySha256"`
-	PromptSHA256      string   `json:"promptSha256"`
-	CandidateID       string   `json:"candidateId,omitempty"`
-	Modalities        []string `json:"modalities"`
-	ReservedNanoUSD   int64    `json:"reservedNanoUsd"`
+	EvaluationID      string           `json:"evaluationId"`
+	RequestSHA256     string           `json:"requestSha256"`
+	RequestedProvider string           `json:"requestedProvider"`
+	RequestedModel    string           `json:"requestedModel"`
+	UpstreamProvider  string           `json:"upstreamProvider"`
+	CapabilitySHA256  string           `json:"capabilitySha256"`
+	PromptSHA256      string           `json:"promptSha256"`
+	CandidateID       string           `json:"candidateId,omitempty"`
+	Modalities        []string         `json:"modalities"`
+	RequestedNanoUSD  int64            `json:"requestedNanoUsd"`
+	ReservedNanoUSD   int64            `json:"reservedNanoUsd"`
+	State             ReservationState `json:"state"`
 }
+
+type ReservationState string
+
+const (
+	ReservationAccepted   ReservationState = "accepted"
+	ReservationHeldBudget ReservationState = "held_budget"
+)
 
 type SettlementState string
 
@@ -123,6 +132,7 @@ type InferenceSettled struct {
 	Outcome            string            `json:"outcome,omitempty"`
 	ChargedAmountUSD   string            `json:"chargedAmountUsd,omitempty"`
 	ChargedNanoUSD     int64             `json:"chargedNanoUsd"`
+	AccountedNanoUSD   int64             `json:"accountedNanoUsd"`
 	ChargeKnown        bool              `json:"chargeKnown"`
 	PromptTokens       int64             `json:"promptTokens"`
 	CompletionTokens   int64             `json:"completionTokens"`
@@ -137,8 +147,8 @@ type TerminalResult struct {
 func ValidateLedgerRun(run LedgerRun) error {
 	if !boundedLedgerID(run.ID) || !boundedLedgerID(run.ClipHash) ||
 		!validSHA256(run.AuthoritySHA256) || !validSHA256(run.SourceSHA256) ||
-		!validSHA256(run.CertificationSHA256) || !validSHA256(run.PolicySHA256) ||
-		!boundedAuthorityID(run.Implementation) || run.SourceBytes <= 0 || run.CreatedAt.IsZero() {
+		!validSHA256(run.CertificationSHA256) || !validSHA256(run.PolicySHA256) || !validSHA256(run.ProposerSHA256) ||
+		!boundedAuthorityID(run.Implementation) || run.SourceBytes <= 0 || run.DurationMS <= 0 || run.CreatedAt.IsZero() {
 		return ErrLedgerInvalid
 	}
 	return nil
@@ -257,8 +267,13 @@ func validReservation(reservation InferenceReserved) bool {
 	if !boundedLedgerID(reservation.EvaluationID) || !validSHA256(reservation.RequestSHA256) ||
 		!boundedLedgerID(reservation.RequestedProvider) || !boundedLedgerID(reservation.RequestedModel) ||
 		!boundedLedgerID(reservation.UpstreamProvider) || !validSHA256(reservation.CapabilitySHA256) ||
-		!validSHA256(reservation.PromptSHA256) || reservation.ReservedNanoUSD < 0 ||
-		(reservation.CandidateID != "" && !boundedLedgerID(reservation.CandidateID)) || len(reservation.Modalities) == 0 {
+		!validSHA256(reservation.PromptSHA256) || reservation.RequestedNanoUSD < 0 || reservation.ReservedNanoUSD < 0 ||
+		(reservation.CandidateID != "" && !boundedLedgerID(reservation.CandidateID)) || len(reservation.Modalities) == 0 ||
+		(reservation.State != ReservationAccepted && reservation.State != ReservationHeldBudget) {
+		return false
+	}
+	if reservation.State == ReservationAccepted && reservation.ReservedNanoUSD != reservation.RequestedNanoUSD ||
+		reservation.State == ReservationHeldBudget && (reservation.RequestedNanoUSD == 0 || reservation.ReservedNanoUSD != 0) {
 		return false
 	}
 	modalities := slices.Clone(reservation.Modalities)
@@ -268,12 +283,18 @@ func validReservation(reservation InferenceReserved) bool {
 	}) {
 		return false
 	}
-	return len(slices.Compact(modalities)) == len(modalities)
+	if len(slices.Compact(modalities)) != len(modalities) {
+		return false
+	}
+	if slices.Equal(modalities, []string{"audio"}) {
+		return reservation.CandidateID != ""
+	}
+	return reservation.CandidateID == "" && slices.Equal(modalities, []string{"audio", "video"})
 }
 
 func validSettlement(settlement InferenceSettled) bool {
 	if !boundedLedgerID(settlement.ReservationEventID) || !boundedLedgerID(settlement.EvaluationID) ||
-		settlement.ChargedNanoUSD < 0 || settlement.PromptTokens < 0 || settlement.CompletionTokens < 0 {
+		settlement.ChargedNanoUSD < 0 || settlement.AccountedNanoUSD < 0 || settlement.PromptTokens < 0 || settlement.CompletionTokens < 0 {
 		return false
 	}
 	switch settlement.State {
@@ -281,10 +302,15 @@ func validSettlement(settlement InferenceSettled) bool {
 		return settlement.Failure == FailureNone && validSHA256(settlement.ResponseSHA256) &&
 			boundedLedgerID(settlement.ResolvedProvider) && boundedLedgerID(settlement.ResolvedModel) &&
 			boundedLedgerID(settlement.UpstreamProvider) && boundedLedgerID(settlement.GenerationID) &&
-			boundedLedgerID(settlement.Outcome) && settlement.ChargeKnown && validUSD(settlement.ChargedAmountUSD)
+			validInferenceOutcome(settlement.Outcome) && settlement.ChargeKnown && validUSD(settlement.ChargedAmountUSD) &&
+			settlement.AccountedNanoUSD == settlement.ChargedNanoUSD
 	case SettlementFailed:
-		return settlement.Failure != FailureNone && validSettlementFailure(settlement.Failure) &&
-			settlement.Outcome == "" && (!settlement.ChargeKnown || validUSD(settlement.ChargedAmountUSD))
+		return settlement.Failure != FailureInterrupted && validSettlementFailure(settlement.Failure) &&
+			settlement.Outcome == "" && optionalSHA256(settlement.ResponseSHA256) &&
+			optionalLedgerID(settlement.ResolvedProvider) && optionalLedgerID(settlement.ResolvedModel) &&
+			optionalLedgerID(settlement.UpstreamProvider) && optionalLedgerID(settlement.GenerationID) &&
+			(settlement.ChargeKnown && validUSD(settlement.ChargedAmountUSD) && settlement.AccountedNanoUSD == settlement.ChargedNanoUSD ||
+				!settlement.ChargeKnown && settlement.ChargedAmountUSD == "" && settlement.ChargedNanoUSD == 0 && settlement.AccountedNanoUSD == 0)
 	case SettlementUnknown:
 		return settlement.Failure == FailureInterrupted && settlement.ResponseSHA256 == "" &&
 			settlement.ResolvedProvider == "" && settlement.ResolvedModel == "" && settlement.UpstreamProvider == "" &&
@@ -294,6 +320,21 @@ func validSettlement(settlement InferenceSettled) bool {
 		return false
 	}
 }
+
+func validInferenceOutcome(value string) bool {
+	switch value {
+	case string(AudioDetected), string(AudioDetectedUnprojectable), string(AudioAbsent), string(AudioUnclear),
+		string(AudioFailed), string(AudioInvalidResponse), string(VideoProhibited),
+		string(VideoProhibitedUnprojectable), string(VideoNoSignal), string(VideoIncomplete):
+		return true
+	default:
+		return false
+	}
+}
+
+func optionalSHA256(value string) bool { return value == "" || validSHA256(value) }
+
+func optionalLedgerID(value string) bool { return value == "" || boundedLedgerID(value) }
 
 func validTerminal(terminal TerminalResult) bool {
 	if _, valid := validateEvidence(terminal.Evidence); !valid ||
@@ -374,7 +415,11 @@ func nilPayload(value any) bool {
 }
 
 func boundedLedgerID(value string) bool {
-	return value != "" && value == strings.TrimSpace(value) && utf8.ValidString(value) && len(value) <= maxLedgerIDBytes
+	if value == "" || value != strings.TrimSpace(value) || !utf8.ValidString(value) || len(value) > maxLedgerIDBytes ||
+		strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
+		return false
+	}
+	return !strings.ContainsFunc(value, func(char rune) bool { return char <= ' ' || char == 0x7f })
 }
 
 func (run LedgerRun) String() string {

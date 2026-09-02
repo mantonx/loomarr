@@ -63,6 +63,7 @@ type InferenceSettlement struct {
 	Attempts                                          int
 	GenerationID, Outcome, FailureReason              string
 	State                                             InferenceEvaluationState
+	RetainReservation                                 bool
 	UpdatedAt                                         time.Time
 }
 
@@ -92,7 +93,17 @@ func (s *sqlStore) ReserveInferenceEvaluation(ctx context.Context, e InferenceEv
 		return InferenceEvaluation{}, fmt.Errorf("begin inference reservation: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	e, err = s.reserveInferenceEvaluation(ctx, tx, e, budget)
+	if err != nil {
+		return InferenceEvaluation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return InferenceEvaluation{}, fmt.Errorf("commit inference reservation: %w", err)
+	}
+	return e, nil
+}
 
+func (s *sqlStore) reserveInferenceEvaluation(ctx context.Context, tx *sql.Tx, e InferenceEvaluation, budget InferenceBudget) (InferenceEvaluation, error) {
 	dayStart := e.CreatedAt.UTC().Truncate(24 * time.Hour)
 	scopes := []string{"clip:" + e.ClipHash, "day:" + dayStart.Format("2006-01-02")}
 	if e.RunID != "" {
@@ -141,9 +152,6 @@ func (s *sqlStore) ReserveInferenceEvaluation(ctx context.Context, e InferenceEv
 	e.UpdatedAt = e.CreatedAt
 	if err := insertInferenceEvaluation(ctx, tx, s.ph, e); err != nil {
 		return InferenceEvaluation{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return InferenceEvaluation{}, fmt.Errorf("commit inference reservation: %w", err)
 	}
 	return e, nil
 }
@@ -243,20 +251,37 @@ func insertInferenceEvaluation(ctx context.Context, tx *sql.Tx, ph placeholder, 
 }
 
 func (s *sqlStore) SettleInferenceEvaluation(ctx context.Context, id string, settlement InferenceSettlement) (InferenceEvaluation, error) {
-	if settlement.UpdatedAt.IsZero() || settlement.ChargedNanoUSD < 0 || settlement.EstimatedNanoUSD < 0 {
-		return InferenceEvaluation{}, fmt.Errorf("invalid inference settlement")
-	}
-	if settlement.State == "" {
-		settlement.State = InferenceCompleted
-	}
-	if settlement.State != InferenceCompleted && settlement.State != InferenceFailed {
-		return InferenceEvaluation{}, fmt.Errorf("invalid inference settlement state %q", settlement.State)
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return InferenceEvaluation{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	got, overBudget, err := s.settleInferenceEvaluation(ctx, tx, id, settlement)
+	if err != nil {
+		return InferenceEvaluation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return InferenceEvaluation{}, err
+	}
+	if overBudget {
+		return got, ErrInferenceBudgetExceeded
+	}
+	return got, nil
+}
+
+func (s *sqlStore) settleInferenceEvaluation(ctx context.Context, tx *sql.Tx, id string, settlement InferenceSettlement) (InferenceEvaluation, bool, error) {
+	if settlement.UpdatedAt.IsZero() || settlement.ChargedNanoUSD < 0 || settlement.EstimatedNanoUSD < 0 {
+		return InferenceEvaluation{}, false, fmt.Errorf("invalid inference settlement")
+	}
+	if settlement.State == "" {
+		settlement.State = InferenceCompleted
+	}
+	if settlement.State != InferenceCompleted && settlement.State != InferenceFailed {
+		return InferenceEvaluation{}, false, fmt.Errorf("invalid inference settlement state %q", settlement.State)
+	}
+	if settlement.RetainReservation && (settlement.State != InferenceFailed || settlement.ChargedNanoUSD != 0) {
+		return InferenceEvaluation{}, false, fmt.Errorf("only an uncharged failed inference may retain its reservation")
+	}
 	var reserved int64
 	var state string
 	q := `SELECT reserved_nano_usd, state FROM filler_inference_evaluations WHERE id = ?`
@@ -264,17 +289,21 @@ func (s *sqlStore) SettleInferenceEvaluation(ctx context.Context, id string, set
 		q += ` FOR UPDATE`
 	}
 	if err := tx.QueryRowContext(ctx, s.ph(q), id).Scan(&reserved, &state); errors.Is(err, sql.ErrNoRows) {
-		return InferenceEvaluation{}, ErrNotFound
+		return InferenceEvaluation{}, false, ErrNotFound
 	} else if err != nil {
-		return InferenceEvaluation{}, err
+		return InferenceEvaluation{}, false, err
 	}
 	if InferenceEvaluationState(state) != InferenceReserved {
-		return InferenceEvaluation{}, ErrInferenceNotReserved
+		return InferenceEvaluation{}, false, ErrInferenceNotReserved
 	}
 	overBudget := settlement.ChargedNanoUSD > reserved
 	if overBudget {
 		settlement.State = InferenceHeldBudget
 		settlement.FailureReason = "provider charge exceeded the pre-call reservation"
+	}
+	accountedNanoUSD := settlement.ChargedNanoUSD
+	if settlement.RetainReservation {
+		accountedNanoUSD = reserved
 	}
 	res, err := tx.ExecContext(ctx, s.ph(`UPDATE filler_inference_evaluations SET
 		state = ?, resolved_provider = ?, resolved_model = ?, upstream_provider = ?,
@@ -287,25 +316,19 @@ func (s *sqlStore) SettleInferenceEvaluation(ctx context.Context, id string, set
 		settlement.Tokens.Prompt, settlement.Tokens.Completion, settlement.Tokens.Reasoning, settlement.Tokens.Cached,
 		settlement.Tokens.CacheWrite, settlement.Tokens.Image, settlement.Tokens.Audio, settlement.Tokens.Video,
 		settlement.ChargedAmount, settlement.ChargedCurrency, settlement.ChargedNanoUSD, settlement.EstimatedNanoUSD,
-		settlement.ChargedNanoUSD, settlement.PriceSnapshot, settlement.LatencyMS, settlement.Attempts, settlement.GenerationID,
+		accountedNanoUSD, settlement.PriceSnapshot, settlement.LatencyMS, settlement.Attempts, settlement.GenerationID,
 		settlement.Outcome, settlement.FailureReason, epoch(settlement.UpdatedAt), id, string(InferenceReserved))
 	if err != nil {
-		return InferenceEvaluation{}, fmt.Errorf("settle inference evaluation %s: %w", id, err)
+		return InferenceEvaluation{}, false, fmt.Errorf("settle inference evaluation %s: %w", id, err)
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
-		return InferenceEvaluation{}, ErrInferenceNotReserved
+		return InferenceEvaluation{}, false, ErrInferenceNotReserved
 	}
-	if err := tx.Commit(); err != nil {
-		return InferenceEvaluation{}, err
-	}
-	got, err := s.GetInferenceEvaluation(ctx, id)
+	got, err := scanInferenceEvaluation(tx.QueryRowContext(ctx, s.ph(inferenceEvaluationSelect+` WHERE id = ?`), id))
 	if err != nil {
-		return InferenceEvaluation{}, err
+		return InferenceEvaluation{}, false, err
 	}
-	if overBudget {
-		return got, ErrInferenceBudgetExceeded
-	}
-	return got, nil
+	return got, overBudget, nil
 }
 
 func (s *sqlStore) GetInferenceEvaluation(ctx context.Context, id string) (InferenceEvaluation, error) {

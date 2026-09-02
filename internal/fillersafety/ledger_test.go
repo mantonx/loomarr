@@ -11,8 +11,8 @@ func TestLedgerContractAcceptsClosedAppendOnlyPayloads(t *testing.T) {
 	hash := strings.Repeat("a", 64)
 	run := LedgerRun{
 		ID: "run-1", ClipHash: "clip-1", AuthoritySHA256: hash, SourceSHA256: hash,
-		CertificationSHA256: hash, PolicySHA256: hash, Implementation: "spoken-safety-v1",
-		SourceBytes: 1024, CreatedAt: time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC),
+		CertificationSHA256: hash, PolicySHA256: hash, ProposerSHA256: hash, Implementation: "spoken-safety-v1",
+		SourceBytes: 1024, DurationMS: 1000, CreatedAt: time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC),
 	}
 	if err := ValidateLedgerRun(run); err != nil {
 		t.Fatal(err)
@@ -50,7 +50,9 @@ func TestLedgerContractRejectsOpenOrSensitiveShapes(t *testing.T) {
 		Reserve: &InferenceReserved{
 			EvaluationID: "evaluation-1", RequestSHA256: hash, RequestedProvider: "openrouter",
 			RequestedModel: "model-1", UpstreamProvider: "provider-1", CapabilitySHA256: hash,
-			PromptSHA256: hash, CandidateID: "candidate-1", Modalities: []string{"audio"}, ReservedNanoUSD: 100,
+			PromptSHA256: hash, CandidateID: "candidate-1", Modalities: []string{"audio"},
+			RequestedNanoUSD: 100, ReservedNanoUSD: 100,
+			State: ReservationAccepted,
 		}, CreatedAt: at}
 
 	cases := map[string]func(*LedgerEvent){
