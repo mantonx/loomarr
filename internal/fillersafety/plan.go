@@ -24,12 +24,14 @@ type Span struct {
 // CompleteMediaPlan binds the authority digest to the full audio and video
 // spans that every adapter must preserve.
 type CompleteMediaPlan struct {
-	AuthoritySHA256 string `json:"authoritySha256"`
-	SourceSHA256    string `json:"sourceSha256"`
-	SourceBytes     int64  `json:"sourceBytes"`
-	SourcePath      string `json:"-"`
-	Audio           Span   `json:"audio"`
-	Video           Span   `json:"video"`
+	AuthoritySHA256 string       `json:"authoritySha256"`
+	PolicySHA256    string       `json:"policySha256"`
+	SourceSHA256    string       `json:"sourceSha256"`
+	SourceBytes     int64        `json:"sourceBytes"`
+	SourcePath      string       `json:"-"`
+	FFmpeg          ToolIdentity `json:"ffmpeg"`
+	Audio           Span         `json:"audio"`
+	Video           Span         `json:"video"`
 	snapshot        *mediatools.FileSnapshot
 }
 
@@ -59,9 +61,11 @@ func PlanCompleteMedia(ctx context.Context, request SourceRequest) (CompleteMedi
 	complete := Span{StartMS: 0, EndMS: request.Authority.DurationMS}
 	return CompleteMediaPlan{
 		AuthoritySHA256: authoritySHA256,
+		PolicySHA256:    request.Authority.PolicySHA256,
 		SourceSHA256:    request.Authority.SourceSHA256,
 		SourceBytes:     request.Authority.SourceBytes,
 		SourcePath:      snapshot.Path(),
+		FFmpeg:          request.Authority.FFmpeg,
 		Audio:           complete,
 		Video:           complete,
 		snapshot:        snapshot,

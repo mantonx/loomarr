@@ -38,7 +38,7 @@ func TestPlanCompleteMediaBindsPathIndependentAuthorityToFullSpans(t *testing.T)
 	}
 	t.Cleanup(func() { _ = second.Close() })
 	wantSpan := Span{StartMS: 0, EndMS: authority.DurationMS}
-	if first.AuthoritySHA256 == "" || first.AuthoritySHA256 != second.AuthoritySHA256 || first.SourcePath == firstPath || second.SourcePath == secondPath || first.SourceSHA256 != authority.SourceSHA256 || first.SourceBytes != authority.SourceBytes || first.Audio != wantSpan || first.Video != wantSpan {
+	if first.AuthoritySHA256 == "" || first.AuthoritySHA256 != second.AuthoritySHA256 || first.PolicySHA256 != authority.PolicySHA256 || first.FFmpeg != authority.FFmpeg || first.SourcePath == firstPath || second.SourcePath == secondPath || first.SourceSHA256 != authority.SourceSHA256 || first.SourceBytes != authority.SourceBytes || first.Audio != wantSpan || first.Video != wantSpan {
 		t.Fatalf("first=%+v second=%+v", first, second)
 	}
 	public, err := json.Marshal(first)
