@@ -123,6 +123,20 @@ commercial, and redistribution terms and remains open. Loomarr therefore keeps
 the measured runtime and weights private and development-only. It does not add
 them to the Dockerfile, release manifest, settings, or production composition.
 
+The development Go adapter was then exercised against the hash-verified macOS
+arm64 runtime, exact model members, the model's known test WAV, and an ephemeral
+opaque-rule keyword authority. It reproduced a bounded hit through the actual
+worker after source WAV extraction. That proof also established an upstream
+result nuance: sherpa preserves the `@` opaque rule label and token cardinality,
+but normalizes boundary pieces in the returned `tokens` array rather than
+echoing keyword-file tokens byte-for-byte. The adapter therefore validates the
+opaque rule, expected cardinality, bounded UTF-8 tokens, and ordered timing; it
+captures and discards the normalized token strings and path-bearing stderr.
+Hermetic tests separately prove exact artifact staging, private file modes,
+strict JSON, output/runtime bounds, redacted failures, duplicate normalization,
+and the calibrated one-second adjudication context. This is execution evidence
+for the adapter only, not weight redistribution authority or certification.
+
 The runtime digest matches GitHub's release-asset digest. The model digest
 matches sherpa's published KWS checksum file. The extracted int8 model occupies
 19 MB and the macOS runtime 58 MB. All raw keyword, detection, and result files

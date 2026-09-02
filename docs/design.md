@@ -171,7 +171,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Advertises a running Loomarr HTTP listener to unpaired local TV clients.
 - **`media`** · 3 importers
   Owns host-wide resources shared by live and background media work.
-- **`proctree`** · 3 importers
+- **`proctree`** · 4 importers
   Supervises one child process and every descendant it starts.
 - **`provision`** · 18 importers
   Provisioner domain (design §3–§4): the Title/Key identity model and the acquisition state machine.
@@ -187,6 +187,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Encrypts database-backed secrets with installation-key-wrapped data keys and supports safe key rotation and replacement.
 - **`taxonomy`** · 5 importers
   Clip tag vocabulary (§10 V45a): a forest of taxa on independent AXES (product / format / seasonal / audience-cue), the graph that turns a leaf tag like `beer` into its rollups (`alcohol`, `drinks`), and the resolve-or-drop grounding that keeps a model's output on the vocabulary.
+- **`testkit/execfixture`** · 1 importer
+  Owns filesystem-backed executable test doubles without importing application packages.
 - **`testkit/httpfixture`**
   Shared no-network HTTP test seams without importing any application adapter.
 - **`testkit/postgresimage`** · 1 importer
@@ -252,7 +254,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Commercials & filler domain (design §10): the clip catalog model and pod assembly.
 - **`fillerreference`** · 1 importer · → `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `mediatools`, `taxonomy`
   Owns the deterministic pre-screen for the production-ready filler reference cohort.
-- **`fillersafety`** · 2 importers · → `mediatools`, `openroutermedia`
+- **`fillersafety`** · 2 importers · → `mediatools`, `openroutermedia`, `proctree`
   Owns the fail-closed spoken-safety cascade and its shadow evidence.
 
 **Layer 6**
@@ -282,7 +284,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Loomarr's configuration subsystem (config-design.md): one typed registry declares every app-managed setting exactly once, and resolution (env > database > default), the Settings API, the wizard, feature gating, and the generated docs all derive from it.
 - **`setup`** · 1 importer · → `library`
   Owns the operator connection flows (§7, §13): the Live TV wiring and setup-status checklist.
-- **`testkit`** · → `fillerbakeoff`, `images/rustgen`, `invitation`, `llm`, `notifications`, `playout`, `prepared`, `programmer`, `provision`, `quality`, `reference`, `schedule`, `store`, `testkit/postgresimage`
+- **`testkit`** · → `fillerbakeoff`, `images/rustgen`, `invitation`, `llm`, `notifications`, `playout`, `prepared`, `programmer`, `provision`, `quality`, `reference`, `schedule`, `store`, `testkit/execfixture`, `testkit/postgresimage`
   The shared test doubles and pinned fixtures every test uses (AGENTS.md testing rules: unit tests never touch the network; phases extend the testkit rather than inventing private mocks).
 - **`testkit/libraryfixture`** · → `library`, `schedule`
   No-network adapters for library-facing tests.
