@@ -72,19 +72,24 @@ type ProposalCompleted struct {
 }
 
 type InferenceReserved struct {
-	EvaluationID      string           `json:"evaluationId"`
-	RequestSHA256     string           `json:"requestSha256"`
-	RequestedProvider string           `json:"requestedProvider"`
-	RequestedModel    string           `json:"requestedModel"`
-	UpstreamProvider  string           `json:"upstreamProvider"`
-	CapabilitySHA256  string           `json:"capabilitySha256"`
-	PromptSHA256      string           `json:"promptSha256"`
-	SchemaSHA256      string           `json:"schemaSha256,omitempty"`
-	CandidateID       string           `json:"candidateId,omitempty"`
-	Modalities        []string         `json:"modalities"`
-	RequestedNanoUSD  int64            `json:"requestedNanoUsd"`
-	ReservedNanoUSD   int64            `json:"reservedNanoUsd"`
-	State             ReservationState `json:"state"`
+	EvaluationID         string           `json:"evaluationId"`
+	RequestSHA256        string           `json:"requestSha256"`
+	RequestedProvider    string           `json:"requestedProvider"`
+	RequestedModel       string           `json:"requestedModel"`
+	UpstreamProvider     string           `json:"upstreamProvider"`
+	Role                 string           `json:"role,omitempty"`
+	Rung                 string           `json:"rung,omitempty"`
+	CapabilitySHA256     string           `json:"capabilitySha256"`
+	PromptSHA256         string           `json:"promptSha256"`
+	SchemaSHA256         string           `json:"schemaSha256,omitempty"`
+	CandidateID          string           `json:"candidateId,omitempty"`
+	Modalities           []string         `json:"modalities"`
+	DerivativeBytes      int64            `json:"derivativeBytes,omitempty"`
+	DerivativeDurationMS int64            `json:"derivativeDurationMs,omitempty"`
+	DerivativePixels     int64            `json:"derivativePixels,omitempty"`
+	RequestedNanoUSD     int64            `json:"requestedNanoUsd"`
+	ReservedNanoUSD      int64            `json:"reservedNanoUsd"`
+	State                ReservationState `json:"state"`
 }
 
 type ReservationState string

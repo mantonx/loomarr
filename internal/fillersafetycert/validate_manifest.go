@@ -92,10 +92,10 @@ func validateRunSemantics(authority Authority, item AuthorityCase, events []fill
 			return fmt.Errorf("current audio evidence lacks closed rule attribution")
 		}
 	}
-	return validateHostedEvidence(authority, proposal.Candidates, terminal.Evidence, events[2:len(events)-1])
+	return validateHostedEvidence(authority, item, proposal.Candidates, terminal.Evidence, events[2:len(events)-1])
 }
 
-func validateHostedEvidence(authority Authority, candidates []fillersafety.Candidate, evidence fillersafety.Evidence, events []fillersafety.LedgerEvent) error {
+func validateHostedEvidence(authority Authority, item AuthorityCase, candidates []fillersafety.Candidate, evidence fillersafety.Evidence, events []fillersafety.LedgerEvent) error {
 	settlements := map[string]fillersafety.InferenceSettled{}
 	for _, event := range events {
 		if event.Settle != nil {
@@ -120,7 +120,8 @@ func validateHostedEvidence(authority Authority, candidates []fillersafety.Candi
 		}
 		if slices.Equal(reservation.Modalities, authority.AudioRoute.Modalities) {
 			assessment, exists := assessments[reservation.CandidateID]
-			if !exists || !routeReservationMatches(authority.AudioRoute, reservation) {
+			if !exists || !routeReservationMatches(authority.AudioRoute, reservation) ||
+				reservation.DerivativeDurationMS > item.DurationMS || reservation.DerivativePixels != 0 {
 				return fmt.Errorf("audio reservation is not bound to a candidate and route")
 			}
 			audioCounts[reservation.CandidateID]++
@@ -129,7 +130,9 @@ func validateHostedEvidence(authority Authority, candidates []fillersafety.Candi
 				return fmt.Errorf("audio settlement and terminal evidence do not agree")
 			}
 		} else if slices.Equal(reservation.Modalities, authority.VideoRoute.Modalities) {
-			if reservation.CandidateID != "" || !routeReservationMatches(authority.VideoRoute, reservation) {
+			if reservation.CandidateID != "" || !routeReservationMatches(authority.VideoRoute, reservation) ||
+				reservation.DerivativeBytes != item.SourceBytes || reservation.DerivativeDurationMS != item.DurationMS ||
+				reservation.DerivativePixels != 0 {
 				return fmt.Errorf("video reservation is not bound to its route")
 			}
 			videoCount++
@@ -161,9 +164,11 @@ func validateHostedEvidence(authority Authority, candidates []fillersafety.Candi
 }
 
 func routeReservationMatches(route RouteAuthority, reservation fillersafety.InferenceReserved) bool {
-	return reservation.RequestedProvider == route.RequestedProvider && reservation.RequestedModel == route.RequestedModel &&
+	return reservation.Role == route.Role && reservation.Rung == route.Rung &&
+		reservation.RequestedProvider == route.RequestedProvider && reservation.RequestedModel == route.RequestedModel &&
 		reservation.UpstreamProvider == route.UpstreamProvider && reservation.CapabilitySHA256 == route.CapabilitySHA256 &&
 		reservation.PromptSHA256 == route.PromptSHA256 && reservation.SchemaSHA256 == route.SchemaSHA256 &&
+		reservation.DerivativeBytes > 0 && reservation.DerivativeDurationMS > 0 &&
 		slices.Equal(reservation.Modalities, route.Modalities)
 }
 

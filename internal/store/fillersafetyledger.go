@@ -173,11 +173,14 @@ func (s *sqlStore) ReserveSpokenSafetyInference(
 		Reserve: &fillersafety.InferenceReserved{
 			EvaluationID: evaluation.ID, RequestSHA256: command.RequestSHA256,
 			RequestedProvider: evaluation.RequestedProvider, RequestedModel: evaluation.RequestedModel,
-			UpstreamProvider: evaluation.UpstreamProvider, CapabilitySHA256: evaluation.Versions.CapabilitySnapshot,
-			PromptSHA256: evaluation.Versions.Prompt, SchemaSHA256: evaluation.Versions.Schema,
+			UpstreamProvider: evaluation.UpstreamProvider, Role: evaluation.Role, Rung: evaluation.Rung,
+			CapabilitySHA256: evaluation.Versions.CapabilitySnapshot,
+			PromptSHA256:     evaluation.Versions.Prompt, SchemaSHA256: evaluation.Versions.Schema,
 			CandidateID: command.CandidateID,
-			Modalities:  evaluation.Modalities, RequestedNanoUSD: requestedNanoUSD,
-			ReservedNanoUSD: evaluation.ReservedNanoUSD, State: state,
+			Modalities:  evaluation.Modalities, DerivativeBytes: evaluation.DerivativeBytes,
+			DerivativeDurationMS: evaluation.DerivativeDurationMS, DerivativePixels: evaluation.DerivativePixels,
+			RequestedNanoUSD: requestedNanoUSD,
+			ReservedNanoUSD:  evaluation.ReservedNanoUSD, State: state,
 		},
 	}
 	if err := s.appendSpokenSafetyEvent(ctx, tx, event); err != nil {
@@ -200,9 +203,11 @@ func sameSpokenSafetyReservationCommand(
 		event.Ordinal == command.Ordinal && event.CreatedAt.Equal(command.CreatedAt) &&
 		reservation.EvaluationID == evaluation.ID && reservation.RequestSHA256 == command.RequestSHA256 &&
 		reservation.RequestedProvider == evaluation.RequestedProvider && reservation.RequestedModel == evaluation.RequestedModel &&
-		reservation.UpstreamProvider == evaluation.UpstreamProvider && reservation.CapabilitySHA256 == evaluation.Versions.CapabilitySnapshot &&
+		reservation.UpstreamProvider == evaluation.UpstreamProvider && reservation.Role == evaluation.Role && reservation.Rung == evaluation.Rung &&
+		reservation.CapabilitySHA256 == evaluation.Versions.CapabilitySnapshot &&
 		reservation.PromptSHA256 == evaluation.Versions.Prompt && reservation.SchemaSHA256 == evaluation.Versions.Schema &&
-		reservation.CandidateID == command.CandidateID &&
+		reservation.CandidateID == command.CandidateID && reservation.DerivativeBytes == evaluation.DerivativeBytes &&
+		reservation.DerivativeDurationMS == evaluation.DerivativeDurationMS && reservation.DerivativePixels == evaluation.DerivativePixels &&
 		slices.Equal(reservation.Modalities, evaluation.Modalities) && reservation.RequestedNanoUSD == requestedNanoUSD
 }
 

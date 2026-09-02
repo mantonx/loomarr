@@ -133,9 +133,11 @@ func fixtureResultRun(authority Authority, authoritySHA string, item AuthorityCa
 			Reserve: &fillersafety.InferenceReserved{
 				EvaluationID: runID + "-evaluation", RequestSHA256: fixtureSHA(6000 + index),
 				RequestedProvider: route.RequestedProvider, RequestedModel: route.RequestedModel,
-				UpstreamProvider: route.UpstreamProvider, CapabilitySHA256: route.CapabilitySHA256,
-				PromptSHA256: route.PromptSHA256, SchemaSHA256: route.SchemaSHA256, CandidateID: candidateID,
-				Modalities: route.Modalities, RequestedNanoUSD: 100, ReservedNanoUSD: 100, State: fillersafety.ReservationAccepted,
+				UpstreamProvider: route.UpstreamProvider, Role: route.Role, Rung: route.Rung,
+				CapabilitySHA256: route.CapabilitySHA256,
+				PromptSHA256:     route.PromptSHA256, SchemaSHA256: route.SchemaSHA256, CandidateID: candidateID,
+				Modalities: route.Modalities, DerivativeBytes: 512, DerivativeDurationMS: 1000,
+				RequestedNanoUSD: 100, ReservedNanoUSD: 100, State: fillersafety.ReservationAccepted,
 			}, CreatedAt: createdAt.Add(2 * time.Nanosecond)},
 		fillersafety.LedgerEvent{ID: runID + "-settle", RunID: runID, Ordinal: 3, Kind: fillersafety.LedgerInferenceSettled,
 			Settle: &fillersafety.InferenceSettled{
@@ -145,6 +147,9 @@ func fixtureResultRun(authority Authority, authoritySHA string, item AuthorityCa
 				ChargedAmountUSD: "0", ChargeKnown: true,
 			}, CreatedAt: createdAt.Add(3 * time.Nanosecond)},
 	)
+	if item.Label == LabelClean {
+		events[2].Reserve.DerivativeBytes = item.SourceBytes
+	}
 	priorIDs := []string{events[0].ID, events[1].ID, events[2].ID, events[3].ID}
 	terminal := fillersafety.LedgerEvent{
 		ID: runID + "-terminal", RunID: runID, Ordinal: 4, Kind: fillersafety.LedgerTerminal,

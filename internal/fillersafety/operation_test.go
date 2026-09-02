@@ -52,6 +52,9 @@ func TestEvaluationOperationRecordsSerialCascadeBeforeReturningEvidence(t *testi
 	if len(reservations) != 2 ||
 		!slices.Equal(reservations[0].Modalities, []string{"audio"}) ||
 		!slices.Equal(reservations[1].Modalities, []string{"audio", "video"}) ||
+		events[2].Reserve.Role != "spoken-safety" || events[2].Reserve.Rung != "native-audio" ||
+		events[2].Reserve.DerivativeBytes <= 0 || events[2].Reserve.DerivativeDurationMS <= 0 ||
+		events[4].Reserve.Rung != "complete-video" ||
 		reservations[0].Versions.EvidenceSHA256 != report.Run.AuthoritySHA256 ||
 		reservations[0].Versions.CertificationSHA256 != report.Run.CertificationSHA256 {
 		t.Fatalf("reservations=%+v", reservations)

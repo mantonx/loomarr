@@ -245,9 +245,11 @@ func validateReservationReceipt(command HostedCallReservation, event LedgerEvent
 	reservation := event.Reserve
 	if reservation.EvaluationID != command.EvaluationID || reservation.RequestSHA256 != command.RequestSHA256 ||
 		reservation.RequestedProvider != command.RequestedProvider || reservation.RequestedModel != command.RequestedModel ||
-		reservation.UpstreamProvider != command.UpstreamProvider || reservation.CapabilitySHA256 != command.Versions.CapabilitySHA256 ||
+		reservation.UpstreamProvider != command.UpstreamProvider || reservation.Role != command.Role || reservation.Rung != command.Rung ||
+		reservation.CapabilitySHA256 != command.Versions.CapabilitySHA256 ||
 		reservation.PromptSHA256 != command.Versions.PromptSHA256 || reservation.SchemaSHA256 != command.Versions.SchemaSHA256 ||
-		reservation.CandidateID != command.CandidateID ||
+		reservation.CandidateID != command.CandidateID || reservation.DerivativeBytes != command.DerivativeBytes ||
+		reservation.DerivativeDurationMS != command.DerivativeDurationMS || reservation.DerivativePixels != command.DerivativePixels ||
 		!slices.Equal(reservation.Modalities, command.Modalities) || reservation.RequestedNanoUSD != command.RequestedNanoUSD {
 		return ErrEvaluationInvalid
 	}

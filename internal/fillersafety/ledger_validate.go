@@ -134,6 +134,9 @@ func validReservation(reservation InferenceReserved) bool {
 		!boundedPublicIdentity(reservation.RequestedProvider) || !boundedPublicIdentity(reservation.RequestedModel) ||
 		!boundedPublicIdentity(reservation.UpstreamProvider) || !validSHA256(reservation.CapabilitySHA256) ||
 		!validSHA256(reservation.PromptSHA256) || !optionalSHA256(reservation.SchemaSHA256) ||
+		!optionalLedgerID(reservation.Role) || !optionalLedgerID(reservation.Rung) ||
+		(reservation.Role == "") != (reservation.Rung == "") || reservation.DerivativeBytes < 0 ||
+		reservation.DerivativeDurationMS < 0 || reservation.DerivativePixels < 0 ||
 		reservation.RequestedNanoUSD < 0 || reservation.ReservedNanoUSD < 0 ||
 		(reservation.CandidateID != "" && !boundedLedgerID(reservation.CandidateID)) || len(reservation.Modalities) == 0 ||
 		(reservation.State != ReservationAccepted && reservation.State != ReservationHeldBudget) {
