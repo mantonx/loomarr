@@ -4790,6 +4790,31 @@ The projected report preserves the original input digests and all four false per
 when reproducing an archived no-signal observation. This narrowly retained external evidence
 contract does not provide a general legacy-loader option or an admission fallback.
 
+Spoken-language safety is a separate complete-source evidence seam; neither the production catalog
+transcript nor a direct-video model's spoken-language answer can satisfy it. The catalog transcript
+is deliberately selective and normally samples only the `LanguageSpan` window, while the safety
+seam transcribes `[0, measured source duration)` for every distinct source named by the construction
+authority. It verifies the exact source bytes before transcription and binds the source, extracted
+audio, ffmpeg, whisper executable, model, implementation, timing, and completion identities in an
+immutable private transcript artifact. Wordless is a completed outcome only after that full span
+runs successfully. Missing audio, an engine error, unordered or out-of-range timing, identity drift,
+or an incomplete source set is a coverage hold, never a clean observation.
+
+One deep `PublishTemporalSpokenSafety` module interface owns strict authority loading, complete-span
+transcript-artifact validation, private policy evaluation, source projection, canonical validation,
+and atomic publication. Transcript production remains behind the existing digest-pinned
+`BuildTranscripts` engine seam rather than being duplicated. Its versioned policy file is private
+and uses opaque rule identifiers; report artifacts retain only the policy digest, rule identifier,
+match class, and time range, never the raw
+restricted phrase or transcript text. Exact policy variants may quarantine; deliberately ambiguous
+variants hold coverage. A source-level quarantine propagates to every derivative through the same
+construction authority as the visual projection, with no majority-vote clear. Certification uses a
+separate source-disjoint positive/clean challenge and counts source families rather than derivatives;
+it requires zero positive misses and a one-sided 95% exact Clopper-Pearson lower bound of at least
+95% for source recall (59 independent positive sources with zero misses). Until that challenge
+passes, the report keeps training, ingestion, scheduling, and production admission false even when
+the measured sources contain no match.
+
 The temporal `unusable` answer is diagnostic history, not media-integrity truth. Media integrity,
 presentation/source defects, broadcast suitability, semantic unit/role, and rights are five
 independent claims with independent policy owners. The maintained media-integrity challenge consumes
