@@ -185,6 +185,9 @@ Two model-side changes were measured against the same controls:
 | pinned local `large-v3-turbo` | 17/59 | 0/8 | development diagnostic only; 1.6 GB model |
 | same large weights + private policy-vocabulary prompt | 22/59 | 0/8 | development diagnostic only |
 | union of all five | 35/59 | 0/8 | still 24 positive misses |
+| sherpa-onnx GigaSpeech KWS, provisional macOS setting | 45/59 | 0/8 | development diagnostic only; selected on these rows |
+| same setting, both release Linux architectures | 43/59 | 0/8 | same unique decisions; still generated data |
+| union of five Whisper lanes plus release-Linux sherpa KWS | 50/59 | 0/8 | still 9 positive misses |
 
 The prompted transcript-set SHA-256 is
 `ad1fefdd04690da20e9a30cb8dd84d70caf1da3f2d900c1d7c06979b949fea20`.
@@ -240,13 +243,65 @@ positive. No threshold could retain that positive without also holding the
 clean control. This closes the Whisper model-size, prompt, fuzzy-match, forced
 grammar, and ensemble branches for this policy.
 
-Next build a purpose-built phonetic/keyword spotter, using ambiguous acoustic
-matches as holds rather than silently broadening prohibited policy. Apple
-Speech remains optional, but its on-device recognizer on the current host is
-available and its `contextualStrings` API is specifically designed to bias
-short unusual vocabulary; a development-only comparison may be useful after
-one-time authorization, with `requiresOnDeviceRecognition=true` and no network
-fallback. [Apple contextual strings](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/contextualstrings),
+A purpose-built phonetic/keyword prototype is now measured. Official
+sherpa-onnx v1.13.7 with its 3.3M-parameter English GigaSpeech Zipformer KWS
+model detected 45/59 positives with 0/8 clean false positives on macOS arm64 at
+the provisional `keywords_score=4`, `keywords_threshold=0.05` setting. All 45
+hit intervals derived from token timestamps overlap their authored positive
+intervals, and an exact repeat reproduced raw results byte-for-byte.
+
+The exact setting was then replayed without network access using the official
+Linux arm64 and amd64 runtime archives. Both release architectures produce the
+same 43 unique positive-source decisions and 0/8 clean false positives, add 15
+detections outside the five-Whisper union, and lift that union to 50/59. Each is
+byte-identical on exact same-platform replay. Linux arm64 produces one
+additional intra-positive event for an already-detected source, and macOS finds
+two additional borderline sources, so raw event output is not cross-platform
+identical. The release-facing development result is 43/59, not the more
+favorable macOS result.
+
+The real corpus changes the decision. The frozen Linux-arm64 setting emitted
+130 events across 88 of the finalized corpus's 298 complete audio cases (297
+unique WAVs, 6.27 hours). It retained the one already-known prohibited source,
+but 87 candidates had only `no_spoken_signal_observed` in the existing Whisper
+projection. A pre-measured stricter threshold still emitted 117 events across
+78 cases, retaining the known source but replacing 17 candidates with seven
+different ones rather than behaving as a monotonic filter.
+
+Existing model evidence avoids turning those candidates into a human audit. Of
+47 prior real cases that join cleanly to the source projection, 12 are sherpa
+candidates. Gemini reported no prohibited signal for ten, the known prohibited
+signal for one, and one operational failure; Qwen coverage-held eight, reported
+two no-signal cases, found the same prohibited source, and failed once. Those
+model observations are not labels, but the 26-30% candidate rate is already an
+operational stop. Sherpa is rejected as a standalone verdict lane and retained
+only as a possible bounded-interval proposer for automated second-stage audio
+verification.
+
+Vosk constrained grammar also fails the real-corpus stop. A pinned target-plus-
+unknown grammar detects 35/59 generated positives with 0/8 generated clean
+false positives and adds seven sources beyond the Whisper union. The unchanged
+grammar then emits 299 events across 141/298 real cases while retaining the
+known source. Among the 47 prior direct-video cases, Gemini reports no
+prohibited signal for 15 of 19 Vosk candidates; only one of its two prohibited
+outcomes carries an audio flag. The real controls invalidate the apparent
+synthetic precision.
+
+The standalone decoder search is therefore closed. Next test the two-stage
+architecture: sherpa proposes only short intervals and an audio-capable LLM
+judges those intervals; disagreement or failure remains a hold. This is a use
+for LLM inference, not evidence for fine-tuning one. The sherpa model archive's
+metadata names Apache License 2.0 but contains no license/notice file, and its
+explicit weight/redistribution terms remain unresolved. Full measurements and
+candidate ranking are in
+[the keyword-spotting research](filler-spoken-keyword-spotting-options-2026-09-02.md).
+
+Apple Speech remains optional, but its on-device recognizer on the current host
+is available and its `contextualStrings` API is specifically designed to bias
+short unusual vocabulary; it no longer has priority over the measured portable
+KWS route. Any comparison still requires one-time authorization,
+`requiresOnDeviceRecognition=true`, and no network fallback.
+[Apple contextual strings](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/contextualstrings),
 [on-device requirement](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/requiresondevicerecognition).
 
 ## Tracked implementation issues
