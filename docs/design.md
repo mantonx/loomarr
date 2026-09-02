@@ -4819,10 +4819,12 @@ passes, the report keeps training, ingestion, scheduling, and production admissi
 the measured sources contain no match.
 
 Spoken-safety certification consumes that exact private projection plus a separate locked private
-challenge authority. The authority uses opaque aliases and family identifiers to label
-source-disjoint positive intervals and clean locale/slice controls; it contains no model output and
-cannot be derived from the transcript under test. Every positive interval must overlap a prohibited
-match from the projected source, and any missing/ambiguous transcript remains an operational hold.
+challenge authority authored no later than the projection under test. The authority binds the
+corpus and policy rather than a post-run report, and uses opaque aliases and family identifiers to
+label source-disjoint positive intervals and clean locale/slice controls; it contains no model output
+and cannot be derived from the transcript under test. Every positive interval must overlap a
+prohibited match from the projected source, and any missing/ambiguous transcript remains an
+operational hold.
 Recall is counted by independent source family, requires zero misses, and reports the one-sided 95%
 exact Clopper-Pearson lower bound. Clean false-positive rates are reproduced independently for each
 locked locale/slice and may not exceed 1%. The canonical certification report retains only opaque
