@@ -2,7 +2,6 @@ package fillerreview
 
 import (
 	"fmt"
-	"math"
 	"slices"
 	"strings"
 )
@@ -139,10 +138,7 @@ func validateTemporalSpokenSafetyCertificationReport(report TemporalSpokenSafety
 	if report.DetectedPositiveSources+report.MissedPositiveSources != report.PositiveSources || report.DetectedPositiveIntervals > report.PositiveIntervals || report.SourceRecall != float64(report.DetectedPositiveSources)/float64(report.PositiveSources) || report.CleanFalsePositiveSources > report.CleanSources || len(report.Cases) != report.PositiveSources+report.CleanSources || len(report.CleanSlices) == 0 {
 		return fmt.Errorf("spoken-safety certification summary is inconsistent")
 	}
-	wantLower := 0.0
-	if report.MissedPositiveSources == 0 {
-		wantLower = math.Pow(0.05, 1/float64(report.PositiveFamilies))
-	}
+	wantLower := temporalSpokenSafetyExactLower95(report.DetectedPositiveSources, report.PositiveFamilies)
 	if report.SourceRecallExactLower95 != wantLower {
 		return fmt.Errorf("spoken-safety certification exact lower bound does not reproduce")
 	}

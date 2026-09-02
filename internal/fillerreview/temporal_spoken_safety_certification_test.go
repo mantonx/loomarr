@@ -2,6 +2,7 @@ package fillerreview
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,7 +58,7 @@ func TestPublishTemporalSpokenSafetyCertificationFailsMissAndCleanFalsePositive(
 		if err != nil {
 			t.Fatal(err)
 		}
-		if report.CertificationStatus != TemporalSpokenSafetyCertificationFailed || report.MissedPositiveSources != 1 || report.SourceRecallExactLower95 != 0 {
+		if report.CertificationStatus != TemporalSpokenSafetyCertificationFailed || report.MissedPositiveSources != 1 || report.SourceRecallExactLower95 <= 0 || report.SourceRecallExactLower95 >= 0.95 {
 			t.Fatalf("miss report = %+v", report)
 		}
 	})
@@ -77,6 +78,21 @@ func TestPublishTemporalSpokenSafetyCertificationFailsMissAndCleanFalsePositive(
 			t.Fatalf("false-positive report = %+v", report)
 		}
 	})
+}
+
+func TestTemporalSpokenSafetyExactLower95ReportsPartialRecall(t *testing.T) {
+	if got := temporalSpokenSafetyExactLower95(17, 59); math.Abs(got-0.192640999722) > 1e-12 {
+		t.Fatalf("17/59 exact lower = %.12f, want 0.192640999722", got)
+	}
+	if got := temporalSpokenSafetyExactLower95(59, 59); math.Abs(got-math.Pow(0.05, 1.0/59.0)) > 1e-12 {
+		t.Fatalf("59/59 exact lower = %.12f", got)
+	}
+	if got := temporalSpokenSafetyExactLower95(0, 59); got != 0 {
+		t.Fatalf("0/59 exact lower = %.12f, want zero", got)
+	}
+	if got := temporalSpokenSafetyExactLower95(500, 1_000); math.IsNaN(got) || got <= 0 || got >= 0.5 {
+		t.Fatalf("500/1000 exact lower = %.12f, want a finite lower bound", got)
+	}
 }
 
 func TestPublishTemporalSpokenSafetyCertificationRejectsPostProjectionAuthority(t *testing.T) {

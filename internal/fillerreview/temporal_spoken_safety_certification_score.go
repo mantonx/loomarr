@@ -76,9 +76,7 @@ func scoreTemporalSpokenSafetyCertification(loaded temporalSpokenSafetyCertifica
 	}
 	sort.Slice(report.Cases, func(i, j int) bool { return report.Cases[i].Alias < report.Cases[j].Alias })
 	report.SourceRecall = float64(report.DetectedPositiveSources) / float64(report.PositiveSources)
-	if report.MissedPositiveSources == 0 {
-		report.SourceRecallExactLower95 = math.Pow(0.05, 1/float64(report.PositiveFamilies))
-	}
+	report.SourceRecallExactLower95 = temporalSpokenSafetyExactLower95(report.DetectedPositiveSources, report.PositiveFamilies)
 	keys := make([]string, 0, len(cleanBuckets))
 	for key := range cleanBuckets {
 		keys = append(keys, key)
@@ -98,6 +96,49 @@ func scoreTemporalSpokenSafetyCertification(loaded temporalSpokenSafetyCertifica
 		}
 	}
 	return report
+}
+
+// temporalSpokenSafetyExactLower95 returns the one-sided 95% Clopper-Pearson
+// lower confidence bound. Certification still requires zero misses; retaining
+// the actual bound for failed runs makes model improvements measurable without
+// weakening that gate.
+func temporalSpokenSafetyExactLower95(successes, trials int) float64 {
+	if trials <= 0 || successes <= 0 {
+		return 0
+	}
+	if successes > trials {
+		return math.NaN()
+	}
+	low, high := 0.0, float64(successes)/float64(trials)
+	for range 100 {
+		mid := (low + high) / 2
+		if temporalSpokenSafetyBinomialUpperTail(successes, trials, mid) < 0.05 {
+			low = mid
+		} else {
+			high = mid
+		}
+	}
+	return (low + high) / 2
+}
+
+func temporalSpokenSafetyBinomialUpperTail(successes, trials int, probability float64) float64 {
+	if probability <= 0 {
+		return 0
+	}
+	if probability >= 1 {
+		return 1
+	}
+	trialsGamma, _ := math.Lgamma(float64(trials + 1))
+	successGamma, _ := math.Lgamma(float64(successes + 1))
+	failureGamma, _ := math.Lgamma(float64(trials - successes + 1))
+	logTerm := trialsGamma - successGamma - failureGamma + float64(successes)*math.Log(probability) + float64(trials-successes)*math.Log1p(-probability)
+	term := math.Exp(logTerm)
+	tail := term
+	for i := successes; i < trials; i++ {
+		term *= float64(trials-i) / float64(i+1) * probability / (1 - probability)
+		tail += term
+	}
+	return min(1, tail)
 }
 
 func temporalSpokenSafetyPositiveIntervalDetected(expected TemporalSpokenSafetyPositiveInterval, matches []TemporalSpokenSafetyMatch) bool {
