@@ -4793,8 +4793,8 @@ when reproducing an archived no-signal observation. This narrowly retained exter
 contract does not provide a general legacy-loader option or an admission fallback.
 
 Spoken-language safety is a separate complete-source evidence seam; neither the production catalog
-transcript nor a direct-video model's spoken-language answer can satisfy it. The catalog transcript
-is deliberately selective and normally samples only the `LanguageSpan` window, while the safety
+transcript nor a direct-video model's spoken-language answer can satisfy it alone. The catalog
+transcript is deliberately selective and normally samples only the `LanguageSpan` window, while the safety
 seam transcribes `[0, measured source duration)` for every source in the exact corpus manifest and
 every additional source named only by the construction authority. It validates the label-blind
 packet set and its external media bytes against that corpus manifest before evaluating transcripts,
@@ -4834,6 +4834,81 @@ case identities, counts, rates, authority digests, and outcomes. It never reprod
 transcript text, or policy phrases and grants no production permission even when the diagnostic
 challenge passes. Generated/TTS controls are permanently marked `development` and can produce only
 a diagnostic result; they cannot satisfy or be relabeled as the independent-source certification.
+
+The maintained transcript projection above remains deterministic diagnostic history: it loads and
+projects already-produced evidence and owns no network, process, retry, budget, or production-ingest
+behavior. Measured development controls supersede the assumption that it can become the production
+scanner by adding a decoder. Whisper-family transcripts missed prohibited positives; a stronger local
+acoustic proposer retained the known positive but generated an impractical candidate queue. A hosted
+native-audio adjudicator reduced that queue without earning negative authority, and a distinct
+complete-video/audio route corroborated the reduced set. Those observations establish the next
+production boundary, not a clean-source label or an admission certificate.
+
+The production **spoken-safety evaluator** is one deep Go module with one external evaluation operation
+over an immutable source-authority document. It owns complete-source validation, bounded media planning,
+the ordered cascade, deterministic reduction, and canonical result validation. Local acoustic proposal,
+native-audio adjudication, complete-video/audio corroboration, and media extraction are private adapters;
+their provider, process, and tool details do not leak into callers. The module emits claim-specific
+evidence plus an immutable per-step ledger. It does not return or imply a filler-admission verdict, and
+`filleradmission.Evaluator` remains the only terminal semantic authority.
+
+The cascade validates exact source bytes, measured duration, transformations, tool identities, and
+complete modality coverage before inference. A certified local acoustic proposer emits source-relative
+candidate intervals. Each candidate is adjudicated by a pinned native-audio route. Only when every
+candidate receives a valid absent result may a distinct pinned route inspect the complete source video
+and audio. Calls are serial by default and retain the exact requested and canonical model, upstream
+route, snapshot, modalities, media bounds, response, cost, reservation, settlement, and failure identity
+required by the OpenRouter certification contract above.
+
+Reduction is deliberately asymmetric. One valid prohibited-presence observation quarantines the source;
+a negative observation never votes it away. An unclear or disagreeing result, incomplete modality,
+provider or local-runtime failure, stale identity, exceeded budget, or invalid schema holds
+operationally. A presence response with malformed timing is sufficient to hold but cannot be projected
+as a bounded fact. Two valid negative model observations produce only `candidate_rejected`: they never
+mean clean, suitable, ingestible, schedulable, or admitted. A proposer that emits no candidates likewise
+cannot establish clean coverage before the complete cascade is independently certified.
+
+The reusable OpenRouter multimedia transport is a separate concrete infrastructure module rather than
+part of the identity-blind review package or the generic text/tool LLM client. It hides capability-
+snapshot validation, canonical model and upstream binding, zero-data-retention and fallback-disabled
+routing, strict structured output, media ceilings, durable reservations, exact settlement, response
+metadata, and raw-response binding. Review, certification, and production safety modules may consume
+that behavior through private interfaces; none may weaken its route or accounting contract.
+
+Production integration is shadow-only. Its durable ledger is written before the compatibility score may
+run; failure to persist leaves the ingest parked and recoverable. The result grants no catalog filing,
+training, scheduling, or production-admission permission. An applied projection from certified
+spoken-safety evidence into the admission document is a later design and rollout change. Its identity
+must match the exact certification artifact; model, route, prompt/schema, media planner, policy, local
+runtime, weight, or implementation drift returns a hold until recertified.
+
+Restricted spoken language and broad visual suitability remain separate claims. Complete-video
+suitability must ultimately cover every source, including a source for which the acoustic proposer emits
+no interval; a video corroboration performed only on spoken candidates cannot satisfy that obligation.
+The admission evaluator combines independently certified claim evidence and never treats one no-signal
+lane as authority for another.
+
+The local proposer is not a production dependency until its runtime and exact model-weight artifacts have
+explicit redistribution and use authority recorded in §14. A model-card license label without the
+corresponding archive terms is insufficient. If that authority cannot be established, certification must
+select a legally usable proposer before implementation continues; a lower-recall decoder is not silently
+substituted.
+
+Production certification uses a locked, source-family-disjoint challenge of real speech, not generated
+or transformed copies pretending to be independent observations. Positive coverage includes distinct
+speakers and source families across the predeclared accents/locales, music and overlap, noise, speed and
+pitch, codec, clipping, and placement slices. With zero misses it still requires at least 59 independent
+positive source families for the one-sided 95% exact Clopper-Pearson recall lower bound to reach 95%.
+Clean and near-match controls report their observed false-positive rate for every locked locale/slice;
+any stronger confidence-bound target declares its sample population before the challenge is opened.
+Known-script, consented real-speaker recordings may supply positive truth when licensed pre-labeled media
+is unavailable, but two independent blind reviewer identities still verify audibility and timing and a
+third adjudicates disagreement. A model-backed reviewer requires the immutable attestation and candidate-
+family exclusion already specified above. The maintainer is not a required blind reviewer.
+
+No model is trained or fine-tuned for this lane until governed source-disjoint labels exist and the
+certified stock cascade demonstrably misses a locked gate. Existing unknown commercials and agreement
+between candidate models remain development observations and cannot be promoted into training truth.
 
 The temporal `unusable` answer is diagnostic history, not media-integrity truth. Media integrity,
 presentation/source defects, broadcast suitability, semantic unit/role, and rights are five
