@@ -248,6 +248,7 @@ func newTemporalSpokenSafetyFixture(t *testing.T) temporalSpokenSafetyFixture {
 		manifest.Cases = append(manifest.Cases, item)
 		mapping.Entries = append(mapping.Entries, entry)
 	}
+	mapping.TranscriptSetSHA256 = fillerbakeoff.TranscriptSetSHA256(artifacts)
 	unreviewedCaseID := "case-unreviewed-prohibited"
 	unreviewedDuration := int64(15_000)
 	unreviewedRoot := filepath.Join(corpusRoot, "packet-unreviewed")
@@ -282,7 +283,6 @@ func newTemporalSpokenSafetyFixture(t *testing.T) temporalSpokenSafetyFixture {
 		EvidenceSHA256: unreviewedPacketSHA, Provenance: fillereval.MediaProvenance{SegmentDurationMS: unreviewedDuration},
 	})
 	packets = append(packets, unreviewedPacket)
-	mapping.TranscriptSetSHA256 = fillerbakeoff.TranscriptSetSHA256(artifacts)
 	corpusPath, packetsPath := filepath.Join(root, "draft.json"), filepath.Join(root, "packets.jsonl")
 	writeTemporalSpokenSafetyJSON(t, corpusPath, corpus)
 	writeTemporalSpokenSafetyPacketJSONL(t, packetsPath, packets)

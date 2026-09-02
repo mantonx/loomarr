@@ -62,8 +62,9 @@ func loadTemporalSpokenSafety(config TemporalSpokenSafetyConfig) (temporalSpoken
 	if err != nil {
 		return temporalSpokenSafetyLoaded{}, fmt.Errorf("read spoken-safety transcripts: %w", err)
 	}
-	if len(transcriptList) == 0 || fillerbakeoff.TranscriptSetSHA256(transcriptList) != privateMap.TranscriptSetSHA256 {
-		return temporalSpokenSafetyLoaded{}, fmt.Errorf("spoken-safety transcripts do not bind the evidence authority")
+	transcriptSetSHA := fillerbakeoff.TranscriptSetSHA256(transcriptList)
+	if len(transcriptList) == 0 || !reviewSHA256(transcriptSetSHA) {
+		return temporalSpokenSafetyLoaded{}, fmt.Errorf("spoken-safety transcript set identity is invalid")
 	}
 	transcripts := make(map[string]fillerbakeoff.TranscriptArtifact, len(transcriptList))
 	var engine fillerbakeoff.TranscriptEngineIdentity
@@ -116,7 +117,7 @@ func loadTemporalSpokenSafety(config TemporalSpokenSafetyConfig) (temporalSpoken
 		corpus: corpus, corpusCases: corpusCases, packets: packets,
 		evidence: evidence, privateMap: privateMap, transcripts: transcripts, structure: structure, policy: policy,
 		corpusSHA: corpusSHA, packetsSHA: packetsSHA,
-		evidenceSHA: evidenceSHA, privateMapSHA: privateMapSHA, transcriptSetSHA: privateMap.TranscriptSetSHA256,
+		evidenceSHA: evidenceSHA, privateMapSHA: privateMapSHA, transcriptSetSHA: transcriptSetSHA,
 		transcriptFileSHA: transcriptFileSHA, structureSHA: structureSHA, authoritySHA: authoritySHA, policySHA: policySHA, engine: engine,
 	}, nil
 }
