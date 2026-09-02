@@ -4874,8 +4874,9 @@ the immutable run header before appending source-plan and proposal events; a rep
 completed run returns its already-canonical terminal evidence without repeating local or hosted work. An
 existing incomplete run is never resumed in place or silently reissued: recovery closes it conservatively and
 a caller starts a new bounded run id. The operation returns only the path-free run identity, closed evidence,
-and reducer result. It exposes neither adapters nor a provider response and cannot be used as an admission
-decision.
+reducer result, and terminal event id/digest needed to reproduce certification input. Audio assessments retain
+only sorted opaque matched-rule ids beside their closed state; they never retain a phrase, transcript, or quote.
+It exposes neither adapters nor a provider response and cannot be used as an admission decision.
 
 The cascade validates exact source bytes, measured duration, transformations, tool identities, and
 complete modality coverage before inference. A certified local acoustic proposer emits source-relative
@@ -5009,6 +5010,26 @@ Known-script, consented real-speaker recordings may supply positive truth when l
 is unavailable, but two independent blind reviewer identities still verify audibility and timing and a
 third adjudicates disagreement. A model-backed reviewer requires the immutable attestation and candidate-
 family exclusion already specified above. The maintainer is not a required blind reviewer.
+
+Cascade certification is a separate deterministic module over two private immutable documents. The authority is
+authored before evaluation and binds the policy, evaluator/proposer and hosted-route identities, truth
+provenance and rights/consent digests, opaque case and source-family ids, locale/slice coverage, positive rule
+intervals, and two agreeing reviewer attestations (or a third adjudicator). A model-backed reviewer declares
+its model family, which must be absent from every proposer/adjudicator/corroborator family in the same
+authority. The label-blind result manifest contains every authority alias exactly once with the complete
+path-free run header and ordered ledger events; it contains no truth label. Every run must start after the
+authority was authored, bind that exact authority digest as its certification identity, and end in the named
+terminal event/digest. Missing, extra, duplicate, incomplete, identity-drifted, or non-canonical runs make the
+whole score operationally invalid rather than silently reducing its denominator.
+
+The scorer counts a positive source only when a valid audio detection carrying the expected opaque rule id
+overlaps every declared positive interval. Another prohibited rule, a video-only flag, an unprojectable
+presence, a hold, or a candidate interval without rule attribution is not a hit. Recall is by the authority's
+unique source families. Clean false positives are any audio prohibited detection and are reported for both
+locale and declared clean slices. A development authority can produce only `diagnostic_passed`; a
+certification authority still requires at least 59 positive families, zero misses, a one-sided exact 95%
+source-recall lower bound of at least 95%, zero coverage holds, and no declared clean slice above the
+predeclared 1% observed false-positive ceiling. Every output permission remains false regardless of status.
 
 No model is trained or fine-tuned for this lane until governed source-disjoint labels exist and the
 certified stock cascade demonstrably misses a locked gate. Existing unknown commercials and agreement
