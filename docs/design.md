@@ -248,7 +248,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Commercials & filler domain (design §10): the clip catalog model and pod assembly.
 - **`fillerreference`** · 1 importer · → `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `mediatools`, `taxonomy`
   Owns the deterministic pre-screen for the production-ready filler reference cohort.
-- **`fillersafety`** · 1 importer · → `mediatools`
+- **`fillersafety`** · 1 importer · → `mediatools`, `openroutermedia`
   Owns the fail-closed spoken-safety cascade and its shadow evidence.
 
 **Layer 6**
