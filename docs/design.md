@@ -162,6 +162,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns the source-neutral, non-authorizing inventory contract used to qualify certification corpus lanes.
 - **`fillereval`** · 3 importers
   Owns the hermetic certification contract for filler admission.
+- **`fillersafety`**
+  Owns the fail-closed spoken-safety cascade and its shadow evidence.
 - **`images/rustgen`** · 4 importers
   Concrete adapter for Loomarr's required Rust image worker (§22).
 - **`inventory`** · 3 importers
