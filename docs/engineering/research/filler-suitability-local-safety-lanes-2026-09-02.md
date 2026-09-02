@@ -182,7 +182,8 @@ Two model-side changes were measured against the same controls:
 | pinned local `small.en` | 17/59 | 0/8 | locked development score |
 | same weights + private policy-vocabulary prompt | 24/59 | 0/8 | development diagnostic only |
 | OpenRouter `openai/whisper-large-v3` | 22/59 | 0/8 | development diagnostic only; $0.002960712 |
-| union of all three | 31/59 | 0/8 | still 28 positive misses |
+| pinned local `large-v3-turbo` | 17/59 | 0/8 | development diagnostic only; 1.6 GB model |
+| union of all four | 33/59 | 0/8 | still 26 positive misses |
 
 The prompted transcript-set SHA-256 is
 `ad1fefdd04690da20e9a30cb8dd84d70caf1da3f2d900c1d7c06979b949fea20`.
@@ -204,8 +205,26 @@ while one clean near-match was also one edit away. Broad fuzzy matching would
 therefore buy little recall and immediately violate the clean boundary. An LLM
 fine-tune is not justified by this evidence: a text model cannot recover an
 acoustic token the transcript lost, and direct-audio model training would be a
-different, much larger evidence program. Next compare a digest-pinned local
-larger ASR and a purpose-built phonetic/keyword spotter, using ambiguous acoustic
+different, much larger evidence program.
+
+The larger local comparison is also complete. Full `ggml-large-v3-turbo.bin`
+from the same immutable model-repository revision has SHA-256
+`1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69`
+and ran through the pinned v1.9.1 arm64 container runtime. Its normalized
+transcript set reproduces SHA-256
+`cd66b6b38c1e6a5ffa83ca8e116e3c4a79212f02ff6bdf4547c92e485487e008`;
+the byte-identical transcript files have SHA-256
+`200c63760ab7682929f446bbcb3a42184173112c6c5b198000f998dfdc4c0b7f`
+and byte-identical scores have SHA-256
+`4e145703c3be87ac846e4c6665346c92059a7bebe86a11f69454ced25f6f405a`.
+It still detected only 17/59 positives, including zero of six quiet-speech
+controls, with 0/8 clean false positives. It overlapped only 9 of the baseline
+`small.en` detections and added two unique detections beyond the prior
+three-lane union. That diversity lifts the four-lane union to 33/59, but does
+not justify replacing the shipped 466 MB model with a 1.6 GB model or adding an
+ASR ensemble that still misses 26 positives.
+
+Next build a purpose-built phonetic/keyword spotter, using ambiguous acoustic
 matches as holds rather than silently broadening prohibited policy. Apple
 Speech remains optional, but its on-device recognizer on the current host is
 available and its `contextualStrings` API is specifically designed to bias
