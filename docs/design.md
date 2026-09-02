@@ -4898,6 +4898,33 @@ spoken-safety evidence into the admission document is a later design and rollout
 must match the exact certification artifact; model, route, prompt/schema, media planner, policy, local
 runtime, weight, or implementation drift returns a hold until recertified.
 
+The spoken-safety ledger is not an admission-decision record. `filler_admission_decisions` stores the
+terminal policy projection described above; a spoken-safety run instead records how one evidence attempt
+executed, including work that crashed or never reached a semantic result. Persistence therefore owns an
+immutable run header and append-only, ordinal events. The header binds the clip, complete-source authority,
+source bytes, certification, policy, implementation, and start time. Events use a closed kind and payload
+schema for source planning, local proposal, hosted-call reservation, hosted-call settlement, and the
+terminal reduced result. Stable run/event identities and exact-payload conflict checks make a repeated
+write idempotent without permitting history to be replaced.
+
+A hosted-call reservation event and its V62 inference-budget reservation commit atomically before the
+HTTP request starts. Settlement is a later append-only event bound to that reservation; it records the
+request and response digests, requested and resolved model/provider identities, upstream route, modality
+coverage, generation id, closed outcome or failure code, exact charged decimal/nanodollars, and reservation
+disposition. A terminal event contains the canonical closed evidence and reducer result and references every
+attempt event in order. The compatibility score may advance only after that terminal event commits. An
+interrupted run remains visibly incomplete: startup/retry appends an operational terminal hold, marks any
+unsettled reservation failed with unknown settlement, and starts a new bounded attempt rather than mutating
+or silently replaying the old history. Old reservations continue to count against budget, so repeated
+crashes cannot create unbounded spend.
+
+The ledger stores only bounded public identities, closed states, interval coordinates, digests, accounting,
+and opaque rule ids. Machine-local paths, source names, restricted variants, transcripts, quotes, private
+policy JSON, prompts, media bytes, raw request bodies, raw provider responses, and free-form provider errors
+are forbidden. Request/response SHA-256 values plus the provider generation id bind those private artifacts
+without copying them into an ordinary application database or operator projection. No ledger read model is
+ordinary-user-facing in this slice.
+
 Restricted spoken language and broad visual suitability remain separate claims. Complete-video
 suitability must ultimately cover every source, including a source for which the acoustic proposer emits
 no interval; a video corroboration performed only on spoken candidates cannot satisfy that obligation.
