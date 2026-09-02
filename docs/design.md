@@ -4818,6 +4818,18 @@ it requires zero positive misses and a one-sided 95% exact Clopper-Pearson lower
 passes, the report keeps training, ingestion, scheduling, and production admission false even when
 the measured sources contain no match.
 
+Spoken-safety certification consumes that exact private projection plus a separate locked private
+challenge authority. The authority uses opaque aliases and family identifiers to label
+source-disjoint positive intervals and clean locale/slice controls; it contains no model output and
+cannot be derived from the transcript under test. Every positive interval must overlap a prohibited
+match from the projected source, and any missing/ambiguous transcript remains an operational hold.
+Recall is counted by independent source family, requires zero misses, and reports the one-sided 95%
+exact Clopper-Pearson lower bound. Clean false-positive rates are reproduced independently for each
+locked locale/slice and may not exceed 1%. The canonical certification report retains only opaque
+case identities, counts, rates, authority digests, and outcomes. It never reproduces source identity,
+transcript text, or policy phrases and grants no production permission even when the diagnostic
+challenge passes.
+
 The temporal `unusable` answer is diagnostic history, not media-integrity truth. Media integrity,
 presentation/source defects, broadcast suitability, semantic unit/role, and rights are five
 independent claims with independent policy owners. The maintained media-integrity challenge consumes
