@@ -50,7 +50,7 @@ func (v videoCorroboratorFuncs) corroborate(ctx context.Context, plan *CompleteM
 }
 
 type evaluator struct {
-	proposer         acousticProposer
+	proposer         candidateProposer
 	proposerIdentity proposerIdentity
 	audioExtractor   candidateAudioExtractor
 	audio            audioAdjudicator
