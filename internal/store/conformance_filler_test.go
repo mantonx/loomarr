@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/loomarr/loomarr/internal/filler"
 	"github.com/loomarr/loomarr/internal/filleradmission"
 	"github.com/loomarr/loomarr/internal/fillerdecision"
+	"github.com/loomarr/loomarr/internal/fillersafety"
 	"github.com/loomarr/loomarr/internal/schedule"
 	"github.com/loomarr/loomarr/internal/taxonomy"
 )
@@ -4049,6 +4051,92 @@ func testFillerAdmissionDecisionAudit(t *testing.T, newStore NewStoreFunc) {
 	counts, err = s.FillerDecisionCounts(ctx)
 	if err != nil || counts.UnresolvedReviews != 0 {
 		t.Fatalf("resolved counts = %+v, %v", counts, err)
+	}
+}
+
+func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
+	t.Helper()
+	s := newStore(t)
+	defer func() { _ = s.Close() }()
+	ctx := context.Background()
+	at := time.Date(2026, 9, 2, 14, 0, 0, 123, time.UTC)
+	hash := strings.Repeat("a", 64)
+	run := fillersafety.LedgerRun{
+		ID: "safety-run-1", ClipHash: "clip-safety-1", AuthoritySHA256: hash, SourceSHA256: hash,
+		SourceBytes: 4096, CertificationSHA256: hash, PolicySHA256: hash,
+		Implementation: "spoken-safety-v1", CreatedAt: at,
+	}
+	if err := s.PutSpokenSafetyRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutSpokenSafetyRun(ctx, run); err != nil {
+		t.Fatalf("idempotent run insert: %v", err)
+	}
+	conflict := run
+	conflict.SourceBytes++
+	if err := s.PutSpokenSafetyRun(ctx, conflict); !errors.Is(err, fillersafety.ErrLedgerConflict) {
+		t.Fatalf("conflicting run = %v, want ErrLedgerConflict", err)
+	}
+	gotRun, err := s.GetSpokenSafetyRun(ctx, run.ID)
+	if err != nil || gotRun != run {
+		t.Fatalf("run round trip = %+v, %v", gotRun, err)
+	}
+	second := openSecondConformanceStore(t, s)
+	fromSecond, err := second.GetSpokenSafetyRun(ctx, run.ID)
+	if closeErr := second.Close(); err != nil || closeErr != nil || fromSecond != run {
+		t.Fatalf("run did not survive fresh store pool: %+v, %v, close=%v", fromSecond, err, closeErr)
+	}
+
+	plan := fillersafety.LedgerEvent{
+		ID: "safety-event-plan", RunID: run.ID, Ordinal: 0, Kind: fillersafety.LedgerSourcePlanned,
+		Source: &fillersafety.SourcePlanned{
+			Audio: fillersafety.Span{EndMS: 10_000}, Video: fillersafety.Span{EndMS: 10_000},
+		}, CreatedAt: at.Add(time.Nanosecond),
+	}
+	proposal := fillersafety.LedgerEvent{
+		ID: "safety-event-proposal", RunID: run.ID, Ordinal: 1, Kind: fillersafety.LedgerProposalCompleted,
+		Proposal:  &fillersafety.ProposalCompleted{State: fillersafety.ProposalComplete, ProposerSHA256: hash, Candidates: []fillersafety.Candidate{}},
+		CreatedAt: at.Add(2 * time.Nanosecond),
+	}
+	evidence := fillersafety.Evidence{ProposalState: fillersafety.ProposalComplete, Candidates: []fillersafety.Candidate{}, Audio: []fillersafety.AudioAssessment{}, Video: fillersafety.VideoNoSignal}
+	terminal := fillersafety.LedgerEvent{
+		ID: "safety-event-terminal", RunID: run.ID, Ordinal: 2, Kind: fillersafety.LedgerTerminal,
+		Terminal:  &fillersafety.TerminalResult{Evidence: evidence, Result: fillersafety.Reduce(evidence), EventIDs: []string{plan.ID, proposal.ID}},
+		CreatedAt: at.Add(3 * time.Nanosecond),
+	}
+	for _, event := range []fillersafety.LedgerEvent{plan, proposal, terminal} {
+		if err := s.AppendSpokenSafetyEvent(ctx, event); err != nil {
+			t.Fatalf("append %s: %v", event.Kind, err)
+		}
+	}
+	if err := s.AppendSpokenSafetyEvent(ctx, terminal); err != nil {
+		t.Fatalf("idempotent terminal insert: %v", err)
+	}
+	events, err := s.ListSpokenSafetyEvents(ctx, run.ID)
+	if err != nil || len(events) != 3 {
+		t.Fatalf("events = %+v, %v", events, err)
+	}
+	for index, event := range events {
+		if event.Ordinal != index {
+			t.Fatalf("event %d ordinal = %d", index, event.Ordinal)
+		}
+	}
+	if events[2].Terminal == nil || events[2].Terminal.Result.Outcome != fillersafety.OutcomeCandidateRejected {
+		t.Fatalf("terminal event = %+v", events[2])
+	}
+
+	afterTerminal := proposal
+	afterTerminal.ID, afterTerminal.Ordinal = "safety-event-after-terminal", 3
+	if err := s.AppendSpokenSafetyEvent(ctx, afterTerminal); !errors.Is(err, fillersafety.ErrLedgerConflict) {
+		t.Fatalf("append after terminal = %v, want ErrLedgerConflict", err)
+	}
+	wrongOrdinal := terminal
+	wrongOrdinal.ID, wrongOrdinal.Ordinal = "safety-event-gap", 8
+	if err := s.AppendSpokenSafetyEvent(ctx, wrongOrdinal); !errors.Is(err, fillersafety.ErrLedgerConflict) {
+		t.Fatalf("ordinal gap = %v, want ErrLedgerConflict", err)
+	}
+	if _, err := s.GetSpokenSafetyRun(ctx, "missing-run"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing run = %v, want ErrNotFound", err)
 	}
 }
 

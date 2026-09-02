@@ -15,6 +15,7 @@ import (
 	"github.com/loomarr/loomarr/internal/diagnostics"
 	"github.com/loomarr/loomarr/internal/filler"
 	"github.com/loomarr/loomarr/internal/fillerdecision"
+	"github.com/loomarr/loomarr/internal/fillersafety"
 	"github.com/loomarr/loomarr/internal/inventory"
 	"github.com/loomarr/loomarr/internal/invitation"
 	"github.com/loomarr/loomarr/internal/notifications"
@@ -577,6 +578,12 @@ type FillerDecisionStore interface {
 	fillerdecision.Repository
 }
 
+// FillerSafetyStore owns the path-free, append-only execution ledger for the
+// spoken-safety shadow cascade. It is distinct from terminal admission policy.
+type FillerSafetyStore interface {
+	fillersafety.LedgerRepository
+}
+
 // FillerSourceStore is the persisted REMOTE filler-source registry (§10, V33).
 //
 // ⚠ Remote sources only. The drop-folder and the media-server library stay DERIVED from config
@@ -821,6 +828,7 @@ type Store interface {
 	InteractiveOperationStore
 	FillerInferenceStore
 	FillerDecisionStore
+	FillerSafetyStore
 	SplitProposalStore
 	AiringStore
 	ActivityStore
