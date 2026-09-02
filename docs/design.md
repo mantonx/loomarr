@@ -123,12 +123,13 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 | `catalog` | 6 | `library`, `provision` |
 | `contact` | 5 | — |
 | `diagnostics` | 8 | — |
-| `filler` | 7 | `diagnostics`, `filleradmission`, `llm`, `taxonomy` |
+| `filler` | 7 | `diagnostics`, `filleradmission`, `llm`, `mediatools`, `taxonomy` |
 | `filleradmission` | 8 | — |
 | `httpx` | 9 | `metrics` |
 | `invitation` | 6 | `contact` |
 | `library` | 8 | `filler`, `httpx`, `metrics` |
 | `llm` | 6 | `httpx`, `metrics` |
+| `mediatools` | 5 | `diagnostics` |
 | `metrics` | 8 | `provision` |
 | `notifications` | 5 | `httpx` |
 | `provision` | 18 | — |
@@ -162,8 +163,6 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns the source-neutral, non-authorizing inventory contract used to qualify certification corpus lanes.
 - **`fillereval`** · 3 importers
   Owns the hermetic certification contract for filler admission.
-- **`fillersafety`**
-  Owns the fail-closed spoken-safety cascade and its shadow evidence.
 - **`images/rustgen`** · 4 importers
   Concrete adapter for Loomarr's required Rust image worker (§22).
 - **`inventory`** · 3 importers
@@ -238,7 +237,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 4**
 
-- **`mediatools`** · 4 importers · → `diagnostics`, `playout`, `proctree`
+- **`mediatools`** · 5 importers · → `diagnostics`, `playout`, `proctree`
   Ffmpeg / ffprobe / whisper layer (§10, §14.2): the exec calls, the parsers for what those binaries print, and the shapes they return.
 - **`recommend`** · → `llm`
   Defines inert Channel Concepts and the hermetic evaluator used to certify channel-recommendation models.
@@ -249,6 +248,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Commercials & filler domain (design §10): the clip catalog model and pod assembly.
 - **`fillerreference`** · 1 importer · → `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `mediatools`, `taxonomy`
   Owns the deterministic pre-screen for the production-ready filler reference cohort.
+- **`fillersafety`** · → `mediatools`
+  Owns the fail-closed spoken-safety cascade and its shadow evidence.
 
 **Layer 6**
 
