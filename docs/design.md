@@ -4793,12 +4793,15 @@ contract does not provide a general legacy-loader option or an admission fallbac
 Spoken-language safety is a separate complete-source evidence seam; neither the production catalog
 transcript nor a direct-video model's spoken-language answer can satisfy it. The catalog transcript
 is deliberately selective and normally samples only the `LanguageSpan` window, while the safety
-seam transcribes `[0, measured source duration)` for every distinct source named by the construction
-authority. It verifies the exact source bytes before transcription and binds the source, extracted
-audio, ffmpeg, whisper executable, model, implementation, timing, and completion identities in an
-immutable private transcript artifact. Wordless is a completed outcome only after that full span
-runs successfully. Missing audio, an engine error, unordered or out-of-range timing, identity drift,
-or an incomplete source set is a coverage hold, never a clean observation.
+seam transcribes `[0, measured source duration)` for every source in the exact corpus manifest and
+every additional source named only by the construction authority. It validates the label-blind
+packet set and its external media bytes against that corpus manifest before evaluating transcripts,
+then binds the source, packet, extracted audio, ffmpeg, whisper executable, model, implementation,
+timing, and completion identities in an immutable private transcript artifact. The smaller review
+evidence set is a projection target, not the scanner's population. Wordless is a completed outcome
+only after that full span runs successfully. Missing audio, an engine error, unordered or
+out-of-range timing, identity drift, or an incomplete source set is a coverage hold, never a clean
+observation.
 
 One deep `PublishTemporalSpokenSafety` module interface owns strict authority loading, complete-span
 transcript-artifact validation, private policy evaluation, source projection, canonical validation,
