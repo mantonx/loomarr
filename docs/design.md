@@ -4866,6 +4866,15 @@ their provider, process, and tool details do not leak into callers. The module e
 evidence plus an immutable per-step ledger. It does not return or imply a filler-admission verdict, and
 `filleradmission.Evaluator` remains the only terminal semantic authority.
 
+The operation request supplies a stable run id and start time plus the source authority and machine-local
+path. The path remains excluded from every returned or durable value. A first invocation atomically creates
+the immutable run header before appending source-plan and proposal events; a repeated invocation of the same
+completed run returns its already-canonical terminal evidence without repeating local or hosted work. An
+existing incomplete run is never resumed in place or silently reissued: recovery closes it conservatively and
+a caller starts a new bounded run id. The operation returns only the path-free run identity, closed evidence,
+and reducer result. It exposes neither adapters nor a provider response and cannot be used as an admission
+decision.
+
 The cascade validates exact source bytes, measured duration, transformations, tool identities, and
 complete modality coverage before inference. A certified local acoustic proposer emits source-relative
 candidate intervals. Each candidate is adjudicated by a pinned native-audio route. Only when every
@@ -4921,6 +4930,15 @@ interrupted run remains visibly incomplete: startup/retry appends an operational
 unsettled reservation failed with unknown settlement, and starts a new bounded attempt rather than mutating
 or silently replaying the old history. Old reservations continue to count against budget, so repeated
 crashes cannot create unbounded spend.
+
+`fillersafety` owns the narrow persistence port for those lifecycle facts; the SQL store is an adapter that
+maps its closed reservation and settlement commands onto the generic V62 inference row and the spoken-safety
+event in one transaction. The evaluator supplies deterministic per-run event/evaluation ids, exact media and
+version identities, and the closed outcome or failure class. The store supplies only budget disposition and
+persisted accounting facts. A budget-held reservation is itself durable and prevents the HTTP request; it
+needs no settlement event. Once an accepted reservation exists, inability to persist its settlement or the
+terminal event returns an operational error and leaves the run incomplete for startup recovery rather than
+returning unrecorded semantic evidence.
 
 The ledger stores only bounded public identities, closed states, interval coordinates, digests, accounting,
 and opaque rule ids. Machine-local paths, source names, restricted variants, transcripts, quotes, private
