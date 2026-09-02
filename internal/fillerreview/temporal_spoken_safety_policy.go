@@ -43,7 +43,7 @@ func validTemporalSpokenSafetyPolicyID(value string) bool {
 		return false
 	}
 	for _, r := range value[len("policy-"):] {
-		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-') {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '.' && r != '_' && r != '-' {
 			return false
 		}
 	}

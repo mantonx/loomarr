@@ -210,9 +210,10 @@ func newTemporalSpokenSafetyFixture(t *testing.T) temporalSpokenSafetyFixture {
 		}
 		if index != 47 {
 			text := "ordinary speech"
-			if index == 0 {
+			switch index {
+			case 0:
 				text = prohibitedPhrase
-			} else if index == 1 {
+			case 1:
 				text = ambiguousPhrase
 			}
 			segments := []fillerbakeoff.TranscriptSegment{{StartMS: 100, EndMS: 1_000, Text: text}}
