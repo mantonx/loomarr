@@ -3,11 +3,9 @@ package fillerreview
 import (
 	"sort"
 	"strings"
-	"unicode"
 
 	"github.com/loomarr/loomarr/internal/fillerbakeoff"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/unicode/norm"
+	"github.com/loomarr/loomarr/internal/fillersafety"
 )
 
 type temporalSpokenSafetyTimedWord struct {
@@ -17,24 +15,7 @@ type temporalSpokenSafetyTimedWord struct {
 }
 
 func temporalSpokenSafetyWords(value string) []string {
-	value = cases.Fold().String(norm.NFKC.String(value))
-	var words []string
-	var current []rune
-	flush := func() {
-		if len(current) > 0 {
-			words = append(words, string(current))
-			current = current[:0]
-		}
-	}
-	for _, r := range value {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			current = append(current, r)
-		} else {
-			flush()
-		}
-	}
-	flush()
-	return words
+	return fillersafety.CanonicalWords(value)
 }
 
 func matchTemporalSpokenSafety(policy TemporalSpokenSafetyPolicy, segments []fillerbakeoff.TranscriptSegment) []TemporalSpokenSafetyMatch {
