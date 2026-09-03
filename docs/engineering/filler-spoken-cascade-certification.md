@@ -90,6 +90,11 @@ go run ./cmd/filler-spoken-cascade-certify \
 report. The output is created once at mode `0600`; an existing file is never overwritten. The
 console receives aggregate counts and digests only.
 
-The remaining operational prerequisite is a legally usable, exactly pinned proposer plus a
-real source-disjoint private authority. Until both exist, this command is tested machinery,
-not a production certification claim.
+The selected production-baseline proposer is now legally unblocked and exactly pinned without
+external weights: it partitions the complete soundtrack into contiguous 28-second windows and
+the existing extractor adds at most one second of context at each edge. The sherpa proposer
+remains a development comparison only while its exact weight authority is unresolved.
+
+The remaining operational prerequisite is a real source-disjoint private authority and its
+independent execution through the pinned hosted routes. Until that exists, this command is
+tested machinery, not a production certification claim.
