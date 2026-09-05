@@ -81,9 +81,18 @@ checkpoint remains coherent.
 Every supervised implementation assignment and every review pass has a 100,000-to-200,000-token
 checkpoint budget; 150,000 is the default. Record the meter source and starting value in the worker
 brief. Prefer a native goal budget. If the harness exposes only worker-scoped usage, the supervisor
-tracks the delta and interrupts at the limit. If usage is unavailable or cannot be attributed to the
-worker, that checkpoint is read-only: planning, research, diagnosis, and review are allowed, but
+tracks the delta and stops early enough to preserve the limit. Reserve at least 15% for reporting
+plus headroom for delayed meter updates and in-flight usage. Neither polling nor an unverified native
+budget field proves a hard cap. If enforcement or worker attribution cannot be established,
+that checkpoint is read-only: planning, research, diagnosis, and review are allowed, but
 repository and external-state changes are not.
+
+Follow the workflow's [launch preflight](../../.agents/workflows/supervise.md#verify-launch-before-handoff)
+in the exact worker session: verify effective permissions and approved write roots, model/effort,
+session id and separate native goal id, actual budget/status/usage, and the stop mechanism. A queued
+instruction does not change a sandbox or acknowledge a handoff. Keep setup and authorization waits
+out of active implementation loops. At stop, verify cessation and the final authoritative meter;
+do not accept a cached usage count or mark unfinished work complete to silence continuations.
 
 The limit cannot be raised or reset while a checkpoint is active. Continuing implementation,
 changing scope, or running another review pass requires the worker to return a report and the
@@ -106,19 +115,21 @@ in the current supervisor window unless the maintainer explicitly asks for separ
 enable mouse mode so the layout can be focused, resized, and scrolled directly.
 
 Create worktrees through the harness before starting agent processes, then arrange panes with exact
-paths. For example:
+paths and explicit targets. Verify the current supervisor's pane/window from its session context;
+a default-target lookup may select an unrelated session. If the supervisor is outside tmux, ask for
+the layout decision before creating a dedicated session and retain the current conversation as
+delivery owner. For a supervisor already in tmux, this example adds one independent worker:
 
 ```sh
 make agent-worktree TOPIC=worker-a CLAIMS=<owned-seam>
-make agent-worktree TOPIC=worker-b CLAIMS=<different-seam>
-
-tmux new-session -d -s loomarr-supervisor -c /path/to/owning-worktree
-tmux set-option -t loomarr-supervisor mouse on
-tmux split-window -t loomarr-supervisor -h -c /path/to/loomarr-worker-a
-tmux select-pane -T worker-a
-tmux split-window -t loomarr-supervisor -v -c /path/to/loomarr-worker-b
-tmux select-pane -T worker-b
-tmux attach -t loomarr-supervisor
+# Copy these exact ids from the verified supervisor session, not a default lookup.
+supervisor_window='<session-id>:<window-id>'
+tmux set-option -t "$supervisor_window" mouse on
+tmux split-window -P -F '#{pane_id}' -t "$supervisor_window" -h -c /path/to/loomarr-worker-a
+# Copy the returned id; start the interactive worker in that pane.
+worker_pane='<returned-pane-id>'
+tmux select-pane -t "$worker_pane" -T worker-a
+tmux list-panes -t "$supervisor_window" -F '#{pane_id} #{pane_title} #{pane_current_command}'
 ```
 
 Start the chosen agent interactively in each pane so its chat composer remains available, then
@@ -127,7 +138,10 @@ unless the maintainer explicitly requests batch execution. Use
 `make agent-status` plus the worker report for coordination. Do not treat `tmux capture-pane` output
 as completion evidence or use blind `send-keys` automation as a substitute for an acknowledged
 handoff; prompts, approval overlays, and terminal state make that brittle. Use native subagents when
-live programmatic steering is required. When recovering a crashed session, launch or resume it from
+live programmatic steering is required and that execution shape is authorized; do not substitute
+hidden workers for a requested visible layout. Distinguish queued messages from current-turn
+steering, require acknowledgement, and verify native state and outstanding tool processes after an
+interrupt. When recovering a crashed session, launch or resume it from
 the owning worktree and verify that both the worktree and its Git metadata are writable before it
 continues an in-progress merge or edit. A linked worktree's metadata remains under the primary
 checkout's `.git/worktrees/`; add that exact metadata root when a sandbox supports extra writable
@@ -285,6 +299,13 @@ removing anything.
 Creating another worktree fails when the secondary-worktree count has reached 16. That is a backlog
 tripwire, not a concurrency target: run the audit and resolve its findings first. A maintainer may
 set `ALLOW_WORKTREE_BACKLOG=1` for an intentional exception.
+
+Record a retention disposition on the owning issue: exact branch/HEAD, owner, why it remains, and
+the next review trigger. Separate active delivery from superseded recovery copies; neither a closed
+PR nor a stopped pane proves deletion is safe. Resolve credentials, dirty files, runtime processes,
+and recovery evidence with the owner before cleanup. An exception to the limit must have its own
+retirement trigger; do not turn it into a standing override. Report what was removed and which
+committed work remains recoverable; do not imply discarded ignored build/runtime files were backed up.
 
 `make doctor` reports toolchain drift, worktrees, addresses, caches, and misplaced artifacts. It
 does not delete anything; `make agent-gc` owns worktree classification and retirement.

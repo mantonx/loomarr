@@ -261,6 +261,26 @@ func TestPlayoutProgramAdmissionFailureDoesNoResolverOrEncoderWork(t *testing.T)
 	}
 }
 
+func TestPlayoutProgram_DoesNotSpawnWhenPreparedFallbackCannotClaimCapacity(t *testing.T) {
+	encoder := &fakeEncoder{output: "must-not-run"}
+	sessions := &fakePlayoutSessions{denyProgram: true}
+	srv := newProgramServer(t, programOpts{
+		resolver: &fakeResolver{airing: playableAiring(0, time.Hour), url: "http://emby/v/1"},
+		encoder:  encoder.start, sessions: sessions,
+	})
+
+	resp := getPlayout(t, srv, "/v1/playout/program/ch1?token="+playoutToken)
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 while the block supervisor waits for capacity", resp.StatusCode)
+	}
+	if got := encoder.args(); got != nil {
+		t.Fatalf("encoder started without transcode capacity: %v", got)
+	}
+	if len(sessions.programCosts) == 0 {
+		t.Fatal("program did not ask the session manager for its real cost")
+	}
+}
+
 func TestPlayoutProgramAdmissionCannotEscapeConcurrentStopAll(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})

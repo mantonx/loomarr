@@ -28,13 +28,19 @@ jobs:
       - run: make fe-install
       - run: make fe-codegen
       - name: Cache Gradle
+        id: gradle-cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: android-tv-react-native-${{ runner.os }}-${{ hashFiles('web/pnpm-lock.yaml') }}-${{ github.run_id }}
-          restore-keys: android-tv-react-native-${{ runner.os }}-
+          key: android-tv-react-native-v1-${{ runner.os }}-temurin-21-node-${{ env.NODE_VERSION }}-${{ hashFiles('web/apps/tv/**', 'web/packages/**', 'web/pnpm-lock.yaml', 'web/scripts/**') }}-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: android-tv-react-native-v1-${{ runner.os }}-temurin-21-node-${{ env.NODE_VERSION }}-${{ hashFiles('web/apps/tv/**', 'web/packages/**', 'web/pnpm-lock.yaml', 'web/scripts/**') }}-${{ github.sha }}-
+      - name: Record Gradle cache provenance
+        run: |
+          echo "gradle-cache-primary-key=android-tv-react-native-v1-${{ runner.os }}-temurin-21-node-${{ env.NODE_VERSION }}-${{ hashFiles('web/apps/tv/**', 'web/packages/**', 'web/pnpm-lock.yaml', 'web/scripts/**') }}-${{ github.sha }}-${{ github.run_id }}"
+          echo "gradle-cache-hit=${{ steps.gradle-cache.outputs.cache-hit == 'true' }}"
+          echo "gradle-cache-source-sha=${GITHUB_SHA}"
       - run: make android
         env:
           ANDROID_CI_OUTPUT_DIR: ${{ github.workspace }}/.artifacts/android-ci

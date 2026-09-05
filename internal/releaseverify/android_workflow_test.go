@@ -56,6 +56,42 @@ func TestVerifyAndroidReleaseWorkflow(t *testing.T) {
 	}
 }
 
+func TestCIAndroidGradleCachePolicy(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test source")
+	}
+	workflowPath := filepath.Join(filepath.Dir(source), "..", "..", ".github", "workflows", "ci-android.yml")
+	data, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(data)
+
+	for _, want := range []string{
+		"id: gradle-cache",
+		"path: |\n            ~/.gradle/caches\n            ~/.gradle/wrapper",
+		"key: android-tv-react-native-v1-${{ runner.os }}-temurin-21-node-${{ env.NODE_VERSION }}-${{ hashFiles('web/apps/tv/**', 'web/packages/**', 'web/pnpm-lock.yaml', 'web/scripts/**') }}-${{ github.sha }}-${{ github.run_id }}",
+		"restore-keys: android-tv-react-native-v1-${{ runner.os }}-temurin-21-node-${{ env.NODE_VERSION }}-${{ hashFiles('web/apps/tv/**', 'web/packages/**', 'web/pnpm-lock.yaml', 'web/scripts/**') }}-${{ github.sha }}-",
+		"- name: Record Gradle cache provenance",
+		"gradle-cache-primary-key=android-tv-react-native-v1-${{ runner.os }}-temurin-21-node-${{ env.NODE_VERSION }}-${{ hashFiles('web/apps/tv/**', 'web/packages/**', 'web/pnpm-lock.yaml', 'web/scripts/**') }}-${{ github.sha }}-${{ github.run_id }}",
+		"gradle-cache-hit=${{ steps.gradle-cache.outputs.cache-hit == 'true' }}",
+		"gradle-cache-source-sha=${GITHUB_SHA}",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Errorf("ci-android Gradle cache policy missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"steps.gradle-cache.outputs.cache-primary-key",
+		"steps.gradle-cache.outputs.cache-matched-key",
+	} {
+		if strings.Contains(workflow, forbidden) {
+			t.Errorf("ci-android Gradle cache policy claims unavailable %q output", forbidden)
+		}
+	}
+}
+
 func replaceOnce(oldValue, newValue string, t *testing.T) func(string) string {
 	t.Helper()
 	return func(value string) string {

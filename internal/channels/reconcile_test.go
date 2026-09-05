@@ -15,6 +15,7 @@ import (
 	"github.com/loomarr/loomarr/internal/metrics"
 	"github.com/loomarr/loomarr/internal/programmer"
 	"github.com/loomarr/loomarr/internal/provision"
+	"github.com/loomarr/loomarr/internal/quality"
 	"github.com/loomarr/loomarr/internal/schedule"
 	"github.com/loomarr/loomarr/internal/store"
 	"github.com/loomarr/loomarr/internal/testkit"
@@ -189,6 +190,127 @@ func TestReconcilePublishesOutcomeToGenerationMetrics(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "private-channel-id") {
 		t.Fatal("generation scrape leaked a Channel id")
+	}
+}
+
+func TestReconcileRecordsOnlyFirstLiveProposalSchedulingJourney(t *testing.T) {
+	st := newStore(t)
+	jobID := "private-proposal-job"
+	if err := st.CreateJob(t.Context(), store.Job{
+		ID: jobID, Kind: "suggest", Status: "done", IntentJSON: `{}`, IntentHash: "intent",
+		CreatedAt: time.Unix(1_799_999_000, 0).UTC(), UpdatedAt: time.Unix(1_799_999_000, 0).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedChannel(t, st, "quality-channel", 5, entry("movie:tmdb:1", "A"))
+	ch, err := st.GetChannel(t.Context(), "quality-channel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.IntentRef = jobID
+	if _, err := st.SaveChannel(t.Context(), ch); err != nil {
+		t.Fatal(err)
+	}
+
+	sink := &testkit.QualityRecorder{}
+	engine := newEngineForBackend(st, nil, mapAvail{"movie:tmdb:1": "lib-1"}, nil,
+		func() string { return schedule.PlayoutBackendInternal }).
+		WithQualityRecorder(quality.NewSchedulingRecorder(sink, testkit.Logger()))
+	if err := engine.Reconcile(t.Context(), "quality-channel"); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Reconcile(t.Context(), "quality-channel"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := sink.Observations()
+	if len(got) != 1 || got[0].Stage != quality.StageScheduling || got[0].Outcome != quality.OutcomeScheduled {
+		t.Fatalf("scheduling observations = %+v", got)
+	}
+	job, err := st.GetJob(t.Context(), jobID)
+	if err != nil || !job.ReachedLive {
+		t.Fatalf("first-live milestone = %+v, %v", job, err)
+	}
+}
+
+func TestReconcileRecordsFailureThenRecoveryBeforeFirstLive(t *testing.T) {
+	st := newStore(t)
+	jobID := "recovering-proposal-job"
+	if err := st.CreateJob(t.Context(), store.Job{
+		ID: jobID, Kind: "suggest", Status: "done", IntentJSON: `{}`, IntentHash: "intent",
+		CreatedAt: time.Unix(1_799_999_000, 0).UTC(), UpdatedAt: time.Unix(1_799_999_000, 0).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedChannel(t, st, "recovering-channel", 5, entry("movie:tmdb:1", "A"))
+	ch, err := st.GetChannel(t.Context(), "recovering-channel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.IntentRef = jobID
+	if _, err := st.SaveChannel(t.Context(), ch); err != nil {
+		t.Fatal(err)
+	}
+
+	fail := true
+	sink := &testkit.QualityRecorder{}
+	engine := channels.New(st, nil, mapAvail{"movie:tmdb:1": "lib-1"}, nil, channels.Config{
+		ReconcileTTL: 10 * time.Minute,
+		ResolvePlayoutBackendContext: func(context.Context) (string, error) {
+			if fail {
+				return "", errors.New("backend unavailable")
+			}
+			return schedule.PlayoutBackendInternal, nil
+		},
+	}, func() time.Time { return time.Unix(1_800_000_000, 0).UTC() }, testkit.Logger()).
+		WithQualityRecorder(quality.NewSchedulingRecorder(sink, testkit.Logger()))
+
+	if err := engine.Reconcile(t.Context(), "recovering-channel"); err == nil {
+		t.Fatal("first reconcile unexpectedly succeeded")
+	}
+	fail = false
+	if err := engine.Reconcile(t.Context(), "recovering-channel"); err != nil {
+		t.Fatal(err)
+	}
+
+	got := sink.Observations()
+	if len(got) != 2 || got[0].Outcome != quality.OutcomeFailed || got[1].Outcome != quality.OutcomeScheduled {
+		t.Fatalf("scheduling recovery observations = %+v", got)
+	}
+}
+
+func TestReconcileDoesNotCallEmptyOrAlreadyLiveSchedulingQuality(t *testing.T) {
+	st := newStore(t)
+	jobID := "empty-proposal-job"
+	if err := st.CreateJob(t.Context(), store.Job{
+		ID: jobID, Kind: "suggest", Status: "done", IntentJSON: `{}`, IntentHash: "intent",
+		CreatedAt: time.Unix(1_799_999_000, 0).UTC(), UpdatedAt: time.Unix(1_799_999_000, 0).UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seedChannel(t, st, "empty-quality-channel", 5, entry("movie:tmdb:1", "A"))
+	ch, err := st.GetChannel(t.Context(), "empty-quality-channel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch.IntentRef = jobID
+	if _, err := st.SaveChannel(t.Context(), ch); err != nil {
+		t.Fatal(err)
+	}
+	sink := &testkit.QualityRecorder{}
+	engine := newEngineForBackend(st, nil, mapAvail{}, nil,
+		func() string { return schedule.PlayoutBackendInternal }).
+		WithQualityRecorder(quality.NewSchedulingRecorder(sink, testkit.Logger()))
+
+	if err := engine.Reconcile(t.Context(), "empty-quality-channel"); err != nil {
+		t.Fatal(err)
+	}
+	if got := sink.Observations(); len(got) != 0 {
+		t.Fatalf("empty reconcile recorded scheduling quality: %+v", got)
+	}
+	job, err := st.GetJob(t.Context(), jobID)
+	if err != nil || job.ReachedLive {
+		t.Fatalf("empty reconcile changed first-live milestone: %+v, %v", job, err)
 	}
 }
 

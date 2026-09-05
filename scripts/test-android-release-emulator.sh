@@ -257,12 +257,11 @@ measure_launcher_identity
 launch
 wait_for_ui "automatic LAN discovery" "Connect to ${DISCOVERY_NAME}"
 dump_ui
-grep -Eq "content-desc=\"Connect to ${DISCOVERY_NAME}\"[^>]*focused=\"true\"" "${temp_dir}/window.xml" || {
+grep -Eq "content-desc=\"Connect to ${DISCOVERY_NAME}[^\"]*\"[^>]*focused=\"true\"" "${temp_dir}/window.xml" || {
 	printf 'discovered server was not the preferred TV focus target\n' >&2
 	exit 1
 }
 adb -s "${EMULATOR_SERIAL}" exec-out screencap -p >"${evidence_dir}/lan-discovery.png"
-key KEYCODE_DPAD_UP
 key KEYCODE_DPAD_CENTER
 wait_for_state "pairing through the discovered address" '.pairStarts == 1 and .pairPolls >= 1'
 wait_for_state "playback after LAN discovery pairing" '.playUrlChannels[-1] == "classic-animation"'

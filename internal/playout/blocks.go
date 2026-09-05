@@ -24,6 +24,9 @@ type AiringIdentity struct {
 type Block struct {
 	Content  io.ReadCloser
 	Identity AiringIdentity
+	// Format is the stable decoder shape carried by this block. The application adapter pins
+	// the first value for the session and rejects a later prepared block that differs.
+	Format BroadcastFormat
 }
 
 // BlockSource opens the finite MPEG-TS block that belongs on a Channel now. EOF is an Airing
@@ -61,6 +64,10 @@ func BlockMuxArgs() []string {
 	return []string{
 		"-hide_banner", "-loglevel", "error",
 		"-progress", progressPipeArg(), "-nostats",
+		// A copy-only prepared child can demux an entire fMP4 segment in one burst even with
+		// input read-rate pacing. Pace the shared mux as the final authority so that burst is
+		// absorbed by the pipe instead of overflowing a network viewer's bounded queue.
+		"-readrate", "1.0",
 		// The children already guarantee the broadcast stream shape. FFmpeg's defaults may
 		// inspect several seconds of this live pipe before the copy mux emits anything; these
 		// measured bounds still discover its video and audio streams without adding that delay.

@@ -8,6 +8,7 @@ import (
 
 	"github.com/loomarr/loomarr/internal/library"
 	"github.com/loomarr/loomarr/internal/provision"
+	"github.com/loomarr/loomarr/internal/quality"
 	"github.com/loomarr/loomarr/internal/store"
 	"github.com/loomarr/loomarr/internal/testkit"
 )
@@ -64,6 +65,31 @@ func TestLibraryScan_ConfirmsRequestedMovie(t *testing.T) {
 	}
 	if len(emit.events) != 1 || emit.events[0].State != provision.Available {
 		t.Errorf("events = %+v, want one available event", emit.events)
+	}
+}
+
+func TestLibraryScanRecordsPlayableQualityAfterCommittedConfirmation(t *testing.T) {
+	ls, st, ms, _ := setupScan(t)
+	sink := &testkit.QualityRecorder{}
+	ls.WithQualityRecorder(quality.NewAcquisitionRecorder(sink, testkit.Logger()))
+	key := provision.Key("movie:tmdb:603")
+	if err := st.UpsertTitle(t.Context(), provision.Record{
+		Key: key, State: provision.Requested, RequestedAt: now.Add(-45 * time.Minute),
+		Deadline: now.Add(24 * time.Hour), Title: provision.Title{MediaType: provision.Movie, TMDBID: 603},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ms.SearchItems = []testkit.SearchStub{
+		{LibraryItemID: "lib-1", Name: "The Matrix", Type: "Movie", TMDBID: 603},
+	}
+
+	if n, err := ls.Incremental(t.Context()); err != nil || n != 1 {
+		t.Fatalf("Incremental = %d, %v", n, err)
+	}
+	got := sink.Observations()
+	if len(got) != 1 || got[0].Stage != quality.StageAcquisition ||
+		got[0].Outcome != quality.OutcomePlayable || got[0].Duration != 45*time.Minute {
+		t.Fatalf("quality observations = %+v", got)
 	}
 }
 

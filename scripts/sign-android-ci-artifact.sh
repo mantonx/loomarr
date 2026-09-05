@@ -12,10 +12,11 @@ fi
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "${script_dir}/.." && pwd)
-"${script_dir}/check-android-release-env.sh"
-
 version_name=$(jq -er '.versionName' "${PRODUCER_MANIFEST}")
 version_code=$(jq -er '.versionCode' "${PRODUCER_MANIFEST}")
+LOOMARR_ANDROID_VERSION_NAME="${version_name}" \
+  LOOMARR_ANDROID_VERSION_CODE="${version_code}" \
+  "${script_dir}/check-android-release-env.sh"
 [[ "$(jq -er '.signed' "${PRODUCER_MANIFEST}")" == false ]] || {
   printf 'android release: producer manifest must describe an unsigned bundle\n' >&2
   exit 1

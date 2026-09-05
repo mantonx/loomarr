@@ -236,6 +236,11 @@ func (b Broadcast) ScheduleBlockID(channelID string) string {
 	return ScheduledBlockID(channelID, b.Start, b.Kind, broadcastIdentity(b))
 }
 
+// ContentIdentity is the same scheduler-owned identity used by live Airings and ScheduleBlockID.
+// Prepared raw delivery carries it into the existing block supervisor without re-deriving it in
+// the composition layer.
+func (b Broadcast) ContentIdentity() string { return broadcastIdentity(b) }
+
 // ScheduledBlockID is the one schedule-to-diagnostics correlation function. Callers provide the
 // scheduler-owned facts they already have; no diagnostic layer performs a lookup to invent them.
 func ScheduledBlockID(channelID string, startedAt time.Time, kind schedule.SlotKind, contentIdentity string) string {

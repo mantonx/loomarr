@@ -26,6 +26,7 @@ const createNativeServerDiscovery = (): ServerDiscovery => {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
   let running = false;
+  const serversById = new Map<string, DiscoveredServer>();
   const publish = (next: ServerDiscoverySnapshot) => {
     snapshot = next;
     for (const listener of listeners) listener();
@@ -38,6 +39,14 @@ const createNativeServerDiscovery = (): ServerDiscovery => {
     subscriptions = [];
     if (running) nativeModule?.stop();
     running = false;
+  };
+  const discoveredServers = () => {
+    const byURL = new Map<string, DiscoveredServer>();
+    for (const server of serversById.values()) {
+      const normalizedURL = server.url.replace(/\/+$/, "");
+      if (!byURL.has(normalizedURL)) byURL.set(normalizedURL, { ...server, url: normalizedURL });
+    }
+    return [...byURL.values()].sort((left, right) => left.name.localeCompare(right.name));
   };
 
   return {
@@ -52,6 +61,7 @@ const createNativeServerDiscovery = (): ServerDiscovery => {
         return;
       }
       stop();
+      serversById.clear();
       const activeGeneration = ++generation;
       publish({ servers: [], status: "searching" });
       const events = new NativeEventEmitter(nativeModule);
@@ -59,20 +69,33 @@ const createNativeServerDiscovery = (): ServerDiscovery => {
         events.addListener("loomarrDiscoveryFound", (server: NativeServer) => {
           if (activeGeneration !== generation) return;
           if (server.protocol !== "1" || !server.id || !server.name || !server.url) return;
-          const byId = new Map(snapshot.servers.map((candidate) => [candidate.id, candidate]));
-          const next = { id: server.id, name: server.name, url: server.url };
-          const previous = byId.get(server.id);
+          const next = { id: server.id, name: server.name, url: server.url.replace(/\/+$/, "") };
+          const previous = serversById.get(server.id);
           if (previous?.name === next.name && previous.url === next.url) return;
-          byId.set(server.id, next);
+          serversById.set(server.id, next);
+          const servers = discoveredServers();
+          if (
+            servers.length === snapshot.servers.length &&
+            servers.every((candidate, index) => {
+              const current = snapshot.servers[index];
+              return (
+                current?.id === candidate.id &&
+                current.name === candidate.name &&
+                current.url === candidate.url
+              );
+            })
+          )
+            return;
           publish({
-            servers: [...byId.values()].sort((left, right) => left.name.localeCompare(right.name)),
+            servers,
             status: "searching",
           });
         }),
         events.addListener("loomarrDiscoveryLost", ({ id }: { id?: string }) => {
           if (activeGeneration !== generation) return;
           if (!id) return;
-          publish({ ...snapshot, servers: snapshot.servers.filter((server) => server.id !== id) });
+          serversById.delete(id);
+          publish({ ...snapshot, servers: discoveredServers() });
         }),
         events.addListener("loomarrDiscoveryError", () => {
           if (activeGeneration !== generation) return;

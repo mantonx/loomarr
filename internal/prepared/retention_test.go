@@ -3,6 +3,7 @@ package prepared
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -168,6 +169,68 @@ func TestPruneProtectsTheAcceptedScheduleWithoutTreatingAProbeAsPlayback(t *test
 	assertPublicationMissing(t, publication)
 }
 
+func TestPruneKeepsFiftyAndOneHundredChannelHotSetsWithinDefaultBudget(t *testing.T) {
+	const (
+		defaultBudget   = int64(512) << 30
+		publicationSize = int64(2) << 30
+	)
+	for _, channelCount := range []int{50, 100} {
+		channelCount := channelCount
+		t.Run(fmt.Sprintf("%d_channels", channelCount), func(t *testing.T) {
+			seedNow := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+			now := seedNow
+			lib, err := newLibrary(t.TempDir(), func() time.Time { return now })
+			if err != nil {
+				t.Fatal(err)
+			}
+			protected := make([]Specification, 0, channelCount*2)
+			hotPublications := make([]Publication, 0, channelCount*2)
+			laterPublications := make([]Publication, 0, channelCount)
+			for i := range channelCount {
+				for _, class := range []string{"current", "next"} {
+					source := fmt.Sprintf("%s-%03d", class, i)
+					protected = append(protected, baselineSpec(source))
+					hotPublications = append(hotPublications, publishSparseSized(t, lib, source, publicationSize))
+				}
+				laterPublications = append(laterPublications,
+					publishSparseSized(t, lib, fmt.Sprintf("later-%03d", i), publicationSize))
+			}
+			now = seedNow.Add(preparedStartupGrace + preparedUseGrace + time.Hour)
+
+			result, err := lib.Prune(t.Context(), defaultBudget, protected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.RemainingBytes > defaultBudget {
+				t.Fatalf("retained bytes = %d, exceed default budget %d", result.RemainingBytes, defaultBudget)
+			}
+			if result.ProtectedBytes < int64(channelCount*2)*publicationSize {
+				t.Fatalf("protected bytes = %d, lost current/next hot set", result.ProtectedBytes)
+			}
+			for _, publication := range hotPublications {
+				assertPublicationPresent(t, publication)
+			}
+			if channelCount == 50 && result.PublicationsEvicted != 0 {
+				t.Fatalf("50-channel default-budget evictions = %d, want none", result.PublicationsEvicted)
+			}
+			if channelCount == 100 && result.PublicationsEvicted == 0 {
+				t.Fatal("100-channel over-budget optional lookahead was not evicted")
+			}
+			laterRemaining := 0
+			for _, publication := range laterPublications {
+				if _, err := os.Stat(publication.Directory); err == nil {
+					laterRemaining++
+				} else if !errors.Is(err, os.ErrNotExist) {
+					t.Fatal(err)
+				}
+			}
+			if laterRemaining != channelCount-result.PublicationsEvicted {
+				t.Fatalf("later publications remaining = %d, want %d", laterRemaining, channelCount-result.PublicationsEvicted)
+			}
+		})
+	}
+}
+
 func TestPruneOwnsReadinessControlFiles(t *testing.T) {
 	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
 	lib, err := newLibrary(t.TempDir(), func() time.Time { return now })
@@ -218,6 +281,27 @@ func publishSized(t *testing.T, lib *Library, source string, size int) Publicati
 	// Retention deliberately falls back to the publication directory's mtime after a restart.
 	// Keep that durable timestamp on the same injected clock as the in-memory LRU; using the
 	// host clock makes a fixed-date test start failing once wall time passes its fake `now`.
+	if err := os.Chtimes(pub.Directory, lib.now(), lib.now()); err != nil {
+		t.Fatal(err)
+	}
+	return pub
+}
+
+func publishSparseSized(t *testing.T, lib *Library, source string, size int64) Publication {
+	t.Helper()
+	pub, err := lib.Publish(context.Background(), baselineSpec(source), func(_ context.Context, workspace string) (Output, error) {
+		path := filepath.Join(workspace, "segment.m4s")
+		file, createErr := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if createErr != nil {
+			return Output{}, createErr
+		}
+		truncateErr := file.Truncate(size)
+		closeErr := file.Close()
+		return Output{Files: []string{"segment.m4s"}}, errors.Join(truncateErr, closeErr)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chtimes(pub.Directory, lib.now(), lib.now()); err != nil {
 		t.Fatal(err)
 	}

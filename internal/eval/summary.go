@@ -20,6 +20,14 @@ func HumanSummary(card Scorecard) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Planner model certification: %s / %s\n\n", card.Generator.Provider, card.Generator.Model)
 	fmt.Fprintf(&b, "Corpus `%s`; %d/%d trials passed; certified: %t.\n\n", card.CorpusVersion, passed, len(card.Results), card.Certified)
+	if card.RunSnapshot != nil {
+		resolved := card.RunSnapshot.ResolvedModel
+		if resolved == "" {
+			resolved = "unreported"
+		}
+		fmt.Fprintf(&b, "Resolved model `%s`; budget profile `%s`; accounting available: %t.\n\n",
+			resolved, card.RunSnapshot.BudgetProfile, card.RunSnapshot.AccountingAvailable)
+	}
 	b.WriteString("## Hard gates\n\n")
 	if card.Contract == nil || len(card.Contract.HardMetrics) == 0 {
 		b.WriteString("No certification hard-gate manifest attached.\n")

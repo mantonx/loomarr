@@ -564,6 +564,20 @@ func testProposalJobFirstLiveMonotonic(t *testing.T, newStore NewStoreFunc) {
 	if err != nil || !paused.Job.ReachedLive || paused.Channel == nil || paused.Channel.Status != schedule.StatusPaused {
 		t.Fatalf("paused-after-live Journey snapshot = (%+v, %v)", paused, err)
 	}
+
+	driftedJob := sampleJob("job-first-drifted", "hash-first-drifted", now, now)
+	driftedJob.Status = "done"
+	if err := s.CreateJob(ctx, driftedJob); err != nil {
+		t.Fatal(err)
+	}
+	driftedChannel := approvalChannel("channel-first-drifted", driftedJob.ID, 200)
+	driftedChannel = mustSaveChannel(t, s, driftedChannel)
+	driftedChannel.Status = schedule.StatusDrifted
+	driftedChannel = mustSaveChannel(t, s, driftedChannel)
+	drifted, err := s.GetProposalJob(ctx, driftedJob.ID)
+	if err != nil || !drifted.Job.ReachedLive || drifted.Channel == nil || drifted.Channel.Status != schedule.StatusDrifted {
+		t.Fatalf("drifted-first-live Journey snapshot = (%+v, %v)", drifted, err)
+	}
 }
 
 func testProposalJobSnapshot(t *testing.T, newStore NewStoreFunc) {

@@ -77,3 +77,18 @@ func TestRunSnapshotValidationBoundsCallerAuthoredFacts(t *testing.T) {
 		t.Fatal("snapshot accepted a URL-shaped model fact")
 	}
 }
+
+func TestRunSnapshotIDIsStableAtStorePrecision(t *testing.T) {
+	snapshot := quality.RunSnapshot{
+		SchemaVersion: quality.RunSnapshotSchemaVersion,
+		CorpusVersion: "planner-certification-v5", RequestedModel: "qwen/qwen3.5-27b",
+		ResolvedModel: "qwen/qwen3.5-27b-20260901", Provider: quality.ProviderOpenRouter,
+		BudgetProfile: "hosted-bounded-v1", ApplicationVersion: "v0.1.0+abc123",
+		AccountingAvailable: true, CreatedAt: time.Unix(1_800_000_000, 123).UTC(),
+	}
+	first := quality.RunSnapshotID(snapshot)
+	snapshot.CreatedAt = snapshot.CreatedAt.Truncate(time.Second)
+	if second := quality.RunSnapshotID(snapshot); first != second || len(first) != len("eval-")+64 {
+		t.Fatalf("run snapshot ids = %q and %q", first, second)
+	}
+}

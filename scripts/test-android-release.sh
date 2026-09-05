@@ -70,9 +70,7 @@ jq \
 	'. + {producerRunId: $producerRunId, producerEvent: $producerEvent,
 	 producerWorkflowRef: $producerWorkflowRef}' \
 	"$evidence" >"$producer_evidence"
-LOOMARR_ANDROID_VERSION_NAME=$version_name \
-	LOOMARR_ANDROID_VERSION_CODE=$version_code \
-	LOOMARR_ANDROID_KEYSTORE_PATH=$keystore \
+LOOMARR_ANDROID_KEYSTORE_PATH=$keystore \
 	LOOMARR_ANDROID_KEYSTORE_PASSWORD=$password \
 	LOOMARR_ANDROID_KEY_ALIAS=loomarr-upload \
 	LOOMARR_ANDROID_KEY_PASSWORD=$password \

@@ -131,8 +131,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 | `llm` | 6 | `httpx`, `metrics` |
 | `metrics` | 8 | `provision` |
 | `notifications` | 5 | `httpx` |
-| `provision` | 17 | — |
-| `quality` | 5 | — |
+| `provision` | 18 | — |
+| `quality` | 7 | `provision` |
 | `recovery` | 5 | — |
 | `schedule` | 15 | `provision` |
 | `scheduler` | 6 | `store` |
@@ -144,7 +144,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 0** — no internal dependencies. These are the vocabulary the rest agrees on.
 
-- **`buildinfo`** · 2 importers
+- **`buildinfo`** · 3 importers
   Carries the version stamped into the binary at build time.
 - **`config`** · 1 importer
   Loads Loomarr's ENV-ONLY BOOTSTRAP configuration (config-design §1): the handful of keys needed before the database opens or that describe process topology.
@@ -170,14 +170,10 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Advertises a running Loomarr HTTP listener to unpaired local TV clients.
 - **`media`** · 3 importers
   Owns host-wide resources shared by live and background media work.
-- **`plannerreference`**
-  Binds a planner scorecard to the exact local model, runtime, host, and cold/warm protocol used to produce it.
 - **`proctree`** · 3 importers
   Supervises one child process and every descendant it starts.
-- **`provision`** · 17 importers
+- **`provision`** · 18 importers
   Provisioner domain (design §3–§4): the Title/Key identity model and the acquisition state machine.
-- **`quality`** · 5 importers
-  Owns Loomarr's privacy-safe discovery-quality vocabulary.
 - **`recovery`** · 5 importers
   Owns local-password recovery records and their bearer grants (§11).
 - **`reference`** · 3 importers
@@ -211,11 +207,15 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns Loomarr's generation-scoped Prometheus surface (design §7 /metrics, §17).
 - **`prepared`** · 4 importers · → `diagnostics`, `media`
   Owns immutable, reusable playout publications.
+- **`quality`** · 7 importers · → `provision`
+  Owns Loomarr's privacy-safe discovery-quality vocabulary.
 
 **Layer 2**
 
 - **`httpx`** · 9 importers · → `metrics`
   Shared outbound HTTP client factory (design §6, §21 phase 1).
+- **`plannerreference`** · → `quality`
+  Binds a planner scorecard to the exact local model, runtime, host, and cold/warm protocol used to produce it.
 - **`schedule`** · 15 importers · → `holidayvocab`, `provision`, `textmatch`
   Scheduler domain (design §9): the Channel identity, the DesiredLineup / Slot model, and the *pure* computation that turns an approved lineup plus live availability into ordered desired programming.
 
@@ -303,7 +303,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 - **`binder`** · 2 importers · → `provision`, `schedule`, `store`, `suggest`
   Plans how an APPROVED proposal changes a channel (§7): create it on first approval, patch it (preserving operator-owned fields) on re-approval or refine.
-- **`eval`** · → `catalog`, `episodeevidence`, `library`, `llm`, `provision`, `schedule`, `suggest`, `tmdb`
+- **`eval`** · → `buildinfo`, `catalog`, `episodeevidence`, `library`, `llm`, `provision`, `quality`, `schedule`, `suggest`, `tmdb`
   Loomarr's semantic-evaluation harness (a §14 Go test binary, NOT a service).
 - **`proposalworkflow`** · 2 importers · → `schedule`, `store`, `suggest`
   Owns the durable Proposal Job lifecycle and the authoritative First-channel Journey composed from it.
@@ -1213,7 +1213,7 @@ Channel/proposal/Board filtering and Help search stay **client-side** — househ
 
 ## 8. Suggester (AI suggestion engine)
 
-Turns a channel **intent** (NL description + optional constraints: era, runtime target, tone, must-include/exclude) into a **proposal**: a lineup from existing library content + an acquisition list of missing titles. Approved acquisitions feed the provisioner; the approved lineup feeds the scheduler. The intent also carries the **refine** inputs (§7 `POST .../{id}/refine`): a free-text change plus the channel's *current lineup* as context, rendered into the prompt so the model reasons from what's already there. Grounding is unchanged — the current lineup is context only; every new pick is still grounded through the catalog tool (real ids), so a refine can't invent titles any more than a fresh suggestion can.
+Turns a channel **intent** (NL description + optional constraints: era, runtime target, tone, must-include/exclude) into a **proposal**: a lineup from existing library content + an acquisition list of missing titles. Approved acquisitions feed the provisioner; the approved lineup feeds the scheduler. The intent also carries the **refine** inputs (§7 `POST .../{id}/refine`): a free-text change plus the channel's *current lineup* as context, rendered into the prompt so the model reasons from what's already there. Grounding is unchanged — the current lineup is context only; every new pick is still grounded through a Catalog operation (real ids), so a refine can't invent titles any more than a fresh suggestion can.
 
 **Ambient context is an explicit snapshot, not hidden nondeterminism.** Today the suggester reasons
 about a daypart or weather condition only when the request says it (for example, “rainy late night”).
@@ -1230,11 +1230,24 @@ Evaluation pins these values or writes them into the request so identical inputs
 
 ### Grounding — the critical correctness rule
 An AI that can trigger real downloads must never act on a hallucinated title.
-- The LLM does **not** invent titles; it proposes candidates via a **catalog tool** (function-calling) that searches the real library + TMDB/TVDB and returns **real external ids**. The model selects from tool results. The tool supports **title search**, **genre + era discovery**, **TMDB keyword discovery** for holidays, motifs, franchises, and topics, and validated scalar country/language/runtime/vote qualifiers on discovery — so an abstract intent ("high-energy 90s action") or a thematic one ("cozy Christmas movies") surfaces grounded content instead of depending on an exact title match. Each returned candidate carries the source-backed subset of **genres, short overview, original language/country, runtime, vote average/count, and resolved keyword names** that its corpus supplied. These fields are additive reasoning evidence, never identity or authority: omitted means unknown, not mismatch; invalid/non-finite values are omitted; and sparse metadata cannot exclude a candidate by itself. Network and person anchors require their own grounded resolver and are not inferred from titles, studios, or model prose.
+- The LLM does **not** supply trusted identity. Normally it proposes candidates via a **catalog tool** (function-calling) that searches the real library + TMDB/TVDB and returns **real external ids**. The model selects from tool results; the bounded exact-name fallback below handles providers that ignore the tool. The tool supports **title search**, **genre + era discovery**, **TMDB keyword discovery** for holidays, motifs, franchises, and topics, and validated scalar country/language/runtime/vote qualifiers on discovery — so an abstract intent ("high-energy 90s action") or a thematic one ("cozy Christmas movies") surfaces grounded content instead of depending on an exact title match. Each returned candidate carries the source-backed subset of **genres, short overview, original language/country, runtime, vote average/count, and resolved keyword names** that its corpus supplied. These fields are additive reasoning evidence, never identity or authority: omitted means unknown, not mismatch; invalid/non-finite values are omitted; and sparse metadata cannot exclude a candidate by itself. Network and person anchors require their own grounded resolver and are not inferred from titles, studios, or model prose.
 - TMDB movie and TV discovery use different genre id namespaces. Human genre names are translated per endpoint (`Science Fiction` → movie `878` but TV `10765`, `Action` → movie `28` but TV `10759`, and `Family` → movie `10751` but TV `10762`) before a mixed search is blended. One shared numeric mapping would silently make valid TV discovery empty.
 - Every proposal item resolves to a real id, tagged `in_library: true|false`; unresolvable items are dropped before display.
 - Acquisitions re-validated against TMDB (exists) + library (not present) before actionable.
 - Library/TMDB text in prompts is **untrusted**: it must not steer tools, change quotas, or reach secrets; catalog tools are read-only.
+
+A provider that ignores the offered tool may still return schema-valid picks containing plausible
+title names and invented ids. Those names are useful only as **search input**; neither a name nor the
+model's id is identity evidence. When such a turn has picks but this run has surfaced no candidates,
+the Suggester performs one provider-neutral name-grounding fallback: it coalesces at most eight title
+names, runs their independent `Catalog.Search` operations concurrently under the request context,
+and keeps only one unambiguous normalized exact-title match of the requested media type (and year when
+the pick supplied one). Missing, ambiguous, wrong-media, and year-conflicting results are dropped. The
+canonical ids from the surviving Catalog candidates replace every model-authored id, enter the same
+`surfaced` map as native tool results, and pass through the unchanged proposal chokepoint, acquisition
+revalidation, quota, and approval gate. A successful fallback requires no second model call; zero exact
+matches returns the typed no-grounded-title outcome. The fallback is unavailable once another corpus
+has surfaced candidates, so it cannot broaden a successful tool, reference, or adjacency result.
 
 ### Reference-backed Intent
 
@@ -1366,10 +1379,12 @@ discoveries when such candidates exist. The reserve is conditional on relevance 
 qualifier; it never licenses random novelty or forces a weak acquisition.
 
 A schema-valid empty final answer is not accepted immediately when the model never surfaced a catalog
-candidate. Loomarr gives that exact failure one lower-temperature retry that explicitly requires a
-catalog call and names the title/genre/keyword choices. The retry neither invents candidates nor
-widens authority: it still passes through the same read-only tool, surfaced-id chokepoint, acquisition
-revalidation, quota, and approval gate. A second empty answer fails normally, keeping the loop bounded.
+candidate. Loomarr gives that exact pick-less failure one lower-temperature retry that explicitly
+requires a catalog call and names the title/genre/keyword choices. A schema-valid turn that did name
+picks instead takes the bounded exact-name fallback above and is never sent back to the model merely
+to repeat its names as tool arguments. Neither recovery invents candidates or widens authority: both
+still pass through the same read-only Catalog, surfaced-id chokepoint, acquisition revalidation, quota,
+and approval gate. A second empty answer fails normally, keeping the model loop bounded.
 
 Policy grounding does not delegate explicit user constraints back to probabilistic output. A rating
 the user writes (for example, `keep it PG-13`) is retained as the exact audience ceiling even on an
@@ -1496,7 +1511,7 @@ not an effectful workflow.
 positive per-run and suite call/token/USD ceilings as other required semantic certification and
 local inference still requires `LOOMARR_EVAL_ALLOW_LOCAL=1`; it never starts or provisions a model.
 Before constructing the provider it verifies the embedded fixture digest and corpus references.
-Scorecard schema v11 records the corpus, fixture digest, prompt contract, catalog-tool schema, scorer,
+Scorecard schema v12 records the corpus, fixture digest, prompt contract, catalog-tool schema, scorer,
 and separate hard/quality metric lists, then writes both the JSON result manifest and a Markdown
 comparison summary. V2 pre-registers a 95% grounded-completion floor over the 132 completion cases,
 a 90% correct-operation floor, a 98% final-schema-validity floor, and a maximum of three tool calls at
@@ -1545,7 +1560,12 @@ manifest is necessary provenance for #831, not model certification itself, and g
 LoRA/QLoRA, Runpod, distribution, production, or spend authority. All external compute and API work
 continues to share the current **$20 aggregate ceiling**; unused headroom is not a GPU allocation.
 
-`make eval-planner-compare` accepts two or more schema-v10 scorecards with identical frozen identities.
+`make eval-planner-compare` accepts two or more same-schema scorecards with identical frozen identities;
+new runs use schema v12, while archived schema-v10 and schema-v11 evidence remains readable.
+Schema v11 already shipped network/person route evidence without run snapshots; its meaning is not
+retroactively changed. Only same-schema cards may be compared, and archived cards never satisfy the
+new snapshot contract. Schema-v12 comparison rejects a missing, invalid, or scorecard-mismatched run snapshot and requires
+the same named budget profile as well as the same numeric resource envelope.
 Only candidates that clear every hard gate and threshold are eligible. Its pre-registered quality score
 weights grounded completion 20%, correct tool operation 20%, schema validity 10%, policy accuracy 15%,
 proposal quality 25%, and recovery 10%. The equivalence margin is two percentage points. At most two
@@ -2061,8 +2081,22 @@ a private schedule. A tune resolves in this order:
    version)`. Tune-time lookup may use only a fingerprint warmed by the readiness control plane; it
    must never hash source media or start preparation on demand. A publication is visible only after
    all of its immutable fragments and metadata have validated and been atomically committed.
-3. On a hit, render the short wall-clock manifest over those shared fragments. Starting an encoder or
-   per-Channel packager on this path is a contract violation.
+3. On a hit, adapt the shared publication to the requested Delivery. HLS renders the short
+   wall-clock manifest over immutable fMP4 fragments. MPEG-TS opens the current publication at the
+   authoritative Airing offset through a copy-only fMP4-to-TS remux child and feeds that finite
+   block into the existing long-lived Channel mux. This child decodes and encodes nothing, owns no
+   publication bytes, and is shared by every viewer of the Manager's `(Channel, EncodePlan)`
+   session; starting an encoder or a second per-Channel packager remains a contract violation. The
+   prepared copy remux does not pace its immutable input; the long-lived Channel mux is the sole
+   wall-clock pacing authority. Applying input read-rate before the child's authoritative seek would
+   turn its distance from the preceding segment boundary into viewer-visible cold-start latency.
+   The outer pacing also bounds any whole-segment demux burst from fMP4/HLS before it reaches the raw
+   viewer's finite queue; a copy must not disconnect a healthy television before its first frame
+   merely because it can read immutable bytes faster than live.
+   The first prepared block pins the session to the publication's codec, dimensions, frame rate,
+   and bitrates. Every later prepared block must match that format, while a prepared miss opens the
+   ordinary live child constrained to the same format, so an Airing boundary cannot change decoder
+   state inside the continuous transport stream.
 4. On a miss, use the bounded live implementation as an internal fallback. A miss never changes the
    accepted Lineup, `AiringAt`, or guide.
 
@@ -2097,27 +2131,72 @@ immutable publication; it never rewrites bytes under an existing key.
 
 Hardware encoding is a **host-wide resource**, not private state inside live playout or preparation.
 One measured encode pool admits both classes. Live program children take foreground leases and may
-use every slot. The readiness planner may hold at most one background lease, only when measured
-capacity leaves at least one separate slot for a cold live tune. If foreground demand reaches that
-last slot, the pool cancels the background encode and gives it a short bounded opportunity to exit;
-if it does not, that one live child takes the existing software fallback rather than waiting behind
-maintenance work. Unknown, software-only, or one-slot capacity disables hardware preparation — it
-does not guess and it does not consume the only live slot. This priority contract is shared code;
-adding a second semaphore around ffmpeg is forbidden.
+use every slot. The readiness planner may fill at most `capacity - 1` background leases, leaving one
+separate slot for a cold live tune. Every background lease is independently cancellable and carries
+the publication's need time. The first foreground arrival consumes the idle reserve; each additional
+arrival that finds the pool full cancels exactly one farthest-needed background lease and receives a
+short bounded opportunity to take the released slot. Concurrent foreground waiters and already
+preempting leases are counted explicitly, so several callers waking on one release cannot cancel
+more work than their outstanding demand requires. If a cancelled worker does not release in time,
+that live child takes the existing software fallback rather than waiting behind maintenance work.
+Unknown, software-only, or one-slot capacity disables hardware preparation — it does not guess and
+it does not consume the only live slot. This priority contract is shared code; adding a second
+semaphore around ffmpeg is forbidden.
 
-The host capability benchmark is control-plane warming, never tune-time work. With no explicit
-encoder override, the first demand starts one process-lifetime probe in the background and plays
-immediately with the software fallback while it runs; later programme boundaries use the cached
-measured encoder and capacity. A viewer may not inherit the multi-second trial-encode benchmark.
+A session whose current block is prepared or direct-copy holds zero transcode capacity, but that is
+not a promise about its next Airing. Immediately before any later live child starts a video
+transcode, the Manager atomically raises that session's cost under the same measured admission gate
+used at tune-in; if no slot can be reclaimed, the child does not start and the block retry waits for
+capacity. Returning to a prepared/copy block releases the cost. Thus many prepared sessions may be
+served concurrently without reserving imaginary encoders, while simultaneous prepared misses can
+never convert them into unbounded live transcodes.
+
+The full host capability benchmark is control-plane warming, never tune-time work. With no explicit
+encoder override, the first actual media demand checks the persisted evidence against the current
+FFmpeg/GPU/profile fingerprint. Both external identity commands have short bounded deadlines and a
+timeout is a miss, so this check cannot recreate the old one-second tune floor. A fresh exact match
+makes that previously verified encoder available to the first live child immediately, while its
+bounded real validation runs in the background. An
+absent, expired, mismatched, or malformed record starts the full benchmark in the background and
+playback proceeds with the software fallback until a safe result is ready. Failed revalidation also
+runs the full benchmark; any meanwhile-failed hardware child uses the existing software fallback
+ladder. Merely configuring Channels starts no media processes. A successful hardware result and
+measured capacity are written as versioned, bounded evidence beneath the persistent prepared root;
+the record includes an FFmpeg-build fingerprint, GPU identity, profile identity, and observation time.
+On restart Loomarr may publish that result only after the fingerprints match and the evidence is
+still within its bounded freshness window, then a short real keyframe-bearing MPEG-TS trial revalidates
+the chosen encoder asynchronously. A mismatch, expiry, malformed record, or failed validation falls
+back to the full benchmark and replaces the evidence atomically on success. Software-only and explicit
+operator choices are not reused as hardware evidence. This turns a normal restart into one bounded
+validation rather than re-running every multi-second candidate and warm-capacity trial, without
+trusting an encoder merely because FFmpeg lists it. A viewer may not inherit either benchmark.
 
 Prepared bytes live under `playout.prepared_dir` (default `/data/prepared`), a persistent root that
 is intentionally separate from `playout.hls_dir` scratch. The `playout-prepare` scheduler job runs
 once a minute by default with the long media timeout and looks six hours ahead across Channels whose
-effective backend is internal. It orders unique library items by earliest need, so all currently
-airing items precede later programmes and two Channels scheduling one movie still submit one source
-rendition. A pass exposes at most sixteen new misses to path/audio resolution before it starts media
-work; this bounds a cold 100-Channel install instead of issuing hundreds of media-server calls in
-one burst. Completed warmed publications are skipped on the next pass, so the frontier advances.
+effective backend is internal. Its readiness frontier has three explicit classes: the currently
+airing programme on every Channel is urgent; the next programme per Channel is guaranteed when the
+prepared-media budget can retain it; and the rest of the six-hour horizon is opportunistic. Within a
+class, earlier need wins. Publication identity remains source/rendition based, so two Channels
+scheduling one movie submit one preparation and the strongest class wins.
+
+A pass may resolve up to 128 current/next bindings absent from the durable readiness index, enough
+to expose the complete current hot set of a 100-Channel installation without an artificial sixteen-
+Channel floor. It separately exposes at most sixteen optional six-hour misses. Existing readiness
+bindings and provider-neutral Inventory observations are inspected without an external refresh;
+only the still-unresolved part of that larger bounded frontier may perform media-server path/source
+refresh or source-backed audio probing. Tune never performs either kind of work. Completed warmed
+publications are skipped on the next pass, so the frontier advances.
+
+Only one planner pass executes at a time; overlapping scheduled or manual calls coalesce rather
+than preparing the same frontier twice. It stable-sorts and deduplicates the plan, fills every spare
+background lease admitted by the measured pool, and refills released slots while useful job time
+remains. Once the River deadline enters a fixed drain/observation/retention reserve, it starts no new
+publication: active workers drain or observe cancellation, then one lookup-only observation pass
+recomputes resulting readiness, retention runs, and the job returns. Foreground preemption is a
+normal yield and the cancelled candidate remains ahead of less urgent work on a later opportunity;
+source failures remain independent errors and do not starve the rest of the admitted wave. Planner
+status is published from that post-work observation, never merely from the pre-work snapshot.
 
 Preparation consumes Loomarr's provider-neutral Media Inventory. A readable local source remains
 the preferred input, but an installation without a shared media mount may prepare the Library's
@@ -2133,8 +2212,10 @@ FFmpeg. Each pass writes one atomic, versioned readiness index under the persist
 The index binds a Channel, library item, active source policy, stable source id/revision, selected
 audio track, and rendition; startup loads it into memory before the minute scheduler runs. Tune reads
 that memory index and `Preparer.Lookup` only. An absent entry, changed tier, audio preference, path
-map, source revision, or publication is an immediate prepared miss. Tune never opens a source,
-contacts the media server, probes audio, hashes bytes, starts FFmpeg, or waits for the scheduler.
+map, source revision, or publication is an immediate prepared miss. Tune never opens the original
+source, contacts the media server, probes audio, hashes bytes, encodes, or waits for the scheduler.
+An MPEG-TS prepared hit may start only the copy-only transport remux described above; an HLS
+prepared-only probe remains process-free.
 
 The accelerated packaging driver reuses the live playout encoder's device setup, hardware decode and
 upload, filter, preset, rate-control, and GOP builders. Its driver contract separates pre-input
@@ -2146,13 +2227,18 @@ every other subsystem. Both cases keep the live fallback.
 The same `playout-prepare` pass owns the prepared store's lifecycle; retention is not a second task
 that can race preparation or silently stop running. After readiness work it enforces the hot-applied
 `playout.prepared_budget_gb` soft cap (default 512 GiB) over complete publication bytes, evicting
-whole immutable publications oldest-use first. `Lookup` and asset delivery touch use in memory, so
-segment traffic does not turn into database or per-request filesystem writes. A publication used in
-the last fifteen minutes is protected, and every publication is protected for the first thirty
-minutes after process start so a restart cannot immediately collect current programmes before the
-schedule frontier has been rebuilt. If those protected bytes alone exceed the budget, playback wins:
-the pass leaves the store over its soft cap and logs the exact byte totals rather than breaking an
-active HLS manifest. A later pass converges after the grace expires.
+whole immutable publications oldest-use first. Ready current and next publications are the schedule-
+protected hot set; later six-hour lookahead is opportunistic and therefore remains evictable. When
+one publication serves several Channels or readiness classes, its strongest current/next claim wins.
+This bounds schedule protection to at most two unique publications per Channel instead of retaining
+an arbitrarily large six-hour aggregate ahead of what a viewer can surf to. `Lookup` and asset
+delivery touch use in memory, so segment traffic does not turn into database or per-request
+filesystem writes. A publication used in the last fifteen minutes is protected, and every
+publication is protected for the first thirty minutes after process start so a restart cannot
+immediately collect current programmes before the schedule frontier has been rebuilt. If the
+current/next and recent-use protected bytes alone exceed the budget, playback wins: the pass leaves
+the store over its soft cap and logs the exact byte totals rather than breaking an active HLS
+manifest. A later pass converges after the grace expires or the hot set moves.
 
 Eviction serializes only with the individual publication key it is deleting; a whole-store scan may
 not take a lock that blocks unrelated tunes. It deletes only complete directories whose names are
@@ -2176,15 +2262,15 @@ index is a visible warning and a clean live fallback, not a boot failure; the ne
 control-plane resolution replaces it. The index contains no credentials, operational locators, or
 irreplaceable state and is excluded from the media-byte budget.
 
-The planner resolves a full readiness plan rather than a bare work queue. Every already-prepared
-publication in the accepted six-hour schedule is passed to retention as protected, while no more
-than sixteen bindings absent from the durable index may contact the media server or audio prober in
-one pass. Readiness probes use a non-touching library lookup: only a successful publication build,
-manifest load, or asset open advances playback LRU. This separation is load-bearing. Treating the
-minute-level schedule scan as viewer use would make every scheduled publication permanently hot;
-evicting without schedule protection would instead rebuild and evict the same over-budget horizon
-forever. When the protected horizon itself is larger than the cap, Loomarr keeps it and reports the
-soft-cap overage; publications no longer in that horizon remain eligible oldest-playback-use first.
+The planner resolves a full readiness plan rather than a bare work queue. Every ready current/next
+publication is passed to retention as protected; ready later-horizon publications remain visible to
+readiness but evictable. Readiness probes use a non-touching library lookup: only a successful
+publication build, manifest load, or asset open advances playback LRU. This separation is load-
+bearing. Treating the minute-level schedule scan as viewer use would make every scheduled
+publication permanently hot; protecting the whole horizon would exceed the default budget at 50–100
+Channels and turn nominal retention into an unbounded soft-cap exception. When the current/next hot
+set itself is larger than the cap, Loomarr keeps it and reports the soft-cap overage; publications
+outside that hot set remain eligible oldest-playback-use first.
 
 **V56 is a replacement phase, with a deletion map.** First, characterization tests pin tune behavior
 at the new interface. Then the current `Manager` and `HLSManager` move behind the module as the live
@@ -2478,14 +2564,27 @@ margins remain unchanged.
 
 An unpaired TV normally never asks the viewer to type a server URL. While Loomarr is running it
 advertises `_loomarr._tcp.local.` over DNS-SD/mDNS with a human-readable instance name, HTTP port,
-protocol version `1`, and the HTTP scheme served by the application listener. The advertisement
-contains no credential, user identity, path, query, or externally routable address, is limited to the local
-multicast domain, and is best-effort: advertisement failure is logged and never prevents the HTTP
-service from becoming ready. It starts and stops with one application generation.
+protocol version `1`, and the HTTP scheme served by the application listener. Direct/native installs
+use that standard record. The supported container install additionally exposes UDP port `51029`: a
+client sends the exact bounded datagram `LOOMARR_DISCOVER/1`, and Loomarr replies unicast to that
+sender with one bounded JSON object carrying `protocol: 1`, a stable instance id, a
+human-readable name, and the validated `server.public_url`. This request/reply path is necessary
+because Docker bridge networking does not export a container's multicast DNS onto the host LAN;
+the published UDP port crosses that bridge while the response URL points back through the supported
+Traefik edge. Malformed or oversized datagrams receive no response.
 
-The Android TV adapter browses that service type only while the unpaired connection screen is in the
-foreground. Found, updated, and lost instances are de-duplicated by service identity; resolved IPv4
-and IPv6 addresses are rendered as remote-focusable Loomarr server choices. Discovery grants no
+Neither discovery transport contains a credential, user identity, pairing state, or arbitrary
+operator data. DNS-SD is limited to the local multicast domain and UDP replies only to a sender that
+reached the fixed discovery port; both are best-effort. A transport failure is logged and never
+prevents the HTTP service from becoming ready, while failure of one transport does not stop the
+other. Both start and stop with one application generation. The UDP responder remains silent while
+`server.public_url` is empty because a container-private listener address is not a usable answer.
+
+The Android TV adapter browses that service type and sends the bounded UDP request only while the
+unpaired connection screen is in the foreground. DNS-SD and UDP results feed the same discovery
+interface. Found, updated, and lost instances are de-duplicated first by service identity and then
+by normalized URL; resolved IPv4 and IPv6 addresses are rendered as remote-focusable Loomarr server
+choices. Discovery grants no
 trust or authorization: the viewer explicitly chooses a server and then completes the existing
 revocable device-code pairing. With one result the screen presents one primary Connect action; with
 several it presents a choice. **Enter address manually** remains a secondary troubleshooting action
@@ -7377,7 +7476,7 @@ surface without a wire-format migration. The opt-in profiler also exposes Go 1.2
 | Pairing QR rendering | **`qrcode` behind a Loomarr-owned `QrCode` interface** | Pairing must preserve the shipping scan path on web, iOS, Android, Android TV, and Apple TV. The library generates the standards-correct matrix and Loomarr renders that matrix through the already-approved `react-native-svg` substrate; keeping it private to the design system prevents product modules from depending on its API or inventing divergent QR treatments. Hand-writing a QR encoder would add security- and interoperability-sensitive code for no product value, while a React Native wrapper would publish JSX-in-JavaScript that requires client-specific transpiler exceptions. |
 | Native client runtime | **Expo + React Native; `react-native-tvos` for TV builds; Expo Router at the navigation seam; `expo-video` behind the native player adapter** | One maintained React/React Native toolchain serves iOS, Android, Android TV, and Apple TV while preserving platform-specific navigation, focus, safe-area, overscan, and playback adapters. Every Expo app in the monorepo resolves the same React Native TV version to prevent duplicate native runtimes. `expo-video` is the supported AVPlayer/ExoPlayer HLS host and remains an optional peer behind `@loomarr/player/native`; browser and platform-neutral player entries never import it. Expo's supported Reanimated and Worklets versions are direct app dependencies because optional-peer auto-resolution can select native-incompatible releases that JavaScript-only doctor and bundle checks miss. `expo-splash-screen` owns the generated native launch screen so the shared Loomarr startup identity is preserved without checking generated iOS or Android projects into source. The Expo config-plugin API is a direct build dependency because Loomarr's generated Android build limits must not depend on pnpm's transitive layout. The TV app directly owns `expo-keep-awake` so pairing and playback cannot disappear behind the platform ambient screen while the viewer is actively using Loomarr. Local Android builds set Gradle's worker ceiling and `CMAKE_BUILD_PARALLEL_LEVEL`, and the generated root Gradle project registers one-slot CMake compile/link pools for every Android application and library subproject as its plugin is applied. The environment setting bounds `cmake --build`; the generated pools separately govern AGP's direct Ninja invocations for native dependencies such as Reanimated, which otherwise fan out enough compiler processes to pin a 4 GB scope at its memory-high threshold. The debug device target also runs Expo's embed generator before Gradle packaging; an `assembleDebug` APK without that step is a Metro client, not a standalone physical-device proof. Apple CI uses GitHub's dedicated Xcode 27 preview image and fails closed on the 27.x major. The native apps pin one coordinated Expo SDK 58 canary release until SDK 58 is stable because the iOS 27 SDK requires the UIScene lifecycle: Expo 57 prebuild crashes before React starts, while the pinned SDK 58 build supplies Expo's complete `ExpoAppSceneDelegate` lifecycle and React factory provider. A partial project-local scene patch is rejected because it can survive launch while leaving a blank window or bypassing Expo lifecycle, deep-link, and system-UI forwarding. Expo prebuild keeps native projects inspectable and makes local Xcode/Gradle and future store builds possible; EAS is optional distribution infrastructure, not the only build path. |
 | Native paired credential storage | **`expo-secure-store` behind the shared pairing store port** | A revocable device token must survive restarts without entering AsyncStorage or application state. SecureStore uses Android Keystore-backed encrypted preferences and Apple Keychain, supports the TV targets, and is the narrow Expo-native adapter for the shared validated credential envelope. The credential remains member-scoped; corrupt local data is cleared, and only an authoritative 401 removes a valid stored token. |
-| Local TV server discovery | **`github.com/grandcat/zeroconf` v1.0.0 for bounded Go advertisement; Android `NsdManager` behind a Loomarr-owned Java React Native adapter** | A self-hosted TV client should not require remote-control URL entry. The pure-Go library publishes standard DNS-SD/mDNS records without a daemon or cloud service; the platform API browses and resolves them without adding a native dependency or restoring Kotlin. Both sit behind Loomarr-owned lifecycle and discovery interfaces; manual URL entry remains the permanent fallback and discovery never grants authorization. |
+| Local TV server discovery | **`github.com/grandcat/zeroconf` v1.0.0 for bounded Go advertisement plus a standard-library UDP request/reply adapter; Android `NsdManager` and `DatagramSocket` behind one Loomarr-owned Java React Native adapter** | A self-hosted TV client should not require remote-control URL entry. The pure-Go library and platform API provide standard DNS-SD/mDNS for direct installs; the fixed published UDP port carries the same non-authorizing server choice through supported Docker bridge deployments, where container multicast cannot reach the host LAN. Both transports sit behind Loomarr-owned lifecycle and discovery interfaces, use no cloud or credential, and add no dependency or Kotlin application code; manual URL entry remains the permanent fallback and discovery never grants authorization. |
 | Android App Bundle emulator install | **Google `bundletool` 1.18.1, downloaded from its official release and pinned by SHA-256** | Release acceptance must install device-specific APK splits from the exact unsigned CI AAB without asking Gradle or Expo to compile another artifact. The harness signs only those disposable emulator APKs with a one-day local key; the AAB bytes and producer evidence remain untouched. This tool is local release-test infrastructure and does not ship in Loomarr or the Android application. |
 | Server state + API client | **TanStack Query** with hooks **generated by `orval`** from `api/openapi.yaml` | One generator yields both types and query/mutation hooks; `openapi-typescript`+`openapi-fetch` rejected only because orval removes more hand-written glue |
 | Wire schemas for validation | **`orval` `client: "zod"`**, a second output block over the same spec → `@loomarr/api/zod` | The form schemas in `packages/core` used to MIRROR wire field names by hand, and it shipped a bug: `intentSchema` said `maxAcquire` where the wire says `maxAcquisitions` (and `runtimeTarget` for `runtimeTargetMin`), so a user's acquisition cap serialized into JSON the server ignored and silently vanished. Each schema is now `.pick()`ed off its generated wire schema, making a lookalike name a **compile error at the schema definition** (`Type 'true' is not assignable to type 'never'`). ⚠ This replaces a hand-written contract test that covered **one** of three schemas with a guarantee that covers all three and every future one — the same "a grep beats a convention" reasoning as `check-retired.sh`. ⚠ **Generation carries names and types, NOT rules:** the spec declares 5 `minimum`, 3 `maximum` and 7 `minLength` in ~9k lines and `maxAcquisitions` has no bounds at all, and OpenAPI has nowhere to put a user-facing message — so trims, lengths, the 0–200 cap and all copy stay hand-authored in `.extend()`, and `confirm` (form-only, never sent) is added there too. Zod stays on v3; `zod@3.25.76` exposes the `./v4` bridge subpath, so v4 remains a separate decision. ⚠ **This row said the mock generator was rejected outright; that was true at V53a and is no longer.** It was rejected for its DATA because it targets OpenAPI 3.0 idioms while this spec is 3.1 — it degraded `type: ["array","null"]` to `arrayElement([[], null])` without descending into `items` (137 never-populated list fields), and `useExamples` reads singular `.example` where Huma emits plural `examples:` (0 of 53 tags used). **V53b removed the first half** by making arrays non-nullable, taking never-populated list mocks to 0; the `useExamples` half remains, which is why it stays unset. See the MSW row below for what is adopted and what is still not trusted. |
@@ -7634,7 +7733,7 @@ range, including zero, and fails only the declared overall/relevance/serendipity
 judge evidence must explicitly contain all three finite scores within that range plus the prompt's
 non-blank reason. `Runner.Run` validates that contract independently of the configured `Judge`, so a
 custom implementation cannot certify NaN, infinity, an out-of-range value, or a blank reason;
-missing, null, or invalid evidence is a judge error, never defaulted or clamped. Schema v10
+missing, null, or invalid evidence is a judge error, never defaulted or clamped. Schema v12
 records exactly one first-failure stage on every failed trial from the closed vocabulary `retrieval`,
 `generation`, `deterministic`, `structural_budget`, `schedule`, `judge`, and `budget_exhausted`;
 later failures remain visible but never replace the first stage. `no_tool_call` and
@@ -8663,6 +8762,25 @@ selection invalidates the preview and disables download until the replacement pr
   or Channel fact. In particular, `declined` remains only a Proposal workflow outcome and does not
   create, imply, or join to a `less` or `never` taste signal.
 
+  Acquisition and scheduling close the same Proposal journey without turning periodic maintenance
+  into quality data. A requested or downloading Title emits exactly one acquisition receipt only
+  after its terminal `available` or `unavailable` row commit. `available` maps to `playable`,
+  `unavailable` maps to `failed`, and time-to-playable/failure is measured from the authoritative
+  `requested_at` when present; a legacy row without that timestamp keeps the terminal outcome and a
+  zero duration rather than inventing a start. Its opaque idempotency key is derived from the
+  canonical Title key and the acquisition stage, but neither the Title key nor its digest is
+  exported. The monotonic provisioning state makes a second terminal acquisition outcome illegal.
+
+  Scheduling is scoped to the Proposal Job that created the Channel and stops measuring after that
+  Job has reached live once. A final reconcile error before first live records scheduling `failed`;
+  a reconcile records `scheduled` only after `SaveChannel` commits a live or drifted playable deck
+  and atomically stamps the Job's existing `reached_live` milestone. An empty successful reconcile
+  records nothing because no programme was placed, and global backend preparation bypasses the
+  Proposal-quality hook. The opaque receipt key is derived from the Job id, stage, and outcome, so
+  retries can show one failure followed by one success without counting repeated maintenance. Both
+  acquisition and scheduling writes are best-effort after the business commit and can never revise
+  provisioning or Channel state.
+
   The module accepts typed observations and owns classification, aggregation, redaction, retention,
   and export. Callers cannot provide labels or arbitrary metadata. Recording is best-effort after
   the business transition commits: a quality-write failure is logged through the bounded diagnostics
@@ -8680,6 +8798,17 @@ selection invalidates the preview and disables download until the replacement pr
   closed provider identity, budget profile, application version, and whether required accounting was
   available. Model strings are length-bounded facts, never labels or network locations; missing
   values remain explicitly missing rather than being guessed.
+
+  Semantic-evaluation scorecard schema v12 embeds one canonical run snapshot whenever the corpus,
+  requested generator model, and budget profile are declared. The snapshot copies the frozen corpus
+  and requested model from the scorecard contract, records the closed requested-provider class, and
+  records a resolved model only when every observed generator call reports the same non-empty value;
+  missing or mixed resolution stays empty. Its application version comes from the executable build
+  identity, its creation time is the scorecard time at whole-second precision, and its opaque id is a
+  digest of those bounded facts. `accountingAvailable` is true only when a declared resource budget
+  observed at least one call without latching missing or invalid accounting. Thus an archived
+  scorecard and a quality-ledger snapshot share one validated comparison shape without copying
+  prompts, provider payloads, endpoints, credentials, or generation ids.
 
   One admin-only JSON export returns aggregate buckets and referenced evaluation-run snapshots; it
   never returns raw receipts or idempotency keys. Export is a local download with a versioned schema,
@@ -8717,7 +8846,7 @@ All recurring background work runs under **one scheduler** (`internal/scheduler`
 - **Execution history is lazy and bounded.** Expanding a task loads `GET /v1/jobs/{name}/history`; the collapsed Tasks list never pays for an execution-history query. The response summarizes the **past 24 hours** (run count, failure count, and average duration) and returns only the five latest executions with their trigger (`scheduled` or `manual`), start time, duration, outcome, and error. River's existing finalized execution rows are the source of truth: each named Loomarr task has a distinct River kind, and the worker records the Loomarr outcome in River output metadata before that row finalizes. Rows from before outcome recording began are omitted rather than falsely called successful. `scheduled_jobs` remains the one-row-per-task status read model; do not duplicate execution rows into an application table.
 - **River is the engine.** Each registry job becomes a River **periodic job** whose worker calls the same `Run` func; River owns due-selection, leadership (so only one replica runs a tick), retries with backoff, and the durable job records behind run history. **Run now** = inserting the job's args immediately — the same worker, no separate code path. The `scheduled_jobs` table remains the read model the Tasks page renders (last run, last result, paused), because River's own tables are keyed by *job execution*, not by "the operator's view of this named task".
 
-- ⚠ **Concurrency is per-QUEUE, and a job's ceiling therefore bounds only the jobs that share its queue (V54).** There are two: `default` (MaxWorkers 1 on SQLite, 4 on Postgres) and `long` (**1 on both**). A job's queue is **derived from its `Timeout`** — declared ceiling ⇒ `long`, none ⇒ `default` — and never hand-set, because a typo in a hand-set name would insert onto a queue with no producer and the job would then never run, silently and forever. Deriving the queue *set* and the *routing* from one function makes that state unreachable.
+- ⚠ **Concurrency is per-QUEUE, and a job's ceiling therefore bounds only the jobs that share its queue (V54).** There are two: `default` (MaxWorkers 1 on SQLite, 4 on Postgres) and `long` (**1 on both**). A job's queue is **derived from its `Timeout`** — a ceiling longer than River's one-minute default ⇒ `long`; zero or an explicit ceiling at or below that default ⇒ `default` — and never hand-set, because a typo in a hand-set name would insert onto a queue with no producer and the job would then never run, silently, forever. This distinction is load-bearing: `system-health` keeps its explicit ten-second cancellation ceiling but must remain claimable on `default` while a thirty-minute media preparation occupies `long`. Deriving the queue *set* and the *routing* from one function makes an unserved queue name unreachable.
 
   This arrived with `Job.Timeout` because the ceiling created the problem the queue solves. Fixing the 60-second SIGKILL let one job hold the single SQLite slot for half an hour: measured 2026-08-12, a `filler-pipeline` pass ran 01:50:11Z → 02:20:47Z and **every other job was starved for its whole duration** — channel maintenance, `images-fetch` and `seerr-queue-poll` all missed 02:00:00Z, `library-scan` and `reconcile` sat at 01:55:00Z, and a manually triggered `filler-sync` did not execute until the worker freed. A ceiling on a shared worker is an outage for everything sharing it.
 

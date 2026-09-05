@@ -37,15 +37,17 @@ type fakePlayoutSessions struct {
 	streams  map[playout.EncodePlan]chan []byte
 	detached int
 	// V16 telemetry: what the handlers reported, and what Stats hands back.
-	stats    []playout.SessionStat
-	capacity int
-	reported []reportedProgram
-	asset    playout.Asset
-	assetOK  bool
-	opened   string
-	tunes    int
-	stopped  []string
-	admitErr error
+	stats        []playout.SessionStat
+	capacity     int
+	reported     []reportedProgram
+	asset        playout.Asset
+	assetOK      bool
+	opened       string
+	tunes        int
+	stopped      []string
+	admitErr     error
+	denyProgram  bool
+	programCosts []bool
 }
 
 // attachRecord is one Attach call — its channel and codec target.
@@ -80,6 +82,13 @@ func (f *fakePlayoutSessions) ReportProgram(channelID string, target playout.Enc
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reported = append(f.reported, reportedProgram{channelID: channelID, target: target, encoder: enc, transcoding: transcoding, progress: p})
+}
+
+func (f *fakePlayoutSessions) AdmitProgram(_ string, _ playout.EncodePlan, transcoding bool) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.programCosts = append(f.programCosts, transcoding)
+	return !f.denyProgram
 }
 
 func (f *fakePlayoutSessions) Attach(_ context.Context, channelID string, target playout.EncodePlan) (<-chan []byte, func(), error) {

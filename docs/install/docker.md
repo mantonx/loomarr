@@ -39,6 +39,11 @@ supported Compose topology publishes Traefik on host port 8080; Loomarr's port 8
 Set `LOOMARR_HTTP_PORT` in `.env` if the host must publish a different port, and include that port
 in `SERVER_PUBLIC_URL`.
 
+The Compose stack also publishes UDP port `51029` so Android TV clients can find Loomarr across
+Docker Desktop's network boundary. Allow inbound UDP `51029` from the trusted LAN in the Docker
+host firewall. Discovery announces `SERVER_PUBLIC_URL`, so that URL must use an address the TV can
+reach; do not set it to `localhost` or a container-only hostname.
+
 The default Traefik entrypoint is plain HTTP for the trusted-LAN deployment model in
 [`SECURITY.md`](../../SECURITY.md). It is not an internet-facing TLS configuration. Keep the Docker
 host trusted: Traefik's Docker socket bind is marked read-only, but the Docker API itself is a

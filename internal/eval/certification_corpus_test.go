@@ -194,6 +194,7 @@ func TestOllamaResourceProbeReportsResidentModelRAMAndVRAM(t *testing.T) {
 
 func TestCertificationScorecardCarriesVersionedContractAndHumanSummary(t *testing.T) {
 	config, err := CertificationRunnerConfig(RunnerConfig{
+		Profile:   "hermetic-bounded-v1",
 		Generator: ModelIdentity{Provider: "ollama", Model: "fixture-model"},
 	})
 	if err != nil {
@@ -204,10 +205,20 @@ func TestCertificationScorecardCarriesVersionedContractAndHumanSummary(t *testin
 		t.Fatalf("scorecard certification contract = %+v", card)
 	}
 	summary := HumanSummary(card)
-	for _, want := range []string{"fixture-model", "Hard gates", "Quality metrics", "1/1 trials passed"} {
+	for _, want := range []string{"fixture-model", "budget profile `hermetic-bounded-v1`", "Hard gates", "Quality metrics", "1/1 trials passed"} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("human summary missing %q:\n%s", want, summary)
 		}
+	}
+}
+
+func TestCertificationRunnerConfigRequiresSnapshotIdentity(t *testing.T) {
+	_, err := CertificationRunnerConfig(RunnerConfig{
+		Profile:   "not a fact token",
+		Generator: ModelIdentity{Provider: "openrouter", Model: "qwen/qwen3.5-27b"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "scorecard requires") {
+		t.Fatalf("certification snapshot identity error = %v", err)
 	}
 }
 
@@ -238,7 +249,10 @@ func TestRunnerExecutesV6QualifierFamiliesThroughProductionSuggester(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	config, err := CertificationRunnerConfig(RunnerConfig{})
+	config, err := CertificationRunnerConfig(RunnerConfig{
+		Profile:   "hermetic-bounded-v1",
+		Generator: ModelIdentity{Provider: "ollama", Model: "fixture-model"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

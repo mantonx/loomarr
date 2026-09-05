@@ -135,8 +135,8 @@ has no drift guard, so churning it is real risk for no glossary gain. The banned
 for the artifact; `internal/suggest` remains the package that produces one.
 
 **Grounding**:
-The rule that the model may only pick from candidates a tool call actually returned this run.
-An id the catalog never surfaced cannot enter a Proposal (§8).
+The rule that the model may only pick from candidates a Catalog operation actually returned this
+run. An id the catalog never surfaced cannot enter a Proposal (§8).
 _Avoid_: validation, filtering
 
 **The approval gate**:

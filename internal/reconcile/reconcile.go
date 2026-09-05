@@ -32,17 +32,24 @@ type Emitter interface {
 
 // Reconciler drives the provisioning backstop loop.
 type Reconciler struct {
-	store store.TitleStore
-	req   requester.Requester
-	lib   LibrarySource
-	emit  Emitter
-	log   *slog.Logger
+	store   store.TitleStore
+	req     requester.Requester
+	lib     LibrarySource
+	emit    Emitter
+	quality AcquisitionQuality
+	log     *slog.Logger
 
 	requestTTL     time.Duration // fresh deadline for a (re)submitted wanted title
 	downloadingTTL time.Duration // deadline once downloading
 	batch          int           // max titles claimed per tick
 	lease          time.Duration // claim lease (§5); must exceed one tick's work
 	now            func() time.Time
+}
+
+// AcquisitionQuality receives a terminal Title only after its row commit.
+// Implementations own privacy, classification, and best-effort persistence.
+type AcquisitionQuality interface {
+	AcquisitionTerminal(context.Context, provision.Record)
 }
 
 // LibraryLookup is the narrow media-library seam used by one reconcile pass.
@@ -84,6 +91,12 @@ func NewDynamic(st store.TitleStore, req requester.Requester, lib LibrarySource,
 		requestTTL: cfg.RequestTTL, downloadingTTL: cfg.DownloadingTTL,
 		batch: cfg.Batch, lease: cfg.Lease, now: now,
 	}
+}
+
+// WithQualityRecorder wires best-effort terminal acquisition measurement.
+func (r *Reconciler) WithQualityRecorder(recorder AcquisitionQuality) *Reconciler {
+	r.quality = recorder
+	return r
 }
 
 // Tick runs one reconcile pass: claim the due batch and reconcile each. Safe to
@@ -183,6 +196,9 @@ func (r *Reconciler) persist(ctx context.Context, rec provision.Record, emitted 
 	if err := r.store.UpsertTitle(ctx, rec); err != nil {
 		r.log.Error("reconcile: persist", "key", rec.Key, "err", err)
 		return
+	}
+	if len(emitted) > 0 && r.quality != nil {
+		r.quality.AcquisitionTerminal(ctx, rec)
 	}
 	for _, ev := range emitted {
 		r.log.Info("provision event", "key", ev.Key, "state", ev.State)

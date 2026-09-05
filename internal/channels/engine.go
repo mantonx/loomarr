@@ -104,6 +104,7 @@ type Engine struct {
 	// automatic renumber when Tunarr already occupies a channel's number. Optional/nil-safe.
 	acts    ActivityRecorder
 	metrics MetricsObserver
+	quality SchedulingQuality
 	log     *slog.Logger
 
 	policy            schedule.PendingPolicy
@@ -122,6 +123,13 @@ type Engine struct {
 type MetricsObserver interface {
 	ChannelReconciled(duration time.Duration, success bool)
 	ChannelSlotSubstitutions(count int)
+}
+
+// SchedulingQuality receives only the Proposal Job identity and bounded attempt
+// facts. Implementations own opaque keys, privacy, and best-effort persistence.
+type SchedulingQuality interface {
+	ProposalSchedulingFailed(context.Context, string, time.Time, time.Duration)
+	ProposalScheduled(context.Context, string, time.Time, time.Duration)
 }
 
 // Config parameterizes the engine (from §15).
@@ -300,6 +308,12 @@ func (e *Engine) WithActivity(a ActivityRecorder) *Engine {
 // WithMetrics binds one application generation's bounded reconcile observer.
 func (e *Engine) WithMetrics(observer MetricsObserver) *Engine {
 	e.metrics = observer
+	return e
+}
+
+// WithQualityRecorder wires the first-live Proposal scheduling journey.
+func (e *Engine) WithQualityRecorder(recorder SchedulingQuality) *Engine {
+	e.quality = recorder
 	return e
 }
 

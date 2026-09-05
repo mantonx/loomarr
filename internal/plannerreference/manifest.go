@@ -18,6 +18,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/loomarr/loomarr/internal/quality"
 )
 
 const (
@@ -145,6 +147,7 @@ type scorecardEnvelope struct {
 	CorpusVersion string               `json:"corpusVersion"`
 	Profile       string               `json:"profile"`
 	Generator     scorecardIdentity    `json:"generator"`
+	RunSnapshot   *quality.RunSnapshot `json:"runSnapshot"`
 	Contract      scorecardContract    `json:"contract"`
 	Assessment    *scorecardAssessment `json:"assessment"`
 	Cases         []scorecardCase      `json:"cases"`
@@ -396,11 +399,26 @@ func validateResidency(r residencyCapture, m modelCapture) error {
 }
 
 func validateScorecard(card scorecardEnvelope, c capture) error {
-	if card.SchemaVersion != 10 || card.CorpusVersion == "" || card.Contract.CorpusVersion != card.CorpusVersion {
+	if (card.SchemaVersion != 10 && card.SchemaVersion != 11 && card.SchemaVersion != 12) || card.CorpusVersion == "" || card.Contract.CorpusVersion != card.CorpusVersion {
 		return errors.New("scorecard schema/corpus identity is invalid")
 	}
 	if card.Profile != c.Protocol.Profile || card.Generator.Provider != "ollama" || card.Generator.Model != c.Model.Tag {
 		return errors.New("scorecard profile or generator does not match the captured local model")
+	}
+	if card.SchemaVersion == 12 {
+		if card.RunSnapshot == nil {
+			return errors.New("scorecard v12 lacks its quality run snapshot")
+		}
+		snapshot := *card.RunSnapshot
+		if err := snapshot.Validate(); err != nil {
+			return fmt.Errorf("scorecard quality run snapshot: %w", err)
+		}
+		if snapshot.ID != quality.RunSnapshotID(snapshot) || snapshot.CorpusVersion != card.CorpusVersion ||
+			snapshot.RequestedModel != card.Generator.Model || snapshot.ResolvedModel != c.Model.Tag ||
+			snapshot.Provider != quality.ProviderOllama || snapshot.BudgetProfile != card.Profile ||
+			!snapshot.AccountingAvailable || snapshot.CreatedAt.Before(c.StartedAt) || snapshot.CreatedAt.After(c.CompletedAt) {
+			return errors.New("scorecard quality run snapshot does not match the captured run")
+		}
 	}
 	if !isSHA256(card.Contract.CatalogFixtureSHA256) {
 		return errors.New("scorecard catalog fixture digest is invalid")

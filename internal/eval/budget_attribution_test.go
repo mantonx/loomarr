@@ -12,6 +12,7 @@ import (
 
 	"github.com/loomarr/loomarr/internal/llm"
 	"github.com/loomarr/loomarr/internal/provision"
+	"github.com/loomarr/loomarr/internal/quality"
 	"github.com/loomarr/loomarr/internal/suggest"
 	"github.com/loomarr/loomarr/internal/testkit"
 )
@@ -491,6 +492,60 @@ func TestScorecardShapeExcludesCredentials(t *testing.T) {
 	resource := callBudget["resource"].(map[string]any)
 	if resource["maxCallsPerRun"] != float64(25) || resource["maxCallsPerSuite"] != float64(150) {
 		t.Fatalf("schema-v7 declared call limits = %v", resource)
+	}
+}
+
+func TestScorecardRunSnapshotBindsResolvedRouteBudgetAndApplication(t *testing.T) {
+	inner := testkit.NewLLM(llm.Response{Attribution: llm.Attribution{
+		RequestedProvider: "openrouter", RequestedModel: "qwen/qwen3.5-27b",
+		ResolvedProvider: "Qwen", ResolvedModel: "qwen/qwen3.5-27b-20260901",
+		Tokens: llm.TokenUsage{Prompt: 10, Completion: 5},
+		Charge: &llm.Money{Amount: "0.01", Currency: "USD"},
+	}})
+	provider := &observedProvider{inner: inner}
+	runner := NewRunner(providerGenerator{provider: provider}, RunnerConfig{
+		Profile:   "hosted-bounded-v1",
+		Generator: ModelIdentity{Provider: "openrouter", Model: "qwen/qwen3.5-27b"},
+		ResourceBudget: ResourceBudget{
+			MaxCallsPerRun: 25, MaxCallsPerSuite: 25,
+			MaxTokensPerRun: 1000, MaxTokensPerSuite: 1000,
+			MaxSpendPerRun: "1.00", MaxSpendPerSuite: "1.00",
+		},
+	}).WithObserver(provider)
+
+	card := runner.Run(context.Background(), []Case{{Name: "snapshot"}})
+
+	if card.RunSnapshot == nil {
+		t.Fatal("scorecard run snapshot is missing")
+	}
+	snapshot := *card.RunSnapshot
+	if snapshot.CorpusVersion != card.CorpusVersion || snapshot.RequestedModel != "qwen/qwen3.5-27b" ||
+		snapshot.ResolvedModel != "qwen/qwen3.5-27b-20260901" || snapshot.Provider != quality.ProviderOpenRouter ||
+		snapshot.BudgetProfile != "hosted-bounded-v1" || snapshot.ApplicationVersion == "" ||
+		!snapshot.AccountingAvailable || snapshot.CreatedAt != card.GeneratedAt.Truncate(time.Second) {
+		t.Fatalf("run snapshot = %+v", snapshot)
+	}
+	if err := snapshot.Validate(); err != nil {
+		t.Fatalf("run snapshot validation: %v", err)
+	}
+}
+
+func TestScorecardRunSnapshotKeepsMissingOrMixedResolutionExplicit(t *testing.T) {
+	card := Scorecard{
+		SchemaVersion: scorecardSchemaVersion,
+		CorpusVersion: "planner-certification-v5",
+		GeneratedAt:   time.Unix(1_800_000_000, 123).UTC(),
+		Profile:       "local-bounded-v1",
+		Generator:     ModelIdentity{Provider: "ollama", Model: "qwen3.5:27b"},
+		Results: []Result{{GeneratorCalls: []InferenceCall{
+			{ResolvedModel: "qwen3.5:27b-a"},
+			{ResolvedModel: "qwen3.5:27b-b"},
+		}}},
+	}
+
+	snapshot := buildScorecardRunSnapshot(card, false)
+	if snapshot == nil || snapshot.ResolvedModel != "" || snapshot.AccountingAvailable {
+		t.Fatalf("mixed-resolution snapshot = %+v", snapshot)
 	}
 }
 

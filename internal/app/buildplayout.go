@@ -25,6 +25,8 @@ import (
 	"github.com/loomarr/loomarr/internal/store"
 )
 
+const playoutGPUIdentityTimeout = 250 * time.Millisecond
+
 type playoutBuild struct {
 	observer          api.PlayoutObserver
 	preparedObserver  api.PreparedObserver
@@ -79,6 +81,8 @@ func buildPlayout(deps playoutDeps) (playoutBuild, error) {
 	var playoutRes *playoutResolver
 	var backendController *backendtransition.Controller
 	var residentVRAM func(context.Context) (float64, string)
+	var preparedBlockSource playout.BlockSource
+	var preparedMPEGTSReady func(context.Context, string, playout.EncodePlan) bool
 	// Internal playout (§9.1): Loomarr serves its own channels. Wired here because this is
 	// where BOTH halves already exist — the engine that answers "what airs when" and the
 	// library client that resolves an item to a streamable URL.
@@ -137,11 +141,19 @@ func buildPlayout(deps playoutDeps) (playoutBuild, error) {
 	playoutMgr := playout.NewManager(
 		playoutSpawner(set.str("playout.ffmpeg_path"),
 			func() string { return set.str("server.public_url") },
-			playoutTokenFn, log, deps.processDiagnostics),
+			playoutTokenFn, log, deps.processDiagnostics,
+			func() playout.BlockSource { return preparedBlockSource }),
 		playoutBudget,
 		playout.DefaultGrace,
 		log,
-	).WithObserver(deps.metrics)
+	).WithObserver(deps.metrics).WithCostEstimator(func(
+		ctx context.Context, channelID string, plan playout.EncodePlan,
+	) int {
+		if preparedMPEGTSReady != nil && preparedMPEGTSReady(ctx, channelID, plan) {
+			return 0
+		}
+		return plan.EstimatedCost()
+	})
 	// A committed internal Desired-cycle change must retire the encoder reading the
 	// previous cycle. The next tune starts from the new wall-clock position; peer
 	// Postgres replicas receive the same cutover through durable invalidations.
@@ -180,11 +192,19 @@ func buildPlayout(deps playoutDeps) (playoutBuild, error) {
 		// playout.encoder is unset — so a box with a working GPU uses it instead of
 		// silently falling back to software.
 		ffmpegPath: func() string { return set.str("playout.ffmpeg_path") },
+		capabilityRoot: func() string {
+			return set.str("playout.prepared_dir")
+		},
 		// GPU name for the encoder chooser's vendor-native hint (Detect). Read via the LLM
 		// package's thin nvidia-smi wrapper — the same GPU signal the rest of the app probes —
 		// so playout picks NVENC on an NVIDIA card rather than young cross-vendor Vulkan. Called
 		// once, lazily, inside the memoised capability probe; "" (unknown GPU) is a fine default.
-		gpuName: func() string { return llm.GPUName(rootCtx) },
+		// Bound the external identity command because this cheap check can run on the first tune.
+		gpuName: func() string {
+			ctx, cancel := context.WithTimeout(rootCtx, playoutGPUIdentityTimeout)
+			defer cancel()
+			return llm.GPUName(ctx)
+		},
 		// Preferred audio language (§9.1), read live so a Settings change applies to the
 		// next programme rather than the next restart. The prober derives ffprobe from the
 		// ffmpeg path — the two ship together, so an operator who moved one moved both.
@@ -356,6 +376,23 @@ func buildPlayout(deps playoutDeps) (playoutBuild, error) {
 		preparedObserver = planner
 		jobReg.Add(preparedPlayoutJob(planner, ""))
 		preparedOrigin = playout.NewPreparedOrigin(preparedLibrary, preparedRuntime)
+		rawPreparedBlockSource := preparedOrigin.MPEGTSBlockSource(
+			set.str("playout.ffmpeg_path"), log, deps.processDiagnostics,
+		)
+		preparedBlockSource = func(
+			ctx context.Context, channelID string, plan playout.EncodePlan,
+		) (playout.Block, error) {
+			block, err := rawPreparedBlockSource(ctx, channelID, plan)
+			if err == nil && block.Content != nil && !playoutMgr.AdmitProgram(channelID, plan, false) {
+				_ = block.Content.Close()
+				return playout.Block{}, playout.ErrAtCapacity
+			}
+			return block, err
+		}
+		preparedMPEGTSReady = func(ctx context.Context, channelID string, plan playout.EncodePlan) bool {
+			ready, err := preparedOrigin.MPEGTSReady(ctx, channelID, plan)
+			return err == nil && ready
+		}
 	}
 	var lifecycleGate *playoutAdmissionGate
 	// Every transport hop uses one durable eligibility decision, including SQLite's raw

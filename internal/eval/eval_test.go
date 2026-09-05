@@ -29,6 +29,10 @@ func TestEvalCorpus(t *testing.T) {
 	}
 	required := os.Getenv("LOOMARR_EVAL_REQUIRED") == "1"
 	liveSchedule := os.Getenv("LOOMARR_EVAL_LIVE_SCHEDULE") == "1"
+	profile := os.Getenv("LOOMARR_EVAL_PROFILE")
+	if required && strings.TrimSpace(profile) == "" {
+		t.Fatal("LOOMARR_EVAL_PROFILE is required in certification mode")
+	}
 	trials, trialErr := ParseEvaluationTrials(required, os.Getenv("LOOMARR_EVAL_TRIALS"))
 	if trialErr != nil {
 		t.Fatal(trialErr)
@@ -118,7 +122,7 @@ func TestEvalCorpus(t *testing.T) {
 		t.Skipf("judge eval route not configured: %v", judgeErr)
 	}
 	runner := NewRunner(sug, RunnerConfig{
-		Trials: trials, Profile: os.Getenv("LOOMARR_EVAL_PROFILE"),
+		Trials: trials, Profile: profile,
 		Generator:      generatorIdentity,
 		Judge:          judgeIdentity,
 		ResourceBudget: budget.Resource,

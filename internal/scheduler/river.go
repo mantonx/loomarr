@@ -285,13 +285,12 @@ const longQueue = "long"
 // the `default` queue; a job that declared one gets `long`. A job can therefore never wait longer
 // than the ceiling of its own queue.
 //
-// ⚠ Deliberately DERIVED rather than a hand-set `Job.Queue` field. A typo in a hand-set name would
-// insert onto a queue with no producer, and the job would then never run — silently, forever, with
-// no error anywhere. Deriving it means the queue SET and the queue ROUTING come from one function,
-// so a producer exists for every queue any job can name. `TestRiverQueues_EveryJobHasAProducer`
-// pins that.
+// A short explicit ceiling still belongs on default: system-health needs its ten-second
+// cancellation boundary without waiting behind thirty-minute media. Only work allowed to outlive
+// River's default is long. The rule remains derived rather than accepting hand-set queue names, so
+// `riverQueues` always creates a producer for every possible result.
 func queueFor(j Job) string {
-	if j.Timeout > 0 {
+	if j.Timeout > river.JobTimeoutDefault {
 		return longQueue
 	}
 	return river.QueueDefault

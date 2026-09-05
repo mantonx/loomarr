@@ -9,6 +9,7 @@ import (
 
 	"github.com/loomarr/loomarr/internal/library"
 	"github.com/loomarr/loomarr/internal/provision"
+	"github.com/loomarr/loomarr/internal/quality"
 	"github.com/loomarr/loomarr/internal/store"
 	"github.com/loomarr/loomarr/internal/testkit"
 	"github.com/loomarr/loomarr/internal/testkit/libraryfixture"
@@ -144,6 +145,50 @@ func TestDeadlineGiveUp(t *testing.T) {
 	}
 	if req.CancelCount() != 1 {
 		t.Errorf("give-up should best-effort Cancel, got %d cancels", req.CancelCount())
+	}
+}
+
+func TestReconcilerRecordsTerminalAcquisitionQualityAfterCommit(t *testing.T) {
+	rc, st, req, ms := setup(t)
+	sink := &testkit.QualityRecorder{}
+	rc.WithQualityRecorder(quality.NewAcquisitionRecorder(sink, testkit.Logger()))
+
+	requestedAt := now.Add(-2 * time.Hour)
+	available := provision.Record{
+		Key: "movie:tmdb:16153", State: provision.Requested, RequestedAt: requestedAt,
+		Deadline: now.Add(-time.Hour), Title: provision.Title{MediaType: provision.Movie, TMDBID: 16153},
+	}
+	if err := st.UpsertTitle(t.Context(), available); err != nil {
+		t.Fatal(err)
+	}
+	ms.PresentTMDB = "16153"
+	if _, err := rc.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	failed := provision.Record{
+		Key: "movie:tmdb:404", State: provision.Downloading, RequestedAt: requestedAt,
+		Deadline: now.Add(-time.Hour), Title: provision.Title{MediaType: provision.Movie, TMDBID: 404},
+	}
+	if err := st.UpsertTitle(t.Context(), failed); err != nil {
+		t.Fatal(err)
+	}
+	ms.PresentTMDB = ""
+	if _, err := rc.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	got := sink.Observations()
+	if len(got) != 2 || got[0].Outcome != quality.OutcomePlayable || got[1].Outcome != quality.OutcomeFailed {
+		t.Fatalf("terminal acquisition observations = %+v", got)
+	}
+	for _, observation := range got {
+		if observation.Stage != quality.StageAcquisition || observation.At != now || observation.Duration != 2*time.Hour {
+			t.Fatalf("acquisition observation = %+v", observation)
+		}
+	}
+	if req.CancelCount() != 1 {
+		t.Fatalf("quality recording changed provisioning: cancels = %d, want 1", req.CancelCount())
 	}
 }
 

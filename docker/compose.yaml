@@ -1,5 +1,6 @@
-# Loomarr deployment compose (design §16). Traefik is the only published host
-# port; Loomarr stays on the private edge network. Profiles: sqlite · postgres · ai.
+# Loomarr deployment compose (design §16). Traefik is the only published HTTP
+# port; Loomarr publishes only its UDP LAN-discovery responder and stays on the
+# private edge network for application traffic. Profiles: sqlite · postgres · ai.
 # Filler ingest needs no profile and no tag: the vendored yt-dlp + ffmpeg ship in the one
 # published image, so downloading clips in-app works out of the box. (This used to name a
 # loomarr:filler tag; that variant no longer exists — see §16.)
@@ -146,6 +147,9 @@ services:
       PLAYOUT_RENDER_NODE: ${PLAYOUT_RENDER_NODE:-}
       AUTO_MIGRATE: "true"
     expose: ["8080"]
+    # Container multicast does not reach the household LAN. This fixed UDP port carries only
+    # bounded discovery requests and unicast responses; HTTP still enters through Traefik.
+    ports: ["51029:51029/udp"]
     volumes:
       # ⚠ THE DATABASE LIVES HERE. DATABASE_URL defaults to sqlite:///data/loomarr.db,
       # so without this mount SQLite writes into the container's own writable layer and

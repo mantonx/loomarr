@@ -79,6 +79,43 @@ func TestBuild_WiresMeasuredCapacityToAdmissionAndQuality(t *testing.T) {
 	}
 }
 
+func TestPlayoutResolver_ProfileUsesMatchingEvidenceBeforeAsyncValidation(t *testing.T) {
+	loadCalls := 0
+	validationStarted := make(chan struct{})
+	validationRelease := make(chan struct{})
+	r := &playoutResolver{
+		tier: func() string { return "balanced" }, encoder: func() string { return "" },
+		capacity: func() int { return 4 }, activeChannels: func() int { return 0 },
+		loadCapabilityEvidence: func(context.Context) (playout.Capacity, bool) {
+			loadCalls++
+			return playout.Capacity{Chosen: playout.EncoderNVENC, MaxChannels: 4}, true
+		},
+		ffmpegPath: func() string {
+			close(validationStarted)
+			<-validationRelease
+			return "/nonexistent/ffmpeg"
+		},
+	}
+
+	before := time.Now()
+	profile := r.Profile(t.Context())
+	if elapsed := time.Since(before); elapsed > 100*time.Millisecond {
+		t.Fatalf("Profile waited %s for asynchronous capability validation", elapsed)
+	}
+	if profile.Encoder != playout.EncoderNVENC || loadCalls != 1 ||
+		r.maxChannels.Load() != 4 || !r.detectReady.Load() {
+		t.Fatalf("first Profile = %+v, load calls=%d max=%d ready=%v; want matching NVENC evidence",
+			profile, loadCalls, r.maxChannels.Load(), r.detectReady.Load())
+	}
+	select {
+	case <-validationStarted:
+	case <-time.After(time.Second):
+		t.Fatal("Profile did not start evidence validation in the background")
+	}
+	close(validationRelease)
+	_ = r.detectedEncoder(t.Context())
+}
+
 func TestPlayoutResolver_AudioTrackHonoursChannelOverride(t *testing.T) {
 	r := &playoutResolver{
 		audioLanguage: func() string { return "eng" },
@@ -245,6 +282,47 @@ func TestPlayoutResolver_LocalFileRevisionInvalidatesMeasuredAudio(t *testing.T)
 	}
 	if got := r.AudioTrackFor(context.Background(), "channel-1", "item-1", path); got != 1 || probeCalls != 2 {
 		t.Fatalf("changed local = %d, probes %d; want revision invalidation and second probe", got, probeCalls)
+	}
+}
+
+func TestPlayoutResolver_LocalAudioProbeFeedsCopyPlanWithoutSecondProbe(t *testing.T) {
+	st := testkit.MigratedSQLiteStore(t)
+	path := t.TempDir() + "/movie.mkv"
+	if err := os.WriteFile(path, []byte("one stable local revision"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sourceProbes, formatProbes := 0, 0
+	r := &playoutResolver{
+		inventory: inventory.New(st), now: time.Now,
+		audioLanguage: func() string { return "eng" },
+		probeSource: func(context.Context, string) (playout.SourceObservation, error) {
+			sourceProbes++
+			return playout.SourceObservation{
+				Container: "matroska", DurationMillis: 90_000, Bitrate: 4_000_000,
+				Streams: []playout.ObservedStream{
+					{Index: 0, Kind: "video", Codec: "h264", Width: 1920, Height: 1080,
+						FrameRate: "25/1", PixelFormat: "yuv420p"},
+					{Index: 1, Kind: "audio", Codec: "aac", Language: "jpn", Channels: 2, SampleRate: 48_000},
+					{Index: 2, Kind: "audio", Codec: "aac", Language: "eng", Channels: 2, SampleRate: 48_000},
+				},
+			}, nil
+		},
+		probeFormat: func(context.Context, string) (playout.MediaFormat, error) {
+			formatProbes++
+			return playout.MediaFormat{}, nil
+		},
+	}
+
+	if got := r.AudioTrackFor(t.Context(), "channel-1", "item-1", path); got != 1 {
+		t.Fatalf("AudioTrackFor = %d, want English audio ordinal 1", got)
+	}
+	plan, format := r.PlanFor(t.Context(), path, playout.PlanFull)
+	if !plan.DirectPlay() || format.VideoCodec != "h264" || format.AudioCodec != "aac" ||
+		format.Width != 1920 || format.Height != 1080 || format.FrameRate != 25 {
+		t.Fatalf("inventory-backed PlanFor = (%+v, %+v), want direct-play 1080p25 h264/aac", plan, format)
+	}
+	if sourceProbes != 1 || formatProbes != 0 {
+		t.Fatalf("probe calls = source %d, format %d; want one shared source probe", sourceProbes, formatProbes)
 	}
 }
 

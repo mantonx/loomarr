@@ -285,6 +285,12 @@ func runOnce(log *slog.Logger, generation int, databaseMigration *databaseMigrat
 		defer advertisement.Shutdown()
 		log.Info("LAN discovery: advertising Loomarr", "service", landiscovery.ServiceType)
 	}
+	if responder, respondErr := landiscovery.StartBroadcast(hostname, application.ServerPublicURL); respondErr != nil {
+		log.Warn("LAN discovery: container-safe responder unavailable", "err", respondErr)
+	} else {
+		defer responder.Shutdown()
+		log.Info("LAN discovery: listening for container-safe requests", "udp_port", landiscovery.BroadcastPort)
+	}
 	// A fully built generation with an acquired listener is the cutover's final commit.
 	// Future, unrelated runtime failures must not roll back a live PostgreSQL install.
 	databaseMigration.fallbackSQLiteURL = ""

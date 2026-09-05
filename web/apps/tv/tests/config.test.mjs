@@ -148,7 +148,7 @@ test("hands the native splash to the shared Loomarr launch identity", async () =
   );
 });
 
-test("ships LAN discovery through Android NSD without restoring Kotlin", async () => {
+test("ships DNS-SD and UDP LAN discovery without restoring Kotlin", async () => {
   const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   const adapter = await readFile(
     new URL(
@@ -169,10 +169,19 @@ test("ships LAN discovery through Android NSD without restoring Kotlin", async (
   assert.match(adapter, /NativeModules\.LoomarrLanDiscovery/);
   assert.match(nativeModule, /NsdManager/);
   assert.match(nativeModule, /_loomarr\._tcp\./);
+  assert.match(nativeModule, /DatagramSocket/);
+  assert.match(nativeModule, /LOOMARR_DISCOVER\/1/);
+  assert.match(nativeModule, /51029/);
   assert.match(nativeModule, /address\.indexOf\('%'\)/);
   assert.match(nativeModule, /address\.indexOf\(':'\) >= 0/);
   assert.match(nativeModule, /"\[" \+ address \+ "\]"/);
   assert.doesNotMatch(nativeModule, /kotlin/i);
+});
+
+test("publishes the container-safe discovery port from the Loomarr container", async () => {
+  const compose = await readFile(new URL("../../../../docker/compose.yaml", import.meta.url), "utf8");
+
+  assert.match(compose, /loomarr:[\s\S]*ports:\s*\["51029:51029\/udp"\]/);
 });
 
 test("keeps the Watching inactivity callback stable across playback renders", async () => {

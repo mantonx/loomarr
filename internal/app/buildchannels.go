@@ -18,6 +18,7 @@ import (
 	"github.com/loomarr/loomarr/internal/media"
 	"github.com/loomarr/loomarr/internal/metrics"
 	"github.com/loomarr/loomarr/internal/programmer"
+	"github.com/loomarr/loomarr/internal/quality"
 	"github.com/loomarr/loomarr/internal/reconcile"
 	"github.com/loomarr/loomarr/internal/schedule"
 	"github.com/loomarr/loomarr/internal/scheduler"
@@ -237,7 +238,7 @@ func buildChannels(
 			// global fallback, while schedule.PlaysInternally applies a channel's policy override.
 			// This keeps ordinary reconcile aligned with the fleet barrier during a transition.
 			ResolvePlayoutBackendContext: reconcileBackendContext,
-		}, time.Now, log).WithMetrics(metricRecorder)
+		}, time.Now, log).WithMetrics(metricRecorder).WithQualityRecorder(quality.NewSchedulingRecorder(st, log))
 		// Heal an entry that reached the scheduler unrated once its title is in the
 		// library (§389 amendment): without this a fail-closed audience ceiling drops
 		// it and the channel plays nothing (§9). Uses the same library client the

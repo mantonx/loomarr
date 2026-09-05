@@ -63,7 +63,7 @@ func (s *Suggester) groundReference(ctx context.Context, intent *Intent) (refere
 		}
 		exact := make([]catalog.Candidate, 0, len(candidates))
 		for _, candidate := range candidates {
-			if !sameReferenceTitle(candidate.Name, title) {
+			if !sameExactTitle(candidate.Name, title) {
 				continue
 			}
 			key, keyErr := candidate.Key()
@@ -146,6 +146,6 @@ func boundedReferenceTitles(values []string) []string {
 	return result
 }
 
-func sameReferenceTitle(candidate, anchor string) bool {
+func sameExactTitle(candidate, anchor string) bool {
 	return textmatch.ContainsPhrase(candidate, anchor) && textmatch.ContainsPhrase(anchor, candidate)
 }

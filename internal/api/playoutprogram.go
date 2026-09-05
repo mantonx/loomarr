@@ -504,6 +504,10 @@ func (s *Server) startChild(
 	if ctx.Err() != nil {
 		return nil
 	}
+	if s.playoutObserver != nil && !s.playoutObserver.AdmitProgram(channelID, target, transcoding) {
+		s.log.Info("playout: program waiting for transcode capacity", "channel", channelID, "target", target.String())
+		return nil
+	}
 	// The child dies with the request. cancel is handed to the caller (pipeChild) which owns the
 	// stream's lifetime; on a nil return here we cancel immediately so a failed attempt leaves no
 	// orphan before the next ladder step.
@@ -517,8 +521,8 @@ func (s *Server) startChild(
 	enc2 := enc // capture for the progress closure
 	onProgress := func(p playout.Progress) {
 		if s.playoutObserver != nil {
-			// `transcoding` corrects the session's admission cost to reality (§9.1 V49): a `-c copy`
-			// program frees its transcode slot, a re-encode claims one.
+			// Admission already transitioned to this real cost before spawn. Reporting repeats that
+			// transition idempotently while recording the child encoder and progress (§9.1 V49).
 			s.playoutObserver.ReportProgram(channelID, target, enc2, transcoding, p)
 		}
 	}

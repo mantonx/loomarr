@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/loomarr/loomarr/internal/catalog"
 	"github.com/loomarr/loomarr/internal/library"
@@ -54,38 +56,35 @@ type emptyThenGroundedLLM struct {
 	calls int
 }
 
-type retainedGroundingRetryLLM struct {
-	calls                int
-	sawRejectedAssistant bool
+type concurrentTitleLibrary struct {
+	started atomic.Int32
+	ready   chan struct{}
 }
 
-func (m *retainedGroundingRetryLLM) Name() string { return "retained-grounding-retry" }
-
-func (m *retainedGroundingRetryLLM) Chat(_ context.Context, messages []llm.Message, opts llm.ChatOptions) (llm.Response, error) {
-	m.calls++
-	switch m.calls {
-	case 1:
-		return testkit.FinalResponse(`{"channelName":"Friday Night","picks":[{"mediaType":"series","tmdbId":12345,"name":"Full House"}]}`), nil
-	case 2:
-		if len(opts.Tools) == 0 {
-			return llm.Response{}, errors.New("catalog tool unavailable during grounding recovery")
-		}
-		for _, message := range messages {
-			if message.Role == llm.Assistant && strings.Contains(message.Content, `"tmdbId":12345`) {
-				m.sawRejectedAssistant = true
-				break
-			}
-		}
-		if !m.sawRejectedAssistant {
-			return llm.Response{}, errors.New("rejected assistant turn missing from grounding recovery")
-		}
-		return testkit.ToolCallResponse("catalog_search", map[string]any{"query": "Full House"}), nil
-	default:
-		if len(opts.Tools) != 0 {
-			return llm.Response{}, errors.New("catalog tool remained after grounded recovery search")
-		}
-		return testkit.FinalResponse(`{"channelName":"Friday Night","picks":[{"mediaType":"series","tvdbId":762,"name":"Full House"}]}`), nil
+func (l *concurrentTitleLibrary) Search(ctx context.Context, term string, _ int) ([]library.SearchResult, error) {
+	if l.started.Add(1) == 2 {
+		close(l.ready)
 	}
+	select {
+	case <-l.ready:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	items := map[string]library.SearchResult{
+		"Full House": {
+			LibraryItemID: "lib-full-house", Name: "Full House", Year: 1987,
+			MediaType: library.Series, TVDBID: 762,
+		},
+		"Family Matters": {
+			LibraryItemID: "lib-family-matters", Name: "Family Matters", Year: 1989,
+			MediaType: library.Series, TVDBID: 767,
+		},
+	}
+	item, ok := items[term]
+	if !ok {
+		return nil, nil
+	}
+	return []library.SearchResult{item}, nil
 }
 
 func (m *emptyThenGroundedLLM) Name() string { return "empty-then-grounded" }
@@ -917,7 +916,11 @@ func TestSuggest_RetriesOnceWhenModelNeverSearches(t *testing.T) {
 	}
 }
 
-func TestSuggest_GroundingRetryRetainsRejectedAssistantTurn(t *testing.T) {
+// A provider may ignore the offered catalog tool and still return plausible
+// title names paired with invented ids. The names are useful search input, but
+// neither they nor the ids are identity evidence until the real Catalog resolves
+// them. Exercise that recovery through the public Suggester seam.
+func TestSuggest_GroundsToolFreeNamedPickThroughCatalog(t *testing.T) {
 	ms := testkit.NewMediaServer(t)
 	ms.SetSearchItems(testkit.SearchStub{
 		Terms: []string{"full house"}, LibraryItemID: "lib-full-house",
@@ -926,19 +929,274 @@ func TestSuggest_GroundingRetryRetainsRejectedAssistantTurn(t *testing.T) {
 	})
 	mt := testkit.NewTMDB(t)
 	tm := tmdb.NewWithBase(mt.URL, "key")
-	model := &retainedGroundingRetryLLM{}
-	s := suggest.New(model, catalog.New(library.New(library.Emby, ms.URL, ms.AdminToken, "dev-1"), tm), tm, 10)
+	s := suggest.New(
+		testkit.NewLLM(testkit.FinalResponse(`{
+			"channelName":"Friday Night",
+			"rationale":"A family-comedy block.",
+			"picks":[{
+				"mediaType":"series",
+				"tmdbId":12345,
+				"name":"Full House",
+				"rationale":"A defining family sitcom.",
+				"confidence":0.95
+			}]
+		}`)),
+		catalog.New(library.New(library.Emby, ms.URL, ms.AdminToken, "dev-1"), tm),
+		tm,
+		10,
+	)
 
 	prop, err := s.Suggest(context.Background(), suggest.Intent{Description: "Something like TGIF"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !model.sawRejectedAssistant || model.calls != 3 {
-		t.Fatalf("grounding recovery retained=%t after %d calls, want retained rejected turn and three calls",
-			model.sawRejectedAssistant, model.calls)
+	if len(prop.Lineup) != 1 {
+		t.Fatalf("lineup = %+v, want the one exact catalog match", prop.Lineup)
 	}
-	if len(prop.Lineup) != 1 || prop.Lineup[0].TVDBID != 762 {
-		t.Fatalf("grounding recovery proposal = %+v, want grounded Full House", prop)
+	if got := prop.Lineup[0]; got.Name != "Full House" || got.TVDBID != 762 || got.TMDBID == 12345 {
+		t.Fatalf("grounded pick = %+v, want canonical Full House identity and no invented id", got)
+	}
+}
+
+func TestSuggest_GroundsToolFreeNamedPickAsAcquisition(t *testing.T) {
+	mt := testkit.NewTMDB(t)
+	mt.AddSeries(540, "Full House", 1987, []int{35, 10751}, "A widowed father raises his family with help from relatives and friends.")
+	tm := tmdb.NewWithBase(mt.URL, "key")
+	s := suggest.New(
+		testkit.NewLLM(testkit.FinalResponse(`{
+			"channelName":"Friday Night",
+			"picks":[{"mediaType":"series","tmdbId":12345,"name":"Full House","year":1987}]
+		}`)),
+		catalog.New(nil, tm),
+		tm,
+		10,
+	)
+
+	prop, err := s.Suggest(context.Background(), suggest.Intent{Description: "Something like TGIF"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prop.Acquisitions) != 1 || prop.Acquisitions[0].TMDBID != 540 || prop.Acquisitions[0].TMDBID == 12345 {
+		t.Fatalf("acquisitions = %+v, want only the TMDB-grounded Full House identity", prop.Acquisitions)
+	}
+}
+
+func TestSuggest_GroundsToolFreeNamedPickBySuppliedYear(t *testing.T) {
+	ms := testkit.NewMediaServer(t)
+	ms.SetSearchItems(
+		testkit.SearchStub{
+			Terms: []string{"full house"}, LibraryItemID: "lib-full-house-1987",
+			Name: "Full House", Type: "Series", Year: 1987, TVDBID: 762,
+		},
+		testkit.SearchStub{
+			Terms: []string{"full house"}, LibraryItemID: "lib-full-house-2020",
+			Name: "Full House", Type: "Series", Year: 2020, TVDBID: 999762,
+		},
+	)
+	mt := testkit.NewTMDB(t)
+	tm := tmdb.NewWithBase(mt.URL, "key")
+	s := suggest.New(
+		testkit.NewLLM(testkit.FinalResponse(`{
+			"channelName":"Friday Night",
+			"picks":[{"mediaType":"series","tmdbId":12345,"name":"Full House","year":1987}]
+		}`)),
+		catalog.New(library.New(library.Emby, ms.URL, ms.AdminToken, "dev-1"), tm),
+		tm,
+		10,
+	)
+
+	prop, err := s.Suggest(context.Background(), suggest.Intent{Description: "Something like TGIF"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prop.Lineup) != 1 || prop.Lineup[0].TVDBID != 762 || prop.Lineup[0].Year != 1987 {
+		t.Fatalf("year-grounded lineup = %+v, want only the 1987 exact identity", prop.Lineup)
+	}
+}
+
+func TestSuggest_GroundsIndependentToolFreeNamesConcurrently(t *testing.T) {
+	lib := &concurrentTitleLibrary{ready: make(chan struct{})}
+	s := suggest.New(
+		testkit.NewLLM(testkit.FinalResponse(`{
+			"channelName":"Friday Night",
+			"picks":[
+				{"mediaType":"series","tmdbId":12345,"name":"Full House"},
+				{"mediaType":"series","tmdbId":67890,"name":"Family Matters"}
+			]
+		}`)),
+		catalog.New(lib, nil),
+		nil,
+		10,
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	prop, err := s.Suggest(ctx, suggest.Intent{Description: "Something like TGIF"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prop.Lineup) != 2 || prop.Lineup[0].TVDBID != 762 || prop.Lineup[1].TVDBID != 767 {
+		t.Fatalf("concurrently grounded lineup = %+v, want both exact identities", prop.Lineup)
+	}
+}
+
+func TestSuggest_ToolFreeNameGroundingRejectsUnprovenIdentity(t *testing.T) {
+	tests := []struct {
+		name  string
+		picks string
+		items []testkit.SearchStub
+	}{
+		{
+			name:  "missing exact title",
+			picks: `[{"mediaType":"series","tmdbId":12345,"name":"Full House"}]`,
+		},
+		{
+			name:  "ambiguous title without year",
+			picks: `[{"mediaType":"series","tmdbId":12345,"name":"Full House"}]`,
+			items: []testkit.SearchStub{
+				{Terms: []string{"full house"}, LibraryItemID: "full-house-1987", Name: "Full House", Type: "Series", Year: 1987, TVDBID: 762},
+				{Terms: []string{"full house"}, LibraryItemID: "full-house-2020", Name: "Full House", Type: "Series", Year: 2020, TVDBID: 999762},
+			},
+		},
+		{
+			name:  "wrong media type",
+			picks: `[{"mediaType":"series","tmdbId":12345,"name":"Full House"}]`,
+			items: []testkit.SearchStub{
+				{Terms: []string{"full house"}, LibraryItemID: "full-house-movie", Name: "Full House", Type: "Movie", Year: 1952, TMDBID: 123},
+			},
+		},
+		{
+			name:  "conflicting supplied year",
+			picks: `[{"mediaType":"series","tmdbId":12345,"name":"Full House","year":1987}]`,
+			items: []testkit.SearchStub{
+				{Terms: []string{"full house"}, LibraryItemID: "full-house-2020", Name: "Full House", Type: "Series", Year: 2020, TVDBID: 999762},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ms := testkit.NewMediaServer(t)
+			ms.SetSearchItems(tt.items...)
+			s := suggest.New(
+				testkit.NewLLM(testkit.FinalResponse(`{"channelName":"Friday Night","picks":`+tt.picks+`}`)),
+				catalog.New(library.New(library.Emby, ms.URL, ms.AdminToken, "dev-1"), nil),
+				nil,
+				10,
+			)
+
+			_, err := s.Suggest(context.Background(), suggest.Intent{Description: "Something like TGIF"})
+			if !errors.Is(err, suggest.ErrNoGroundedTitles) {
+				t.Fatalf("error = %v, want typed no-grounded-title failure", err)
+			}
+		})
+	}
+}
+
+func TestSuggest_ToolFreeNameGroundingIsBoundedAndDeduplicated(t *testing.T) {
+	ms := testkit.NewMediaServer(t)
+	ms.SetSearchItems(
+		testkit.SearchStub{Terms: []string{"full house"}, LibraryItemID: "1", Name: "Full House", Type: "Series", TVDBID: 761},
+		testkit.SearchStub{Terms: []string{"family matters"}, LibraryItemID: "2", Name: "Family Matters", Type: "Series", TVDBID: 762},
+		testkit.SearchStub{Terms: []string{"step by step"}, LibraryItemID: "3", Name: "Step by Step", Type: "Series", TVDBID: 763},
+		testkit.SearchStub{Terms: []string{"boy meets world"}, LibraryItemID: "4", Name: "Boy Meets World", Type: "Series", TVDBID: 764},
+		testkit.SearchStub{Terms: []string{"perfect strangers"}, LibraryItemID: "5", Name: "Perfect Strangers", Type: "Series", TVDBID: 765},
+		testkit.SearchStub{Terms: []string{"sabrina"}, LibraryItemID: "6", Name: "Sabrina the Teenage Witch", Type: "Series", TVDBID: 766},
+		testkit.SearchStub{Terms: []string{"hangin"}, LibraryItemID: "7", Name: "Hangin' with Mr. Cooper", Type: "Series", TVDBID: 767},
+		testkit.SearchStub{Terms: []string{"dinosaurs"}, LibraryItemID: "8", Name: "Dinosaurs", Type: "Series", TVDBID: 768},
+		testkit.SearchStub{Terms: []string{"just the ten"}, LibraryItemID: "9", Name: "Just the Ten of Us", Type: "Series", TVDBID: 769},
+	)
+	s := suggest.New(
+		testkit.NewLLM(testkit.FinalResponse(`{
+			"channelName":"Friday Night",
+			"picks":[
+				{"mediaType":"movie","tmdbId":90001,"name":"Full House"},
+				{"mediaType":"series","tmdbId":90002,"name":"FULL-HOUSE"},
+				{"mediaType":"series","tmdbId":90003,"name":"Family Matters"},
+				{"mediaType":"series","tmdbId":90004,"name":"Step by Step"},
+				{"mediaType":"series","tmdbId":90005,"name":"Boy Meets World"},
+				{"mediaType":"series","tmdbId":90006,"name":"Perfect Strangers"},
+				{"mediaType":"series","tmdbId":90007,"name":"Sabrina the Teenage Witch"},
+				{"mediaType":"series","tmdbId":90008,"name":"Hangin' with Mr. Cooper"},
+				{"mediaType":"series","tmdbId":90009,"name":"Dinosaurs"},
+				{"mediaType":"series","tmdbId":90010,"name":"Just the Ten of Us"}
+			]
+		}`)),
+		catalog.New(library.New(library.Emby, ms.URL, ms.AdminToken, "dev-1"), nil),
+		nil,
+		10,
+	)
+
+	prop, err := s.Suggest(context.Background(), suggest.Intent{Description: "nostalgic family sitcoms"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prop.Lineup) != 8 {
+		t.Fatalf("bounded lineup has %d picks, want 8: %+v", len(prop.Lineup), prop.Lineup)
+	}
+	for _, item := range prop.Lineup {
+		if item.Name == "Just the Ten of Us" || item.TMDBID >= 90001 {
+			t.Fatalf("fallback escaped its bound or retained an invented id: %+v", prop.Lineup)
+		}
+	}
+}
+
+func TestSuggest_ToolFreeNameGroundingPropagatesCallerDeadline(t *testing.T) {
+	lib := &concurrentTitleLibrary{ready: make(chan struct{})}
+	s := suggest.New(
+		testkit.NewLLM(testkit.FinalResponse(`{
+			"channelName":"Friday Night",
+			"picks":[{"mediaType":"series","tmdbId":12345,"name":"Full House"}]
+		}`)),
+		catalog.New(lib, nil),
+		nil,
+		10,
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := s.Suggest(ctx, suggest.Intent{Description: "Something like TGIF"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want caller deadline to cancel title grounding", err)
+	}
+}
+
+func TestSuggest_ToolFreeNameGroundingAcrossPromptShapes(t *testing.T) {
+	intents := map[string]suggest.Intent{
+		"known title":         {Description: "Full House"},
+		"conversational":      {Description: "Please build a warm family sitcom channel"},
+		"genre and era":       {Description: "1980s family sitcoms", Era: "1980s"},
+		"named concept":       {Description: "Something like TGIF"},
+		"explicit constraint": {Description: "A Friday-night comedy block", MustInclude: []string{"Full House"}},
+		"refinement": {
+			Description: "Family sitcoms", RefineText: "make it warmer",
+			CurrentLineup: []suggest.LineupContext{{Name: "Family Matters", Year: 1989, Key: "series:tvdb:767"}},
+		},
+	}
+	for name, intent := range intents {
+		t.Run(name, func(t *testing.T) {
+			ms := testkit.NewMediaServer(t)
+			ms.SetSearchItems(testkit.SearchStub{
+				Terms: []string{"full house"}, LibraryItemID: "lib-full-house",
+				Name: "Full House", Type: "Series", Year: 1987, TVDBID: 762,
+			})
+			s := suggest.New(
+				testkit.NewLLM(testkit.FinalResponse(`{
+					"channelName":"Friday Night",
+					"picks":[{"mediaType":"series","tmdbId":12345,"name":"Full House"}]
+				}`)),
+				catalog.New(library.New(library.Emby, ms.URL, ms.AdminToken, "dev-1"), nil),
+				nil,
+				10,
+			)
+
+			prop, err := s.Suggest(context.Background(), intent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(prop.Lineup) != 1 || prop.Lineup[0].TVDBID != 762 {
+				t.Fatalf("lineup = %+v, want canonical Full House identity", prop.Lineup)
+			}
+		})
 	}
 }
 

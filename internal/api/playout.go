@@ -110,6 +110,9 @@ type PlayoutObserver interface {
 	// remuxing and its encoder would be copy. Encoding happens in the per-program children,
 	// and the load-aware Resolve can legitimately pick differently between programs.
 	ReportProgram(channelID string, target playout.EncodePlan, enc playout.Encoder, transcoding bool, p playout.Progress)
+	// AdmitProgram changes the live session's real transcode cost before a child starts. It
+	// prevents zero-cost prepared sessions from oversubscribing when they later fall back live.
+	AdmitProgram(channelID string, target playout.EncodePlan, transcoding bool) bool
 }
 
 // authorizePlayout checks the device token, writing a response and returning false on failure.

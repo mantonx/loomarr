@@ -130,10 +130,10 @@ func buildHandler(
 	ov Overrides,
 	owner *generationLifecycle,
 	capturePlayoutResolver func(*playoutResolver),
-) (http.Handler, *slog.Logger, error) {
+) (http.Handler, *slog.Logger, func() string, error) {
 	foundation, err := buildFoundation(rootCtx, st, log, ov, owner)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Every later builder completes checks on the exact state /readyz uses. Embedded callers may
 	// omit the override, in which case foundation created that state for them.
@@ -155,7 +155,7 @@ func buildHandler(
 		foundation.processDiagnostics, foundation.metrics,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	channelSvc := channelsBuilt.channelService
 	appliedBackendContext := channelsBuilt.appliedBackend
@@ -171,7 +171,7 @@ func buildHandler(
 		foundation.metrics,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	fillers := buildFillerSubsystem(
 		st, set, fillerLayout, log, libraryClient, eventBus, emitter, jobReg, playoutRes, channelSvc,
@@ -189,7 +189,7 @@ func buildHandler(
 		foundation.protection, foundation.secretRedactor,
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	emitter.setNotifications(operations.productNotifications)
 	if playoutRes != nil {
@@ -216,5 +216,5 @@ func buildHandler(
 	// their complete runtime snapshot within the documented ~30-second bound.
 	trackReplicaSettingsRefresh(owner, store.DialectOf(st), set.svc,
 		replicaSettingsRefreshInterval, refreshSecretRedactor)
-	return handler, log, nil
+	return handler, log, func() string { return set.str("server.public_url") }, nil
 }

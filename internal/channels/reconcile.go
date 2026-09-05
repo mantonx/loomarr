@@ -33,7 +33,7 @@ import (
 //     §9): first materialization/backend switches re-scan the tuner; a desired-only
 //     change refreshes guide data.
 func (e *Engine) Reconcile(ctx context.Context, channelID string) (err error) {
-	return e.reconcile(ctx, channelID, reconcileOptions{})
+	return e.reconcile(ctx, channelID, reconcileOptions{observeProposalQuality: true})
 }
 
 // PrepareInheritedBackend materializes every active channel that inherits the global
@@ -78,8 +78,9 @@ type reconcileOptions struct {
 	// globalBackend is an explicit transition target when inheritedOnly is true.
 	// It stays fixed across CAS retries; ordinary Reconcile deliberately continues
 	// resolving the currently applied backend once per fresh row attempt.
-	globalBackend string
-	inheritedOnly bool
+	globalBackend          string
+	inheritedOnly          bool
+	observeProposalQuality bool
 }
 
 func (e *Engine) reconcile(ctx context.Context, channelID string, opts reconcileOptions) (err error) {
@@ -102,8 +103,30 @@ func (e *Engine) reconcile(ctx context.Context, channelID string, opts reconcile
 	// request to reload and converge from the new truth, not permission to overwrite it.
 	// Keep the retry here, behind the Reconcile seam, so API, sweep and availability
 	// callers cannot accidentally implement different stale-write behaviour.
-	const maxAttempts = 4
 	state := reconcileRun{}
+	defer func() {
+		if !opts.observeProposalQuality || e.quality == nil || !state.qualityEligible {
+			return
+		}
+		duration := e.now().Sub(start)
+		if err != nil {
+			job, qualityErr := e.store.GetJob(ctx, state.qualityJobID)
+			if qualityErr != nil {
+				if e.log != nil {
+					e.log.Warn("recheck Proposal Job scheduling milestone", "err", qualityErr)
+				}
+				return
+			}
+			if job.ReachedLive {
+				return
+			}
+			e.quality.ProposalSchedulingFailed(ctx, state.qualityJobID, e.now(), duration)
+		} else if state.qualityScheduled {
+			e.quality.ProposalScheduled(ctx, state.qualityJobID, e.now(), duration)
+		}
+	}()
+
+	const maxAttempts = 4
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		err = e.reconcileOnce(ctx, channelID, &state, opts)
 		if !errors.Is(err, store.ErrChannelStale) && !errors.Is(err, store.ErrChannelConflict) {
@@ -123,6 +146,9 @@ func (e *Engine) reconcile(ctx context.Context, channelID string, opts reconcile
 type reconcileRun struct {
 	channelAffecting   bool
 	channelListChanged bool
+	qualityEligible    bool
+	qualityScheduled   bool
+	qualityJobID       string
 }
 
 func (e *Engine) reconcileOnce(
@@ -138,6 +164,22 @@ func (e *Engine) reconcileOnce(
 	}
 	if !ch.Status.Reconcilable() {
 		return nil // detached = no longer managed (§9 ownership); paused = deliberately off the sweep
+	}
+	if opts.observeProposalQuality {
+		run.qualityEligible = false
+		run.qualityScheduled = false
+		run.qualityJobID = ""
+		if ch.IntentRef != "" {
+			job, qualityErr := e.store.GetJob(ctx, ch.IntentRef)
+			if qualityErr != nil {
+				if e.log != nil {
+					e.log.Warn("read Proposal Job scheduling milestone", "err", qualityErr)
+				}
+			} else if !job.ReachedLive {
+				run.qualityEligible = true
+				run.qualityJobID = ch.IntentRef
+			}
+		}
 	}
 	if opts.inheritedOnly && schedule.HasExplicitPlayoutBackend(ch.Policy) {
 		return nil // a concurrent operator pin wins over a fleet-default transition
@@ -342,6 +384,9 @@ func (e *Engine) reconcileOnce(
 		return fmt.Errorf("persist channel %s: %w", channelID, err)
 	}
 	ch = committed
+	if run.qualityEligible && (ch.Status == schedule.StatusLive || ch.Status == schedule.StatusDrifted) {
+		run.qualityScheduled = true
+	}
 	// A shared encoder is reading the previously accepted cycle until it is retired.
 	// Guide freshness alone cannot switch its current playout session: live proof was a
 	// newly constrained Simpsons guide advertising S10 while the Shield reattached to a

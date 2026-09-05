@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/loomarr/loomarr/internal/inventory"
+	"github.com/loomarr/loomarr/internal/library"
 	"github.com/loomarr/loomarr/internal/prepared"
 	"github.com/loomarr/loomarr/internal/testkit"
 )
@@ -40,6 +41,40 @@ func TestPreparedSourceAccessOpensFreshLibraryOriginalWithoutPersistingIt(t *tes
 	stable := fmt.Sprintf("%+v", source)
 	if strings.Contains(stable, server.AdminToken) || strings.Contains(stable, server.URL) {
 		t.Fatalf("durable prepared source exposed operational access: %s", stable)
+	}
+}
+
+func TestPreparedSourceResolutionUsesLoomarrInventoryWithoutAnotherLibraryRequest(t *testing.T) {
+	st := testkit.MigratedSQLiteStore(t)
+	server := testkit.NewMediaServer(t)
+	server.InventoryItems = map[string]json.RawMessage{"item-1": json.RawMessage(`{
+		"Id":"item-1","Type":"Movie","DateLastSaved":"2026-09-04T12:00:00Z",
+		"MediaSources":[{"Id":"source-4k","ETag":"rev-1","MediaStreams":[
+			{"Index":0,"Type":"Video","Codec":"h264"},
+			{"Index":1,"Type":"Audio","Language":"eng"}
+		]}]
+	}`)}
+	r := &playoutResolver{lib: newTestLibraryClient(server), inventory: inventory.New(st), now: time.Now}
+
+	want, _, ok := r.ResolvePreparedSource(t.Context(), "item-1", nil)
+	if !ok {
+		t.Fatal("initial source import failed")
+	}
+	requestsAfterImport := len(server.Requests())
+	got, hint, ok := r.ResolvePreparedSourceFromInventory(t.Context(), "item-1", nil)
+	if !ok || got != want {
+		t.Fatalf("inventory source = (%+v, %v), want (%+v, true)", got, ok, want)
+	}
+	if !strings.Contains(hint, "MediaSourceId=source-4k") {
+		t.Fatalf("inventory source hint did not preserve exact original: %q", hint)
+	}
+	if gotRequests := len(server.Requests()); gotRequests != requestsAfterImport {
+		t.Fatalf("inventory resolution made %d new Library requests", gotRequests-requestsAfterImport)
+	}
+	if _, _, ok := r.ResolvePreparedSourceFromInventory(
+		t.Context(), "item-1", library.ParsePathMap("/data=>/mnt/media"),
+	); ok {
+		t.Fatal("inventory Library original bypassed configured direct-disk resolution")
 	}
 }
 

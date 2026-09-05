@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/loomarr/loomarr/internal/diagnostics"
 	"github.com/loomarr/loomarr/internal/metrics"
 	"github.com/loomarr/loomarr/internal/prepared"
 )
@@ -178,6 +179,84 @@ func TestPreparedOriginRendersAKeyedWallClockManifest(t *testing.T) {
 	}
 	if _, ok, err := preparedOrigin.OpenAsset("ch-one", PlanBaseline, seg2+".ts"); err != nil || ok {
 		t.Fatalf("asset with a forged content-type suffix = (_, %v, %v), want miss", ok, err)
+	}
+}
+
+func TestPreparedMPEGTSBlockCopiesPublicationAtAiringOffset(t *testing.T) {
+	t.Parallel()
+	lib, err := prepared.NewLibrary(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := preparedSpec("source-a")
+	pub := publishHLS(t, lib, spec)
+	started := time.Unix(1_000, 0).UTC()
+	identity := AiringIdentity{
+		StartedAt: started, EndsAt: started.Add(8 * time.Minute), Kind: "program",
+		ContentID: "movie:tmdb:1", ScheduleBlockID: "block-one",
+	}
+	origin := newPreparedOrigin(lib, fixedPreparedResolver{ok: true, window: PreparedWindow{
+		Current: PreparedAiring{
+			Specification: spec, StartedAt: started, Offset: 75 * time.Second, Identity: identity,
+		},
+	}})
+	var gotArgs []string
+	var gotSpec diagnostics.ProcessSpec
+	source := newPreparedMPEGTSBlockSource(origin, func(
+		_ context.Context, args []string, processSpec diagnostics.ProcessSpec,
+	) (*Process, error) {
+		gotArgs = append([]string(nil), args...)
+		gotSpec = processSpec
+		return &Process{Stdout: io.NopCloser(strings.NewReader("prepared-ts"))}, nil
+	})
+
+	block, err := source(t.Context(), "ch-one", PlanFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = block.Content.Close() }()
+	body, err := io.ReadAll(block.Content)
+	if err != nil || string(body) != "prepared-ts" {
+		t.Fatalf("block body = %q, err=%v", body, err)
+	}
+	if block.Identity != identity {
+		t.Fatalf("block identity = %+v, want %+v", block.Identity, identity)
+	}
+	wantFormat := BroadcastFormat{
+		VideoCodec: "h264", Width: 1920, Height: 1080, Framerate: 25,
+		VideoBitrate: 5000, AudioBitrate: 160,
+	}
+	if block.Format != wantFormat {
+		t.Fatalf("block format = %+v, want %+v", block.Format, wantFormat)
+	}
+	joined := strings.Join(gotArgs, " ")
+	for _, want := range []string{
+		"-ss 75.000", "-t 405.000", "-c:v copy", "-c:a copy", "-f mpegts",
+		filepath.Join(pub.Directory, prepared.MediaManifestName),
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("prepared remux args missing %q: %s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "-readrate") {
+		t.Fatalf("prepared copy remux must leave pacing to the Channel mux: %s", joined)
+	}
+	if gotSpec.Purpose != "playout_prepared_remux" || gotSpec.ChannelID != "ch-one" ||
+		gotSpec.ScheduleBlockID != "block-one" || strings.Contains(strings.Join(gotSpec.Args, " "), pub.Directory) {
+		t.Fatalf("diagnostic process spec = %+v, want correlated and path-redacted", gotSpec)
+	}
+}
+
+func TestPreparedMPEGTSRejectsUnsupportedPublicationFormat(t *testing.T) {
+	contract := preparedSpec("source-a").Rendition
+	contract.VideoCodec = "vp9"
+	if _, ok := preparedBroadcastFormat(contract); ok {
+		t.Fatal("raw prepared delivery accepted an unsupported video codec")
+	}
+	contract.VideoCodec = "h264"
+	contract.AudioLayout = "5.1"
+	if _, ok := preparedBroadcastFormat(contract); ok {
+		t.Fatal("raw prepared delivery accepted audio that violates the stable stereo session shape")
 	}
 }
 

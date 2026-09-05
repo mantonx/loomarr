@@ -1,7 +1,7 @@
 // Package suggest is the Suggester (design §8): it turns a channel intent into a
 // grounded proposal (a lineup from the library + an acquisition list of missing
-// titles). It owns the grounding loop — the LLM proposes candidates ONLY via the
-// catalog tool (real ids), every proposal item is re-validated before display,
+// titles). It owns the grounding loop — the LLM proposes names or candidates,
+// but only real ids returned by Catalog operations survive before display,
 // and nothing is auto-executed (§8 human-in-the-loop). Generation runs as a
 // persisted job (§8 execution model); this package is the pure suggestion logic,
 // driven by a worker (Phase 11e) and exposed via the API (Phase 11f).
@@ -31,13 +31,13 @@ type Intent struct {
 	// Refine inputs (§7 refine): a free-text change ("add more Schwarzenegger, drop the
 	// slow ones") plus the channel's CURRENT lineup as context. The prompt renders these
 	// so the model reasons from what's already on the channel and returns a revised
-	// lineup. Context only — new picks are still grounded through the catalog tool, so
+	// lineup. Context only — new picks are still grounded through Catalog operations, so
 	// refine can't invent titles. Empty on a fresh (non-refine) suggestion.
 	RefineText    string          `json:"refineText,omitempty"`
 	CurrentLineup []LineupContext `json:"currentLineup,omitempty"`
 	// Adjacent are pre-seeded candidates from the recommendation graph walked over this
 	// channel's own lineup (programming-design §8.3) — the deterministic second corpus,
-	// merged with whatever the model finds through the catalog tool.
+	// merged with whatever the model finds through the Catalog.
 	//
 	// They are OFFERED, never placed: the model still chooses, and an offered title it
 	// ignores is simply not picked. Grounding is unweakened because these are real

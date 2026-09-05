@@ -31,7 +31,9 @@ func (s preparedChannels) GetChannel(_ context.Context, id string) (store.Channe
 type preparedTimelineFake struct {
 	broadcasts          map[string][]playout.Broadcast
 	audioTrackByChannel map[string]int
+	inventoryAudio      bool
 	audioCalls          int
+	inventoryAudioCalls int
 	lastFrom            time.Time
 	lastTo              time.Time
 }
@@ -51,12 +53,38 @@ func (f *preparedTimelineFake) AudioTrackFor(_ context.Context, channelID, _, _ 
 	return 2
 }
 
+func (f *preparedTimelineFake) AudioTrackFromInventory(
+	_ context.Context, channelID, _ string,
+) (int, bool) {
+	f.inventoryAudioCalls++
+	if !f.inventoryAudio {
+		return 0, false
+	}
+	if track, ok := f.audioTrackByChannel[channelID]; ok {
+		return track, true
+	}
+	return 2, true
+}
+
 type preparedInputsFake struct {
-	sources       map[string]library.InputSource
-	revisions     map[string]string
-	current       map[prepared.Source]bool
-	calls         int
-	currentChecks int
+	sources          map[string]library.InputSource
+	inventorySources map[string]library.InputSource
+	revisions        map[string]string
+	current          map[prepared.Source]bool
+	calls            int
+	inventoryCalls   int
+	currentChecks    int
+}
+
+func (f *preparedInputsFake) ResolvePreparedSourceFromInventory(
+	_ context.Context, itemID string, _ library.PathMap,
+) (prepared.Source, string, bool) {
+	f.inventoryCalls++
+	input, ok := f.inventorySources[itemID]
+	if !ok || input.URL == "" {
+		return prepared.Source{}, "", false
+	}
+	return preparedSource(itemID, 0), input.URL, true
 }
 
 func (f *preparedInputsFake) ResolvePreparedSource(
@@ -230,7 +258,7 @@ func TestPreparedRuntimeCandidatesKeepChannelAudioOverridesDistinct(t *testing.T
 	}
 }
 
-func TestPreparedRuntimePlanBoundsColdResolutionButStillProtectsDurableSchedule(t *testing.T) {
+func TestPreparedRuntimePlanExposesOneHundredChannelHotFrontier(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(17_000, 0)
 	channels := make([]store.Channel, 100)
@@ -271,8 +299,8 @@ func TestPreparedRuntimePlanBoundsColdResolutionButStillProtectsDurableSchedule(
 		t.Fatal(err)
 	}
 	inputs := r.sources.(*preparedInputsFake)
-	if inputs.calls != preparedCandidateBatch || len(plan.Candidates) != preparedCandidateBatch {
-		t.Fatalf("cold work = %d resolutions, %d candidates; want bounded %d", inputs.calls, len(plan.Candidates), preparedCandidateBatch)
+	if inputs.calls != 99 || len(plan.Candidates) != 99 {
+		t.Fatalf("cold work = %d resolutions, %d candidates; want all 99 missing hot bindings", inputs.calls, len(plan.Candidates))
 	}
 	if len(plan.Protected) != 1 || plan.Protected[0].SourceFingerprint != "durable" {
 		t.Fatalf("protected = %+v, want durable publication beyond cold batch", plan.Protected)
@@ -280,10 +308,181 @@ func TestPreparedRuntimePlanBoundsColdResolutionButStillProtectsDurableSchedule(
 	wantSummary := prepared.ReadinessSummary{
 		Channels: 100, ReadyChannels: 1,
 		ScheduledBindings: 100, ReadyBindings: 1, MissingBindings: 99,
-		QueuedPublications: preparedCandidateBatch,
+		QueuedPublications: 99,
 	}
 	if plan.Summary != wantSummary {
 		t.Fatalf("summary = %+v, want %+v", plan.Summary, wantSummary)
+	}
+}
+
+func TestPreparedRuntimeInventoryBackedHotFrontierAvoidsExternalRefresh(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(17_250, 0)
+	const channelCount = 150
+	channels := make([]store.Channel, channelCount)
+	broadcasts := make(map[string][]playout.Broadcast, channelCount)
+	inventorySources := make(map[string]library.InputSource, channelCount)
+	for i := range channels {
+		channelID := fmt.Sprintf("ch-%03d", i)
+		itemID := fmt.Sprintf("item-%03d", i)
+		channels[i] = store.Channel{Channel: schedule.Channel{ID: channelID}}
+		broadcasts[channelID] = []playout.Broadcast{{
+			Kind: schedule.SlotProgram, LibraryItemID: itemID,
+			Start: now.Add(-time.Minute), Stop: now.Add(time.Hour),
+		}}
+		inventorySources[itemID] = library.InputSource{
+			URL: "http://media/" + itemID, Kind: library.InputHTTP,
+		}
+	}
+	timeline := &preparedTimelineFake{broadcasts: broadcasts, inventoryAudio: true}
+	inputs := &preparedInputsFake{inventorySources: inventorySources}
+	r := newPreparedRuntimeForTest(
+		t, preparedChannels{channels: channels}, timeline, inputs, preparedLookupFake{},
+		func() time.Time { return now }, nil, func() string { return "policy" },
+		func() string { return "internal" },
+		func() prepared.RenditionContract { return playout.CanonicalPreparedRendition(playout.TierBalanced) },
+	)
+
+	plan, err := r.Plan(t.Context(), now, now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Candidates) != preparedHotResolutionBatch {
+		t.Fatalf("inventory-backed candidates = %d, want bounded frontier %d", len(plan.Candidates), preparedHotResolutionBatch)
+	}
+	if inputs.inventoryCalls != preparedHotResolutionBatch || inputs.calls != 0 {
+		t.Fatalf("source resolution = %d inventory, %d external; want %d, 0", inputs.inventoryCalls, inputs.calls, preparedHotResolutionBatch)
+	}
+	if timeline.inventoryAudioCalls != preparedHotResolutionBatch || timeline.audioCalls != 0 {
+		t.Fatalf("audio resolution = %d inventory, %d external; want %d, 0", timeline.inventoryAudioCalls, timeline.audioCalls, preparedHotResolutionBatch)
+	}
+}
+
+func TestPreparedRuntimeScalesCurrentAndNextProtectionAtFiftyAndOneHundredChannels(t *testing.T) {
+	t.Parallel()
+	for _, channelCount := range []int{50, 100} {
+		channelCount := channelCount
+		t.Run(fmt.Sprintf("%d_channels", channelCount), func(t *testing.T) {
+			t.Parallel()
+			now := time.Unix(17_300, 0)
+			channels := make([]store.Channel, channelCount)
+			broadcasts := make(map[string][]playout.Broadcast, channelCount)
+			inventorySources := make(map[string]library.InputSource, channelCount*2)
+			hits := make(map[prepared.Request]prepared.Specification, channelCount*2)
+			rendition := playout.CanonicalPreparedRendition(playout.TierBalanced)
+			for i := range channels {
+				channelID := fmt.Sprintf("ch-%03d", i)
+				channels[i] = store.Channel{Channel: schedule.Channel{ID: channelID}}
+				for offset, class := range []string{"current", "next"} {
+					itemID := fmt.Sprintf("%s-%03d", class, i)
+					start := now.Add(time.Duration(offset)*time.Hour - 30*time.Minute)
+					broadcasts[channelID] = append(broadcasts[channelID], playout.Broadcast{
+						Kind: schedule.SlotProgram, LibraryItemID: itemID,
+						Start: start, Stop: start.Add(time.Hour),
+					})
+					inventorySources[itemID] = library.InputSource{
+						URL: "http://media/" + itemID, Kind: library.InputHTTP,
+					}
+					request := prepared.Request{Source: preparedSource(itemID, 2), Rendition: rendition}
+					hits[request] = prepared.Specification{SourceFingerprint: itemID, Rendition: rendition}
+				}
+			}
+			timeline := &preparedTimelineFake{broadcasts: broadcasts, inventoryAudio: true}
+			inputs := &preparedInputsFake{inventorySources: inventorySources}
+			r := newPreparedRuntimeForTest(
+				t, preparedChannels{channels: channels}, timeline, inputs, preparedLookupFake{hits: hits},
+				func() time.Time { return now }, nil, func() string { return "policy" },
+				func() string { return "internal" }, func() prepared.RenditionContract { return rendition },
+			)
+
+			var plan prepared.ReadinessPlan
+			passes := (channelCount*2 + preparedHotResolutionBatch - 1) / preparedHotResolutionBatch
+			for range passes {
+				var err error
+				plan, err = r.Plan(t.Context(), now, now.Add(6*time.Hour))
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(plan.Protected) != channelCount*2 {
+				t.Fatalf("protected publications = %d, want current+next %d", len(plan.Protected), channelCount*2)
+			}
+			if plan.Summary.ReadyChannels != channelCount || plan.Summary.ReadyBindings != channelCount*2 {
+				t.Fatalf("readiness = %+v, want every current and next binding ready", plan.Summary)
+			}
+			if inputs.calls != 0 || timeline.audioCalls != 0 {
+				t.Fatalf("durable scale plan performed external source/audio work: %d/%d", inputs.calls, timeline.audioCalls)
+			}
+		})
+	}
+}
+
+func TestPreparedRuntimeObservationDoesNotResolveAbsentBindings(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(17_375, 0)
+	timeline := &preparedTimelineFake{broadcasts: map[string][]playout.Broadcast{"ch": {{
+		Kind: schedule.SlotProgram, LibraryItemID: "item", Start: now, Stop: now.Add(time.Hour),
+	}}}}
+	inputs := &preparedInputsFake{}
+	r := newPreparedRuntimeForTest(
+		t, preparedChannels{channels: []store.Channel{{Channel: schedule.Channel{ID: "ch"}}}},
+		timeline, inputs, preparedLookupFake{}, func() time.Time { return now }, nil,
+		func() string { return "policy" }, func() string { return "internal" },
+		func() prepared.RenditionContract { return playout.CanonicalPreparedRendition(playout.TierBalanced) },
+	)
+
+	plan, err := r.Observe(t.Context(), now, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Summary.MissingBindings != 1 {
+		t.Fatalf("observation summary = %+v, want one missing binding", plan.Summary)
+	}
+	if inputs.inventoryCalls != 0 || inputs.calls != 0 ||
+		timeline.inventoryAudioCalls != 0 || timeline.audioCalls != 0 {
+		t.Fatalf("lookup-only observation did source/audio work: inputs %+v timeline %+v", inputs, timeline)
+	}
+}
+
+func TestPreparedRuntimeProtectsCurrentAndNextButNotLaterLookahead(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(17_500, 0)
+	rendition := playout.CanonicalPreparedRendition(playout.TierBalanced)
+	timeline := &preparedTimelineFake{broadcasts: map[string][]playout.Broadcast{"ch": {
+		{Kind: schedule.SlotProgram, LibraryItemID: "current", Start: now.Add(-time.Minute), Stop: now.Add(time.Hour)},
+		{Kind: schedule.SlotProgram, LibraryItemID: "next", Start: now.Add(time.Hour), Stop: now.Add(2 * time.Hour)},
+		{Kind: schedule.SlotProgram, LibraryItemID: "later", Start: now.Add(2 * time.Hour), Stop: now.Add(3 * time.Hour)},
+	}}}
+	inputs := &preparedInputsFake{sources: map[string]library.InputSource{
+		"current": {URL: "/media/current.mkv", Kind: library.InputFile},
+		"next":    {URL: "/media/next.mkv", Kind: library.InputFile},
+		"later":   {URL: "/media/later.mkv", Kind: library.InputFile},
+	}}
+	hits := make(map[prepared.Request]prepared.Specification)
+	for _, item := range []string{"current", "next", "later"} {
+		request := prepared.Request{Source: preparedSource(item, 2), Rendition: rendition}
+		hits[request] = prepared.Specification{SourceFingerprint: item, Rendition: rendition}
+	}
+	r := newPreparedRuntimeForTest(t,
+		preparedChannels{channels: []store.Channel{{Channel: schedule.Channel{ID: "ch"}}}},
+		timeline, inputs, preparedLookupFake{hits: hits}, func() time.Time { return now }, nil,
+		func() string { return "policy" }, func() string { return "internal" },
+		func() prepared.RenditionContract { return rendition },
+	)
+
+	plan, err := r.Plan(t.Context(), now, now.Add(6*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Protected) != 2 {
+		t.Fatalf("protected publications = %+v, want only current and next", plan.Protected)
+	}
+	protected := map[string]bool{}
+	for _, specification := range plan.Protected {
+		protected[specification.SourceFingerprint] = true
+	}
+	if !protected["current"] || !protected["next"] || protected["later"] {
+		t.Fatalf("protected publication identities = %+v", protected)
 	}
 }
 
@@ -324,6 +523,43 @@ func TestPreparedRuntimeRebindsAnObservedSourceRevision(t *testing.T) {
 	}
 	if bound, ok := r.readiness.Binding(key, "policy", ""); !ok || bound != newRequest {
 		t.Fatalf("rebound source = (%+v, %v), want revision-2", bound, ok)
+	}
+}
+
+func TestPreparedRuntimeScheduleChangeAdvancesTheUrgentFrontier(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(18_500, 0)
+	rendition := playout.CanonicalPreparedRendition(playout.TierBalanced)
+	timeline := &preparedTimelineFake{broadcasts: map[string][]playout.Broadcast{"ch": {{
+		Kind: schedule.SlotProgram, LibraryItemID: "old", Start: now, Stop: now.Add(time.Hour),
+	}}}}
+	inputs := &preparedInputsFake{sources: map[string]library.InputSource{
+		"old": {URL: "/media/old.mkv", Kind: library.InputFile},
+		"new": {URL: "/media/new.mkv", Kind: library.InputFile},
+	}}
+	oldRequest := prepared.Request{Source: preparedSource("old", 2), Rendition: rendition}
+	r := newPreparedRuntimeForTest(t,
+		preparedChannels{channels: []store.Channel{{Channel: schedule.Channel{ID: "ch"}}}},
+		timeline, inputs, preparedLookupFake{hits: map[prepared.Request]prepared.Specification{
+			oldRequest: {SourceFingerprint: "old", Rendition: rendition},
+		}}, func() time.Time { return now }, nil, func() string { return "policy" },
+		func() string { return "internal" }, func() prepared.RenditionContract { return rendition },
+	)
+	if plan, err := r.Plan(t.Context(), now, now.Add(time.Hour)); err != nil || len(plan.Protected) != 1 {
+		t.Fatalf("initial ready plan = (%+v, %v)", plan, err)
+	}
+
+	timeline.broadcasts["ch"] = []playout.Broadcast{{
+		Kind: schedule.SlotProgram, LibraryItemID: "new", Start: now, Stop: now.Add(time.Hour),
+	}}
+	plan, err := r.Plan(t.Context(), now, now.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newRequest := prepared.Request{Source: preparedSource("new", 2), Rendition: rendition}
+	if len(plan.Protected) != 0 || len(plan.Candidates) != 1 ||
+		plan.Candidates[0].Class != prepared.CandidateCurrent || plan.Candidates[0].Request != newRequest {
+		t.Fatalf("changed schedule plan = protected %+v candidates %+v, want new current first", plan.Protected, plan.Candidates)
 	}
 }
 

@@ -632,6 +632,47 @@ func TestAttach_AtCapacityRefusesRatherThanEvicting(t *testing.T) {
 	}
 }
 
+func TestAttach_PreparedCostEstimatorAdmitsCopySessionsBeyondTranscodeBudget(t *testing.T) {
+	spawn, _ := newFakeSpawner(t)
+	m := testManager(t, spawn, 1, time.Minute).WithCostEstimator(
+		func(context.Context, string, EncodePlan) int { return 0 },
+	)
+
+	for _, channel := range []string{"ch1", "ch2", "ch3"} {
+		if _, _, err := m.Attach(t.Context(), channel, PlanFull); err != nil {
+			t.Fatalf("prepared copy session %s was refused by transcode budget: %v", channel, err)
+		}
+	}
+	if got := m.ActiveCount(); got != 3 {
+		t.Fatalf("active prepared sessions = %d, want 3", got)
+	}
+}
+
+func TestAdmitProgram_BoundsPreparedSessionsThatFallBackToTranscoding(t *testing.T) {
+	spawn, _ := newFakeSpawner(t)
+	m := testManager(t, spawn, 1, time.Minute).WithCostEstimator(
+		func(context.Context, string, EncodePlan) int { return 0 },
+	)
+	for _, channel := range []string{"ch1", "ch2"} {
+		if _, _, err := m.Attach(t.Context(), channel, PlanFull); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if !m.AdmitProgram("ch1", PlanFull, true) {
+		t.Fatal("first prepared-to-live transcode was refused with an empty budget")
+	}
+	if m.AdmitProgram("ch2", PlanFull, true) {
+		t.Fatal("second prepared-to-live transcode oversubscribed the one-slot budget")
+	}
+	if !m.AdmitProgram("ch1", PlanFull, false) {
+		t.Fatal("returning to a prepared copy block did not release capacity")
+	}
+	if !m.AdmitProgram("ch2", PlanFull, true) {
+		t.Fatal("released transcode capacity was not reusable by the waiting session")
+	}
+}
+
 // A grace-idle session is retained only to make a likely return tune cheap. It must not reserve
 // the final transcode slot against a foreground tune: when the budget is full, reclaim the oldest
 // zero-viewer session and preserve the newer warm candidate. Sessions with viewers remain protected

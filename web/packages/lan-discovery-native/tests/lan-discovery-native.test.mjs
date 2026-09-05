@@ -112,6 +112,12 @@ describe("native LAN server discovery", () => {
       protocol: "1",
       url: "http://192.168.1.21:8080",
     });
+    emit("loomarrDiscoveryFound", {
+      id: "udp-copy",
+      name: "Den via container",
+      protocol: "1",
+      url: "http://192.168.1.21:8080/",
+    });
 
     expect(discovery.snapshot().servers).toEqual([
       { id: "ipv4", name: "Den", url: "http://192.168.1.21:8080" },
@@ -122,6 +128,11 @@ describe("native LAN server discovery", () => {
     emit("loomarrDiscoveryLost", { id: "ipv6" });
     expect(discovery.snapshot().servers).toEqual([
       { id: "ipv4", name: "Den", url: "http://192.168.1.21:8080" },
+    ]);
+
+    emit("loomarrDiscoveryLost", { id: "ipv4" });
+    expect(discovery.snapshot().servers).toEqual([
+      { id: "udp-copy", name: "Den via container", url: "http://192.168.1.21:8080" },
     ]);
   });
 

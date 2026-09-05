@@ -4,7 +4,6 @@ package landiscovery
 import (
 	"fmt"
 	"net"
-	"strings"
 
 	"github.com/grandcat/zeroconf"
 )
@@ -50,12 +49,8 @@ func start(address net.Addr, hostname string, register registerFunc) (Registrati
 	if err != nil || port < 1 {
 		return nil, fmt.Errorf("LAN discovery: listener port is unavailable")
 	}
-	name := strings.TrimSuffix(strings.TrimSpace(hostname), ".local")
-	if name == "" {
-		name = "server"
-	}
 	registration, err := register(registrationRequest{
-		instance: "Loomarr on " + name,
+		instance: instanceName(hostname),
 		service:  ServiceType,
 		domain:   "local.",
 		port:     port,

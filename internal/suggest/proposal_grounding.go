@@ -13,7 +13,7 @@ import (
 
 // buildProposal turns the model's picks into a validated, grounded, scored
 // Proposal. This is the grounding chokepoint: a pick survives ONLY if it matches
-// a candidate the tool actually surfaced (real id), and acquisitions must also
+// a candidate a Catalog operation actually surfaced (real id), and acquisitions must also
 // pass the exists re-validation. Unresolvable picks are dropped, never actioned.
 func (s *Suggester) buildProposal(ctx context.Context, intent Intent, out finalOutput, surfaced map[provision.Key]catalog.Candidate, trace *DecisionTrace) (Proposal, error) {
 	prop := Proposal{Intent: intent, ChannelName: strings.TrimSpace(out.ChannelName), Rationale: out.Rationale}

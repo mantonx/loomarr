@@ -323,6 +323,7 @@ func TestBlockMuxArgs_BoundsPipeInputAnalysis(t *testing.T) {
 	args := BlockMuxArgs()
 	input := argIndex(args, "-i")
 	for flag, want := range map[string]string{
+		"-readrate":        "1.0",
 		"-probesize":       "256k",
 		"-analyzeduration": "500000",
 	} {

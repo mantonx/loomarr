@@ -47,10 +47,17 @@ fi
 "$ROOT/scripts/check-release-tag.sh" --image-tag "$VERSION"
 
 loomarr="$(printf '%s\n' "$sqlite" | sed -n '/^  loomarr:$/,/^  [a-zA-Z0-9_-][a-zA-Z0-9_-]*:$/p')"
-if printf '%s\n' "$loomarr" | grep -q '^    ports:'; then
-	echo 'compose-verify: Loomarr bypasses Traefik through a host port' >&2
+loomarr_port_targets="$(printf '%s\n' "$loomarr" | awk '
+	/^    ports:$/ { ports = 1; next }
+	ports && /^    [a-zA-Z_]/ { exit }
+	ports && /target:/ { print $2 }
+')"
+if [ "$loomarr_port_targets" != 51029 ]; then
+	echo 'compose-verify: Loomarr publishes a host port other than its single LAN-discovery UDP port' >&2
 	exit 1
 fi
+printf '%s\n' "$loomarr" | grep -q 'published: "51029"'
+printf '%s\n' "$loomarr" | grep -q 'protocol: udp'
 if printf '%s\n' "$loomarr" | grep -q '^    build:'; then
 	echo 'compose-verify: release Compose can fall back to an unsigned local build' >&2
 	exit 1

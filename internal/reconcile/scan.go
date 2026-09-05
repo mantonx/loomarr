@@ -22,6 +22,7 @@ type LibraryScan struct {
 	store   store.TitleStore
 	scanner library.LibraryScanner
 	emit    Emitter
+	quality AcquisitionQuality
 	now     func() time.Time
 	log     *slog.Logger
 	// activity records Dashboard feed lines (§12, V32). Optional: nil-safe on the Recorder,
@@ -50,6 +51,12 @@ func NewLibraryScan(st store.TitleStore, scanner library.LibraryScanner, emit Em
 // how the scheduler takes its notifier: a scan without one records nothing rather than
 // forcing every test to construct a recorder it does not assert on.
 func (s *LibraryScan) WithActivity(r *activity.Recorder) *LibraryScan { s.activity = r; return s }
+
+// WithQualityRecorder wires best-effort terminal acquisition measurement.
+func (s *LibraryScan) WithQualityRecorder(recorder AcquisitionQuality) *LibraryScan {
+	s.quality = recorder
+	return s
+}
 
 // Incremental confirms availability for in-flight titles added to the library within the
 // lookback window — the frequent (5-minute) job. Returns the number of titles confirmed.
@@ -133,6 +140,9 @@ func (s *LibraryScan) persist(ctx context.Context, rec provision.Record, emitted
 	if err := s.store.UpsertTitle(ctx, rec); err != nil {
 		s.log.Error("library-scan: persist", "key", rec.Key, "err", err)
 		return
+	}
+	if len(emitted) > 0 && s.quality != nil {
+		s.quality.AcquisitionTerminal(ctx, rec)
 	}
 	for _, ev := range emitted {
 		s.log.Info("provision event", "key", ev.Key, "state", ev.State, "src", "library-scan")

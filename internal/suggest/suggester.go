@@ -269,6 +269,17 @@ func (s *Suggester) Suggest(ctx context.Context, intent Intent) (Proposal, error
 		}
 		out, perr := parsePicks(final)
 		if perr == nil {
+			if len(surfaced) == 0 && len(out.Picks) > 0 {
+				out.Picks, err = s.groundPickNames(ctx, intent, feedback, out.Picks, surfaced, &trace)
+				if err != nil {
+					trace.Terminal = TerminalRetrievalFailure
+					return Proposal{}, NewFailure(FailureProvider, trace, err)
+				}
+				if len(out.Picks) == 0 {
+					trace.Terminal = FailureSelectionEmpty
+					return Proposal{}, NewFailure(FailureCodeNoGroundedTitles, trace, ErrNoGroundedTitles)
+				}
+			}
 			reportProgress(ctx, PhaseScoring, 0)
 			prop, buildErr := s.buildProposal(ctx, intent, out, surfaced, &trace)
 			if errors.Is(buildErr, ErrNoGroundedTitles) && len(surfaced) == 0 && !groundingRetried {

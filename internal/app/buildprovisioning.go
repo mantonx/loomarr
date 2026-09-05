@@ -8,6 +8,7 @@ import (
 	"github.com/loomarr/loomarr/internal/diagnostics"
 	"github.com/loomarr/loomarr/internal/library"
 	"github.com/loomarr/loomarr/internal/metrics"
+	"github.com/loomarr/loomarr/internal/quality"
 	"github.com/loomarr/loomarr/internal/reconcile"
 	"github.com/loomarr/loomarr/internal/retention"
 	"github.com/loomarr/loomarr/internal/scheduler"
@@ -34,7 +35,7 @@ func buildProvisioning(
 		return libraryClient.Snapshot()
 	}, emitter, reconcile.Config{
 		RequestTTL: set.dur("request.ttl"), DownloadingTTL: set.dur("downloading.ttl"),
-	}, time.Now, log)
+	}, time.Now, log).WithQualityRecorder(quality.NewAcquisitionRecorder(st, log))
 	jobs.Add(reconciler.Job())
 	jobs.Add(retention.New(st, retention.Windows{
 		Proposals:   func() time.Duration { return set.dur("proposals.retention") },
@@ -48,7 +49,7 @@ func buildProvisioning(
 
 	libraryScan := reconcile.NewLibraryScan(
 		st, libraryClient, emitter, set.dur("job.library_scan.lookback"), time.Now, log,
-	).WithActivity(activityRecorder)
+	).WithActivity(activityRecorder).WithQualityRecorder(quality.NewAcquisitionRecorder(st, log))
 	jobs.AddAll(libraryScan.Jobs())
 
 	episodeRefresh := reconcile.NewDynamicEpisodeRefresh(st, func() reconcile.EpisodeResolver {

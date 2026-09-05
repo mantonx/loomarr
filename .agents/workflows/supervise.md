@@ -84,8 +84,9 @@ Use the strongest enforcement the harness actually provides:
 1. When it has a native goal or task budget, create the checkpoint with that budget before any edit
    or review begins and record the native meter as the source.
 2. Otherwise, when worker-scoped usage is visible, record the source and starting value. The
-   supervisor owns the arithmetic and interrupts the worker when the checkpoint reaches its limit.
-3. When usage is unavailable or cannot be attributed to this worker, fail closed for mutation. The
+   supervisor owns the arithmetic and an early stop threshold, not just a prompt reminder.
+3. When usage is unavailable, cannot be attributed to this worker, or cannot be bounded by the
+   available controls, fail closed for mutation. The
    worker may perform read-only planning, research, diagnosis, or review, but it may not create,
    change, delete, commit, push, or publish repository or external state.
 
@@ -94,6 +95,19 @@ silently raise or reset a live checkpoint's limit. A changed scope, implementati
 second review pass is a new checkpoint: collect the current report, decide whether its evidence is
 worth continuing, and issue a fresh brief and budget. Existing unbudgeted editing sessions must stop,
 freeze, and restart under this rule before their next mutation.
+
+Reserve at least 15% of the limit for reporting. Set the working cutoff lower still to cover meter
+latency and in-flight usage; record the reserve, headroom, and rationale in the brief. For example,
+a 150,000 limit with a 22,500 report reserve and 22,500 headroom has a 105,000 working cutoff.
+Observed counter jumps are evidence for headroom, not a guaranteed upper bound. Verify when native
+enforcement takes effect (within a turn or only between turns); a native budget field alone does
+not prove a hard cap. Polling alone cannot guarantee one either. If the largest possible in-flight
+increment cannot be bounded, keep the worker read-only until suitable enforcement is available.
+
+Monitor through report completion and confirmed cessation. A missing/stale meter, changed worker or
+goal identity, or failed monitor must stop editing. Re-read the final authoritative meter rather
+than accepting the worker's cached count. Record any overshoot honestly; do not reset the goal,
+subtract setup usage, or change attribution to make the checkpoint fit.
 
 Reaching the limit is a mandatory return boundary, not failure and not permission to cut the work
 down until it appears complete. The worker preserves its registered worktree and claims, freezes the
@@ -134,6 +148,9 @@ outcome: <one sentence>
 mode: <read-only | editing>
 execution: <model/capability and reasoning effort, inherited, or uncontrolled; rationale>
 budget: <meter source; limit; start; enforcement: native | supervisor | read-only>
+identity: <session/thread id; native goal/task id separately, or unavailable>
+preflight: <effective permissions; permitted write roots; model/effort and budget verification>
+cutoff: <working cutoff; report reserve >=15%; in-flight headroom; verified stop mechanism>
 usage: <source; start; end; delta, or unavailable/uncontrolled>
 tracking: <required issue URL/#>
 phase-evidence: <PROGRESS.md row or none>
@@ -158,6 +175,35 @@ supervisor so it can inspect, steer, wait, and collect their results. For an ind
 session, provide the brief through the available channel and treat its registry, branch, worktree,
 commits, and reports as observable evidence rather than assuming live steering.
 
+## Verify launch before handoff
+
+1. Resolve the owning worktree, frozen HEAD/dirty inventory, claims, and exact worker session.
+   Finish layout and permission decisions before activating an implementation goal. If initialization
+   needs a goal, meter it as its own bounded assignment; do not leave an active implementation goal
+   repeatedly continuing while it waits for authorization.
+2. Launch with the least permissions required by the brief. In that worker's actual sandbox, verify
+   the effective policy and approved worktree/artifact roots. For editing, use a disposable sentinel
+   through the intended editing tool in an approved scratch path, then remove only that sentinel.
+   A supervisor-side filesystem check does not test the worker sandbox. Read-only workers must not
+   run a write probe. Before authorized Git mutations, resolve the linked Git directory and common
+   directory and verify necessary metadata access without changing refs or the index as a probe.
+   Do not grant the primary checkout merely because metadata lives beneath it.
+3. Treat an instruction or queued command as a request, not a permission-policy change. If effective
+   permissions are wrong, stop and relaunch/resume using the harness's supported configuration path;
+   verify again in the resulting session. Do not retry product edits to diagnose a permission denial.
+4. Create the bounded work goal before task edits or review begin. Independently verify session id,
+   goal id, actual model/effort, budget, goal status, meter scope, and current usage. Session and goal
+   ids are distinct. Count initialization within that goal; never assume its starting usage is zero.
+5. Arm and verify the stop mechanism before handing over editing authority. Record the worker's
+   acknowledgement of the exact brief. A queued message is not acknowledged until the worker reads
+   and accepts it. If readiness cannot be established, stop the checkpoint instead of letting an
+   automatic goal loop consume the budget waiting for the supervisor.
+
+Pausing or awaiting authorization must not be reported as completion. Use the harness's pause/stop
+control for automatic continuation; if none is available, collect evidence and end the session.
+Keep the unfinished acceptance and claims intact. Do not mark an unfinished goal complete just to
+silence it, or repeatedly resume an already blocked goal without a resolved dependency.
+
 ## Present interactive tmux supervision
 
 When the maintainer asks for visible tmux supervision, use clearly titled worker panes freely for
@@ -166,6 +212,12 @@ tmux window unless the maintainer explicitly requests separate windows. Enable t
 the maintainer can focus panes, resize them, and inspect scrollback. Launch each worker with an
 interactive agent session so its chat composer remains available for follow-up messages; do not
 substitute a one-shot batch command merely because its output is visible in a pane.
+
+Resolve the supervisor's actual pane and window from its session context, then use explicit tmux
+targets. A bare default-target lookup can select an unrelated session. If the supervisor is outside
+tmux, ask for the layout decision before creating a dedicated session; keep the current conversation
+as delivery owner and record the chosen session/window. Do not substitute hidden agents for a
+requested visible layout.
 
 After launch, show and audit the pane roster and `make agent-status` roster. A completed pane stays
 only until its report has been captured and acknowledged. After accepting that report, immediately
@@ -188,12 +240,21 @@ Keep the main context on decisions and evidence. Do not copy raw exploration log
    ready independent bounded task, or close it. Retain it only through capture and acknowledgement
    of that report; never leave it idle. Show and audit the pane roster and `make agent-status` after
    the accepted report and again after the reassignment or closure.
-5. Send a bounded correction when evidence is missing or scope drifted. Below the declared limit,
-   usage alone is not a reason to interrupt; repeated no-progress, duplicated work, or scope drift
-   is. At the limit, interrupt and collect the report. Reassign only the unfinished portion; do not
+5. Send a bounded correction when evidence is missing or scope drifted. Below the working cutoff,
+   repeated no-progress, duplicated work, or scope drift warrants interruption; the reserved reporting
+   and in-flight allowance also requires an early stop. At the cutoff, end implementation and collect
+   the report within the remaining budget. Reassign only the unfinished portion; do not
    restart accepted work.
 6. Escalate a blocked dependency, contract deviation, authorization change, or overlapping claim.
 7. Wait when no supervisor decision is needed; avoid polling agents merely to produce activity.
+
+Use the verified harness steering/interrupt control. Distinguish queued follow-up from current-turn
+steering, and require acknowledgement before treating a changed brief as active. Do not blindly send
+keys into an unknown composer or approval overlay. After an interrupt, verify the native task is
+stopped/paused and inventory any still-running tool process; an idle pane alone proves neither.
+Preserve unrelated processes and ownership. Reconcile the report against the stopped tree and final
+meter before accepting it; if reporting capacity is exhausted, the supervisor records missing fields
+and unfinished acceptance rather than restarting the worker beyond its cap.
 
 Workers return this schema:
 
@@ -204,6 +265,8 @@ role: <temporary mission or review lens>
 state: <complete | blocked | needs-review>
 execution: <actual model/capability and reasoning effort, inherited, or uncontrolled>
 budget: <meter source; limit; enforcement: native | supervisor | read-only>
+identity: <verified session/thread id; native goal/task id separately>
+stop-verification: <actual goal status; cessation evidence; outstanding tool processes or none>
 usage: <source; start; end; delta, or unavailable/uncontrolled>
 tracking: <required issue URL/#>
 phase-evidence: <PROGRESS.md row or none>
@@ -220,10 +283,28 @@ blockers: <specific dependency or none>
 stop-reason: <brief complete | budget limit | escalation | blocked>
 remaining: <unfinished acceptance clauses or none>
 next: <recommended supervisor action>
+retention: <worktree owner; retain/remove eligibility; reason; next review trigger>
 ```
 
 `complete` means the assigned outcome and evidence are complete, not that the initiative is merged,
 released, or accepted. Only the supervisor may make the initiative-level completion claim.
+
+## Rehearse launch and stop failures
+
+Before relying on a new harness or changed launch procedure, record these cases against disposable
+fixtures, never the maintainer's live stack. These are operator acceptance checks, not claims that
+documentation lint tests runtime enforcement.
+
+| Case | Required result |
+| --- | --- |
+| Editing brief in a read-only worker | Preflight blocks handoff; no product edit is attempted |
+| Requested policy differs from effective session policy | Stop and reconfigure; recheck in the actual worker |
+| Thread id presented as goal id, wrong budget, or stale count | Reject the report/launch until independently reconciled |
+| Usage jumps across the working cutoff | Stop work, account for in-flight usage, and preserve the report reserve; never claim polling guarantees the cap |
+| Meter/monitor disappears or identity changes | Editing stops; no silent unmetered continuation |
+| Worker awaits permission or receives queued steering | No idle implementation loop; changed authority requires acknowledgement |
+| Interrupt with a tool still running | Record and resolve the owned process before declaring cessation |
+| Supervisor is outside tmux | Obtain a layout decision; never target an unrelated default window |
 
 ## Hand off between Linux and Mac
 
@@ -340,6 +421,14 @@ alone may resume writing after this barrier.
 5. Run the complete required gates for the touched areas, publish the owning PR, and follow its CI.
 6. After merge, release claims with `make agent-stop`; audit retirement with `make agent-gc` before
    any explicit `APPLY=1` cleanup.
+
+Record a cleanup disposition on the tracking issue even when removal is unsafe: exact branch/HEAD,
+owner, reason retained, and a next review trigger (merge, recovery acceptance, handoff, or a date).
+Separate active work from superseded recovery copies. Closing a PR without merging or accepting a
+worker report is not proof that a local checkout is disposable. Preserve dirty files, credentials,
+evidence, and unrelated processes; resolve their disposition with the owner instead of overriding
+the collector. A worktree-limit exception needs a maintainer decision and a retirement trigger,
+not a permanently raised limit. Do not create new work merely to justify retained panes/worktrees.
 
 ## Supervisor output
 

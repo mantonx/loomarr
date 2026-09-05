@@ -30,6 +30,7 @@ type Application struct {
 	log             *slog.Logger
 	lifecycle       *generationLifecycle
 	playoutResolver *playoutResolver
+	serverPublicURL func() string
 }
 
 // Build constructs one application generation. If composition fails after starting any owned
@@ -37,7 +38,7 @@ type Application struct {
 func Build(parent context.Context, st store.Store, log *slog.Logger, ov Overrides) (*Application, error) {
 	lifecycle := newGenerationLifecycle(parent)
 	var resolver *playoutResolver
-	handler, generationLog, err := buildHandler(lifecycle.ctx, st, log, ov, lifecycle, func(built *playoutResolver) {
+	handler, generationLog, serverPublicURL, err := buildHandler(lifecycle.ctx, st, log, ov, lifecycle, func(built *playoutResolver) {
 		resolver = built
 	})
 	if err != nil {
@@ -50,7 +51,15 @@ func Build(parent context.Context, st store.Store, log *slog.Logger, ov Override
 		defer cancel()
 		return nil, errors.Join(err, lifecycle.shutdown(shutdownCtx))
 	}
-	return &Application{handler: handler, log: generationLog, lifecycle: lifecycle, playoutResolver: resolver}, nil
+	return &Application{handler: handler, log: generationLog, lifecycle: lifecycle, playoutResolver: resolver, serverPublicURL: serverPublicURL}, nil
+}
+
+// ServerPublicURL returns the current validated address advertised to local unpaired clients.
+func (a *Application) ServerPublicURL() string {
+	if a == nil || a.serverPublicURL == nil {
+		return ""
+	}
+	return a.serverPublicURL()
 }
 
 // Logger returns the generation's logger. Once a store-backed generation is built, this is the

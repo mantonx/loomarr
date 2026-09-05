@@ -65,8 +65,9 @@ type Session struct {
 	Plan EncodePlan
 
 	// cost is this session's contribution to the manager's committedCost — 1 if it TRANSCODES video,
-	// 0 if it `-c copy`s (§9.1 V49 admission). Starts as Plan.EstimatedCost() at admission (a
-	// conservative guess) and is corrected to the real CopyPlan.Cost() when the first program reports.
+	// 0 if it `-c copy`s (§9.1 V49 admission). It starts from the tune-time estimate and transitions
+	// atomically to each real program's cost before that child starts; progress reports repeat the
+	// transition idempotently for legacy callers.
 	// Read/written under Manager.mu (the manager owns the budget accounting), not the session mu.
 	cost int
 
@@ -206,6 +207,10 @@ type Manager struct {
 	// hardware encodes) and capped by any operator override. Re-read on every admission so a settings
 	// change or a model loading/unloading re-applies without a restart. <=0 ⇒ unmeasured, never block.
 	budget func() int
+	// estimateCost may prove a cold session will begin from an already prepared copy-only block.
+	// It runs outside mu so independent Channel lookups remain parallel. Nil keeps the conservative
+	// one-slot reservation until the first live program report.
+	estimateCost func(context.Context, string, EncodePlan) int
 	// committedCost is the summed admission cost of live sessions — the number of them currently
 	// TRANSCODING video (a `-c copy` session costs 0). Compared against budget() to admit. Guarded by
 	// mu; each session's contribution is tracked on the Session (cost) so a report/teardown adjusts it.
@@ -259,6 +264,13 @@ func (m *Manager) OnChange(fn func()) { m.onChange = fn }
 // WithObserver binds one application generation's session lifecycle observer.
 func (m *Manager) WithObserver(observer SessionObserver) *Manager {
 	m.observer = observer
+	return m
+}
+
+// WithCostEstimator installs a lookup-only cold-session cost proof. Only zero is a relaxation;
+// every other result retains the conservative one-transcode reservation.
+func (m *Manager) WithCostEstimator(estimate func(context.Context, string, EncodePlan) int) *Manager {
+	m.estimateCost = estimate
 	return m
 }
 
@@ -392,15 +404,36 @@ func (m *Manager) acquire(ctx context.Context, key sessionKey) (*Session, error)
 		}
 		return s, nil
 	}
+	m.mu.Unlock()
+
+	// A prepared lookup can prove this exact cold start is copy-only before admission. Keep it
+	// outside the Manager lock: the lookup reads durable schedule/readiness state, and serializing
+	// unrelated Channels behind that I/O would recreate the multi-Channel cold-start convoy.
+	newCost := key.plan.EstimatedCost()
+	if m.estimateCost != nil && m.estimateCost(ctx, key.channel, key.plan) == 0 {
+		newCost = 0
+	}
+
+	// Another caller may have reserved this key while the estimate ran. Join its placeholder rather
+	// than spawning a second process; the same-key atomicity contract still holds.
+	m.mu.Lock()
+	if s := m.sessions[key]; s != nil {
+		m.mu.Unlock()
+		<-s.ready
+		if s.initErr != nil {
+			m.discardFailed(key, s)
+			return m.acquire(ctx, key)
+		}
+		return s, nil
+	}
 	// Cost-aware admission with idle reclamation (§9.1 V49). The bound counts concurrent VIDEO TRANSCODES,
 	// not sessions: a `-c copy` session (an h264 channel, or HEVC to an HEVC-capable client) costs 0
 	// and is always admitted, so a channel watched at two plans (baseline + hevc8) costs ONE (the
 	// baseline transcode), not two — the plan-split no longer halves capacity. The incoming cost is
-	// conservatively estimated as one here and corrected to the real cost on the first
-	// program report. Checked under the lock against the live committedCost so parallel starts cannot
+	// estimated here and atomically transitioned to the real cost before each program child starts.
+	// Checked under the lock against the live committedCost so parallel starts cannot
 	// overshoot the budget. A full budget may reclaim proven-warm work with zero viewer demand, but
 	// never an actively watched session.
-	newCost := key.plan.EstimatedCost()
 	if !Admit(m.budget(), m.committedCost, newCost) {
 		candidates := make([]idleCandidate, 0, len(m.sessions))
 		for candidateKey, candidateSession := range m.sessions {
@@ -1170,20 +1203,56 @@ func (m *Manager) ReportProgram(channelID string, plan EncodePlan, enc Encoder, 
 	s.encoder = enc
 	s.last = p
 	s.mu.Unlock()
+	// startChild admitted this real cost before spawning. Calling the same transition here keeps
+	// legacy/report-only callers correct and is idempotent for the production progress path.
+	_ = m.AdmitProgram(channelID, plan, transcoding)
+}
 
-	// Correct the session's admission cost to REALITY (§9.1 V49). At attach we ESTIMATED cost from the
-	// plan (every plan reserves one); now the program has actually resolved its copy plan, so we know
-	// the truth: cost 1 iff it transcodes video. Any session correctly frees its slot once it proves
-	// it only copies. Adjust committedCost by the
-	// DELTA under m.mu, keyed to this live session so a report racing teardown cannot corrupt the sum.
-	realCost := 0
+// AdmitProgram atomically transitions an existing session between copy and video-transcode cost.
+// A prepared session starts at zero, but a later prepared miss must earn capacity before its live
+// child starts; otherwise many cheap sessions could all cross an Airing boundary and oversubscribe
+// the measured encoder budget together.
+func (m *Manager) AdmitProgram(channelID string, plan EncodePlan, transcoding bool) bool {
+	key := sessionKey{channel: channelID, plan: plan}
+	desiredCost := 0
 	if transcoding {
-		realCost = 1
+		desiredCost = 1
 	}
-	m.mu.Lock()
-	if m.sessions[sessionKey{channel: channelID, plan: plan}] == s && s.cost != realCost {
-		m.committedCost += realCost - s.cost
-		s.cost = realCost
+	for {
+		m.mu.Lock()
+		s := m.sessions[key]
+		if s == nil {
+			m.mu.Unlock()
+			return false
+		}
+		if s.cost == desiredCost {
+			m.mu.Unlock()
+			return true
+		}
+		if desiredCost == 0 {
+			m.committedCost -= s.cost
+			s.cost = 0
+			m.mu.Unlock()
+			m.notifyChange()
+			return true
+		}
+		incoming := desiredCost - s.cost
+		if Admit(m.budget(), m.committedCost, incoming) {
+			m.committedCost += incoming
+			s.cost = desiredCost
+			m.mu.Unlock()
+			m.notifyChange()
+			return true
+		}
+		candidates := make([]idleCandidate, 0, len(m.sessions))
+		for candidateKey, candidateSession := range m.sessions {
+			if candidateKey != key && candidateSession.cost > 0 {
+				candidates = append(candidates, idleCandidate{key: candidateKey, session: candidateSession})
+			}
+		}
+		m.mu.Unlock()
+		if !reclaimOldestIdle(candidates) {
+			return false
+		}
 	}
-	m.mu.Unlock()
 }

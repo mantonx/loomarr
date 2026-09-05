@@ -506,7 +506,17 @@ func (s *Startup) Ready() (bool, string) {
 		return false, "health checks are still running"
 	default:
 		for _, check := range report.Checks {
-			if check.Required && (check.Status == HealthFailed || check.Status == HealthStale) && check.Detail != "" {
+			if check.Required && check.Status == HealthStale {
+				label := strings.TrimSpace(check.Label)
+				if label == "" {
+					label = strings.TrimSpace(check.Key)
+				}
+				if label != "" {
+					return false, label + " health observation is stale"
+				}
+				return false, "a required health observation is stale"
+			}
+			if check.Required && check.Status == HealthFailed && check.Detail != "" {
 				return false, check.Detail
 			}
 		}

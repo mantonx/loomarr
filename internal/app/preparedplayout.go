@@ -15,7 +15,16 @@ import (
 	"github.com/loomarr/loomarr/internal/store"
 )
 
-const preparedCandidateBatch = 16
+const (
+	preparedHotResolutionBatch      = 128
+	preparedOptionalResolutionBatch = 16
+	preparedOptionalCandidateBatch  = 16
+)
+
+type preparedNeed struct {
+	class    prepared.CandidateClass
+	neededAt time.Time
+}
 
 type preparedChannelReader interface {
 	ListChannels(context.Context) ([]store.Channel, error)
@@ -25,9 +34,11 @@ type preparedChannelReader interface {
 type preparedTimeline interface {
 	ScheduledBroadcasts(context.Context, string, time.Time, time.Time) ([]playout.Broadcast, error)
 	AudioTrackFor(context.Context, string, string, string) int
+	AudioTrackFromInventory(context.Context, string, string) (int, bool)
 }
 
 type preparedSourceResolver interface {
+	ResolvePreparedSourceFromInventory(context.Context, string, library.PathMap) (prepared.Source, string, bool)
 	ResolvePreparedSource(context.Context, string, library.PathMap) (prepared.Source, string, bool)
 	PreparedSourceCurrent(context.Context, prepared.Source) bool
 }
@@ -85,11 +96,23 @@ func newPreparedRuntimeResolver(deps preparedRuntimeDependencies) *preparedRunti
 	}
 }
 
-// Plan enumerates accepted internal-playout schedules, earliest need first. Existing durable
-// bindings make the full schedule cheap to inspect and protect; at most one batch of absent
-// bindings may resolve media-server paths or probe audio per pass.
+// Plan enumerates accepted internal-playout schedules with bounded source refresh enabled.
 func (r *preparedRuntimeResolver) Plan(
 	ctx context.Context, from, to time.Time,
+) (prepared.ReadinessPlan, error) {
+	return r.plan(ctx, from, to, true)
+}
+
+// Observe recomputes the resulting readiness after preparation using durable bindings and lookup
+// only. It cannot refresh a source or probe audio.
+func (r *preparedRuntimeResolver) Observe(
+	ctx context.Context, from, to time.Time,
+) (prepared.ReadinessPlan, error) {
+	return r.plan(ctx, from, to, false)
+}
+
+func (r *preparedRuntimeResolver) plan(
+	ctx context.Context, from, to time.Time, allowRefresh bool,
 ) (prepared.ReadinessPlan, error) {
 	var plan prepared.ReadinessPlan
 	if r == nil || r.channels == nil || r.timeline == nil || r.sources == nil || r.lookup == nil ||
@@ -104,7 +127,7 @@ func (r *preparedRuntimeResolver) Plan(
 	if err != nil {
 		return plan, err
 	}
-	needed := make(map[prepared.BindingKey]time.Time)
+	needed := make(map[prepared.BindingKey]preparedNeed)
 	channelPolicies := make(map[string]string)
 	var errs []error
 	for _, channel := range channels {
@@ -117,17 +140,24 @@ func (r *preparedRuntimeResolver) Plan(
 			errs = append(errs, timelineErr)
 			continue
 		}
+		sort.SliceStable(broadcasts, func(i, j int) bool { return broadcasts[i].Start.Before(broadcasts[j].Start) })
+		nextProgramAssigned := false
 		for _, broadcast := range broadcasts {
-			if broadcast.Kind != schedule.SlotProgram || broadcast.LibraryItemID == "" {
+			if broadcast.Kind != schedule.SlotProgram || broadcast.LibraryItemID == "" || !broadcast.Stop.After(from) {
 				continue
 			}
-			at := broadcast.Start
-			if at.Before(from) {
-				at = from // every currently-airing item has equal first priority.
+			need := preparedNeed{class: prepared.CandidateLookahead, neededAt: broadcast.Start}
+			if !broadcast.Start.After(from) && broadcast.Stop.After(from) {
+				need.class = prepared.CandidateCurrent
+				need.neededAt = from // every currently-airing item has equal first priority.
+			} else if !nextProgramAssigned {
+				need.class = prepared.CandidateNext
+				nextProgramAssigned = true
 			}
 			key := prepared.BindingKey{ChannelID: channel.ID, LibraryItemID: broadcast.LibraryItemID}
-			if prior, ok := needed[key]; !ok || at.Before(prior) {
-				needed[key] = at
+			if prior, ok := needed[key]; !ok || need.class < prior.class ||
+				(need.class == prior.class && need.neededAt.Before(prior.neededAt)) {
+				needed[key] = need
 			}
 		}
 	}
@@ -141,21 +171,28 @@ func (r *preparedRuntimeResolver) Plan(
 	plan.Summary.Channels = len(channelReady)
 	plan.Summary.ScheduledBindings = len(keys)
 	sort.Slice(keys, func(i, j int) bool {
-		if needed[keys[i]].Equal(needed[keys[j]]) {
+		left, right := needed[keys[i]], needed[keys[j]]
+		if left.class != right.class {
+			return left.class < right.class
+		}
+		if left.neededAt.Equal(right.neededAt) {
 			if keys[i].LibraryItemID == keys[j].LibraryItemID {
 				return keys[i].ChannelID < keys[j].ChannelID
 			}
 			return keys[i].LibraryItemID < keys[j].LibraryItemID
 		}
-		return needed[keys[i]].Before(needed[keys[j]])
+		return left.neededAt.Before(right.neededAt)
 	})
 	queued := make(map[prepared.Request]struct{})
 	protected := make(map[prepared.Specification]struct{})
 	resolvedBindings := make(map[prepared.BindingKey]prepared.Binding)
 	staleBindings := make([]prepared.BindingKey, 0)
 	policy := r.sourcePolicy()
-	resolutionAttempts := 0
+	hotBindingResolutions := 0
+	optionalBindingResolutions := 0
+	optionalCandidates := 0
 	for _, key := range keys {
+		need := needed[key]
 		channelPolicy := channelPolicies[key.ChannelID]
 		request, bound := r.readiness.Binding(key, policy, channelPolicy)
 		if bound && !r.sources.PreparedSourceCurrent(ctx, request.Source) {
@@ -163,13 +200,28 @@ func (r *preparedRuntimeResolver) Plan(
 			bound = false
 		}
 		if !bound {
-			if resolutionAttempts >= preparedCandidateBatch {
+			if !allowRefresh {
 				channelReady[key.ChannelID] = false
 				continue
 			}
-			resolutionAttempts++
+			if need.class == prepared.CandidateLookahead {
+				if optionalBindingResolutions >= preparedOptionalResolutionBatch {
+					channelReady[key.ChannelID] = false
+					continue
+				}
+				optionalBindingResolutions++
+			} else {
+				if hotBindingResolutions >= preparedHotResolutionBatch {
+					channelReady[key.ChannelID] = false
+					continue
+				}
+				hotBindingResolutions++
+			}
 			var resolved bool
-			request, resolved = r.resolveSource(ctx, key)
+			request, resolved = r.resolveSourceFromInventory(ctx, key)
+			if !resolved {
+				request, resolved = r.resolveSource(ctx, key)
+			}
 			if !resolved {
 				channelReady[key.ChannelID] = false
 				continue
@@ -186,21 +238,29 @@ func (r *preparedRuntimeResolver) Plan(
 		}
 		if ready {
 			plan.Summary.ReadyBindings++
-			if _, exists := protected[specification]; !exists {
+			if need.class != prepared.CandidateLookahead {
+				if _, exists := protected[specification]; exists {
+					continue
+				}
 				protected[specification] = struct{}{}
 				plan.Protected = append(plan.Protected, specification)
 			}
 			continue
 		}
 		channelReady[key.ChannelID] = false
-		if len(plan.Candidates) >= preparedCandidateBatch {
-			continue
+		if need.class == prepared.CandidateLookahead {
+			if optionalCandidates >= preparedOptionalCandidateBatch {
+				continue
+			}
+			optionalCandidates++
 		}
 		if _, exists := queued[request]; exists {
 			continue
 		}
 		queued[request] = struct{}{}
-		plan.Candidates = append(plan.Candidates, prepared.Candidate{NeededAt: needed[key], Request: request})
+		plan.Candidates = append(plan.Candidates, prepared.Candidate{
+			Class: need.class, NeededAt: need.neededAt, Request: request,
+		})
 	}
 	if rememberErr := r.readiness.ReconcileBindings(resolvedBindings, staleBindings); rememberErr != nil {
 		// Preparation must never depend on source selection that did not survive the restart boundary.
@@ -215,6 +275,28 @@ func (r *preparedRuntimeResolver) Plan(
 	plan.Summary.MissingBindings = plan.Summary.ScheduledBindings - plan.Summary.ReadyBindings
 	plan.Summary.QueuedPublications = len(plan.Candidates)
 	return plan, errors.Join(errs...)
+}
+
+func (r *preparedRuntimeResolver) resolveSourceFromInventory(
+	ctx context.Context, key prepared.BindingKey,
+) (prepared.Request, bool) {
+	if r.rendition == nil {
+		return prepared.Request{}, false
+	}
+	var pathMap library.PathMap
+	if r.pathMap != nil {
+		pathMap = r.pathMap()
+	}
+	source, input, ok := r.sources.ResolvePreparedSourceFromInventory(ctx, key.LibraryItemID, pathMap)
+	if !ok || input == "" {
+		return prepared.Request{}, false
+	}
+	track, ok := r.timeline.AudioTrackFromInventory(ctx, key.ChannelID, key.LibraryItemID)
+	if !ok {
+		return prepared.Request{}, false
+	}
+	source.AudioTrack = track
+	return prepared.Request{Source: source, Rendition: r.rendition()}, true
 }
 
 func (r *preparedRuntimeResolver) resolveSource(
@@ -343,6 +425,10 @@ func (r *preparedRuntimeResolver) preparedAiring(
 	}
 	return playout.PreparedAiring{
 		Specification: specification, StartedAt: broadcast.Start, Offset: offset,
+		Identity: playout.AiringIdentity{
+			StartedAt: broadcast.Start, EndsAt: broadcast.Stop, Kind: broadcast.Kind,
+			ContentID: broadcast.ContentIdentity(), ScheduleBlockID: broadcast.ScheduleBlockID(channelID),
+		},
 	}, true, nil
 }
 

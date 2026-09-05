@@ -18,6 +18,7 @@ type pick struct {
 	TMDBID     int     `json:"tmdbId"`
 	TVDBID     int     `json:"tvdbId"`
 	Name       string  `json:"name"`
+	Year       int     `json:"year"`
 	Rationale  string  `json:"rationale"`
 	Confidence float64 `json:"confidence"`
 	// SeasonMin/SeasonMax: an OPTIONAL airing season window the model proposes for a
