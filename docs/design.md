@@ -131,8 +131,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 | `llm` | 6 | `httpx`, `metrics` |
 | `metrics` | 8 | `provision` |
 | `notifications` | 5 | `httpx` |
-| `provision` | 17 | — |
-| `quality` | 5 | — |
+| `provision` | 18 | — |
+| `quality` | 7 | `provision` |
 | `recovery` | 5 | — |
 | `schedule` | 15 | `provision` |
 | `scheduler` | 6 | `store` |
@@ -144,7 +144,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 0** — no internal dependencies. These are the vocabulary the rest agrees on.
 
-- **`buildinfo`** · 2 importers
+- **`buildinfo`** · 3 importers
   Carries the version stamped into the binary at build time.
 - **`config`** · 1 importer
   Loads Loomarr's ENV-ONLY BOOTSTRAP configuration (config-design §1): the handful of keys needed before the database opens or that describe process topology.
@@ -170,14 +170,10 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Advertises a running Loomarr HTTP listener to unpaired local TV clients.
 - **`media`** · 3 importers
   Owns host-wide resources shared by live and background media work.
-- **`plannerreference`**
-  Binds a planner scorecard to the exact local model, runtime, host, and cold/warm protocol used to produce it.
 - **`proctree`** · 3 importers
   Supervises one child process and every descendant it starts.
-- **`provision`** · 17 importers
+- **`provision`** · 18 importers
   Provisioner domain (design §3–§4): the Title/Key identity model and the acquisition state machine.
-- **`quality`** · 5 importers
-  Owns Loomarr's privacy-safe discovery-quality vocabulary.
 - **`recovery`** · 5 importers
   Owns local-password recovery records and their bearer grants (§11).
 - **`reference`** · 3 importers
@@ -211,11 +207,15 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns Loomarr's generation-scoped Prometheus surface (design §7 /metrics, §17).
 - **`prepared`** · 4 importers · → `diagnostics`, `media`
   Owns immutable, reusable playout publications.
+- **`quality`** · 7 importers · → `provision`
+  Owns Loomarr's privacy-safe discovery-quality vocabulary.
 
 **Layer 2**
 
 - **`httpx`** · 9 importers · → `metrics`
   Shared outbound HTTP client factory (design §6, §21 phase 1).
+- **`plannerreference`** · → `quality`
+  Binds a planner scorecard to the exact local model, runtime, host, and cold/warm protocol used to produce it.
 - **`schedule`** · 15 importers · → `holidayvocab`, `provision`, `textmatch`
   Scheduler domain (design §9): the Channel identity, the DesiredLineup / Slot model, and the *pure* computation that turns an approved lineup plus live availability into ordered desired programming.
 
@@ -303,7 +303,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 - **`binder`** · 2 importers · → `provision`, `schedule`, `store`, `suggest`
   Plans how an APPROVED proposal changes a channel (§7): create it on first approval, patch it (preserving operator-owned fields) on re-approval or refine.
-- **`eval`** · → `catalog`, `episodeevidence`, `library`, `llm`, `provision`, `schedule`, `suggest`, `tmdb`
+- **`eval`** · → `buildinfo`, `catalog`, `episodeevidence`, `library`, `llm`, `provision`, `quality`, `schedule`, `suggest`, `tmdb`
   Loomarr's semantic-evaluation harness (a §14 Go test binary, NOT a service).
 - **`proposalworkflow`** · 2 importers · → `schedule`, `store`, `suggest`
   Owns the durable Proposal Job lifecycle and the authoritative First-channel Journey composed from it.
@@ -1511,7 +1511,7 @@ not an effectful workflow.
 positive per-run and suite call/token/USD ceilings as other required semantic certification and
 local inference still requires `LOOMARR_EVAL_ALLOW_LOCAL=1`; it never starts or provisions a model.
 Before constructing the provider it verifies the embedded fixture digest and corpus references.
-Scorecard schema v11 records the corpus, fixture digest, prompt contract, catalog-tool schema, scorer,
+Scorecard schema v12 records the corpus, fixture digest, prompt contract, catalog-tool schema, scorer,
 and separate hard/quality metric lists, then writes both the JSON result manifest and a Markdown
 comparison summary. V2 pre-registers a 95% grounded-completion floor over the 132 completion cases,
 a 90% correct-operation floor, a 98% final-schema-validity floor, and a maximum of three tool calls at
@@ -1560,7 +1560,12 @@ manifest is necessary provenance for #831, not model certification itself, and g
 LoRA/QLoRA, Runpod, distribution, production, or spend authority. All external compute and API work
 continues to share the current **$20 aggregate ceiling**; unused headroom is not a GPU allocation.
 
-`make eval-planner-compare` accepts two or more schema-v10 scorecards with identical frozen identities.
+`make eval-planner-compare` accepts two or more same-schema scorecards with identical frozen identities;
+new runs use schema v12, while archived schema-v10 and schema-v11 evidence remains readable.
+Schema v11 already shipped network/person route evidence without run snapshots; its meaning is not
+retroactively changed. Only same-schema cards may be compared, and archived cards never satisfy the
+new snapshot contract. Schema-v12 comparison rejects a missing, invalid, or scorecard-mismatched run snapshot and requires
+the same named budget profile as well as the same numeric resource envelope.
 Only candidates that clear every hard gate and threshold are eligible. Its pre-registered quality score
 weights grounded completion 20%, correct tool operation 20%, schema validity 10%, policy accuracy 15%,
 proposal quality 25%, and recovery 10%. The equivalence margin is two percentage points. At most two
@@ -7633,7 +7638,7 @@ range, including zero, and fails only the declared overall/relevance/serendipity
 judge evidence must explicitly contain all three finite scores within that range plus the prompt's
 non-blank reason. `Runner.Run` validates that contract independently of the configured `Judge`, so a
 custom implementation cannot certify NaN, infinity, an out-of-range value, or a blank reason;
-missing, null, or invalid evidence is a judge error, never defaulted or clamped. Schema v10
+missing, null, or invalid evidence is a judge error, never defaulted or clamped. Schema v12
 records exactly one first-failure stage on every failed trial from the closed vocabulary `retrieval`,
 `generation`, `deterministic`, `structural_budget`, `schedule`, `judge`, and `budget_exhausted`;
 later failures remain visible but never replace the first stage. `no_tool_call` and
@@ -8662,6 +8667,25 @@ selection invalidates the preview and disables download until the replacement pr
   or Channel fact. In particular, `declined` remains only a Proposal workflow outcome and does not
   create, imply, or join to a `less` or `never` taste signal.
 
+  Acquisition and scheduling close the same Proposal journey without turning periodic maintenance
+  into quality data. A requested or downloading Title emits exactly one acquisition receipt only
+  after its terminal `available` or `unavailable` row commit. `available` maps to `playable`,
+  `unavailable` maps to `failed`, and time-to-playable/failure is measured from the authoritative
+  `requested_at` when present; a legacy row without that timestamp keeps the terminal outcome and a
+  zero duration rather than inventing a start. Its opaque idempotency key is derived from the
+  canonical Title key and the acquisition stage, but neither the Title key nor its digest is
+  exported. The monotonic provisioning state makes a second terminal acquisition outcome illegal.
+
+  Scheduling is scoped to the Proposal Job that created the Channel and stops measuring after that
+  Job has reached live once. A final reconcile error before first live records scheduling `failed`;
+  a reconcile records `scheduled` only after `SaveChannel` commits a live or drifted playable deck
+  and atomically stamps the Job's existing `reached_live` milestone. An empty successful reconcile
+  records nothing because no programme was placed, and global backend preparation bypasses the
+  Proposal-quality hook. The opaque receipt key is derived from the Job id, stage, and outcome, so
+  retries can show one failure followed by one success without counting repeated maintenance. Both
+  acquisition and scheduling writes are best-effort after the business commit and can never revise
+  provisioning or Channel state.
+
   The module accepts typed observations and owns classification, aggregation, redaction, retention,
   and export. Callers cannot provide labels or arbitrary metadata. Recording is best-effort after
   the business transition commits: a quality-write failure is logged through the bounded diagnostics
@@ -8679,6 +8703,17 @@ selection invalidates the preview and disables download until the replacement pr
   closed provider identity, budget profile, application version, and whether required accounting was
   available. Model strings are length-bounded facts, never labels or network locations; missing
   values remain explicitly missing rather than being guessed.
+
+  Semantic-evaluation scorecard schema v12 embeds one canonical run snapshot whenever the corpus,
+  requested generator model, and budget profile are declared. The snapshot copies the frozen corpus
+  and requested model from the scorecard contract, records the closed requested-provider class, and
+  records a resolved model only when every observed generator call reports the same non-empty value;
+  missing or mixed resolution stays empty. Its application version comes from the executable build
+  identity, its creation time is the scorecard time at whole-second precision, and its opaque id is a
+  digest of those bounded facts. `accountingAvailable` is true only when a declared resource budget
+  observed at least one call without latching missing or invalid accounting. Thus an archived
+  scorecard and a quality-ledger snapshot share one validated comparison shape without copying
+  prompts, provider payloads, endpoints, credentials, or generation ids.
 
   One admin-only JSON export returns aggregate buckets and referenced evaluation-run snapshots; it
   never returns raw receipts or idempotency keys. Export is a local download with a versioned schema,

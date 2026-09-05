@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/loomarr/loomarr/internal/catalog"
 	"github.com/loomarr/loomarr/internal/library"
@@ -48,6 +49,12 @@ func CertificationRunnerConfig(config RunnerConfig) (RunnerConfig, error) {
 	corpus, err := LoadEmbeddedCertificationCorpus()
 	if err != nil {
 		return RunnerConfig{}, err
+	}
+	if strings.TrimSpace(config.Generator.Provider) == "" || buildScorecardRunSnapshot(Scorecard{
+		CorpusVersion: corpus.Version, GeneratedAt: time.Unix(1, 0).UTC(),
+		Profile: config.Profile, Generator: config.Generator,
+	}, false) == nil {
+		return RunnerConfig{}, fmt.Errorf("certification scorecard requires identifier-shaped profile and generator provider/model")
 	}
 	config.Contract = &CertificationContract{
 		CorpusVersion:        corpus.Version,

@@ -115,4 +115,22 @@ func TestComparePlannerModelsRejectsDifferentMetricContracts(t *testing.T) {
 	if _, err := ComparePlannerModels([]Scorecard{first, second}); err == nil || !strings.Contains(err.Error(), "frozen certification identity") {
 		t.Fatalf("different resource budget error = %v", err)
 	}
+	first, second = card("gemma"), card("qwen")
+	first.Profile, second.Profile = "bounded-v1", "bounded-v2"
+	if _, err := ComparePlannerModels([]Scorecard{first, second}); err == nil || !strings.Contains(err.Error(), "frozen certification identity") {
+		t.Fatalf("different budget profile error = %v", err)
+	}
+	first, second = card("gemma"), card("qwen")
+	first.SchemaVersion, second.SchemaVersion = 11, 11
+	if _, err := ComparePlannerModels([]Scorecard{first, second}); err != nil {
+		t.Fatalf("archived schema-v11 comparison error = %v", err)
+	}
+	second.SchemaVersion = 12
+	if _, err := ComparePlannerModels([]Scorecard{first, second}); err == nil || !strings.Contains(err.Error(), "frozen certification identity") {
+		t.Fatalf("mixed schema-v11/v12 comparison error = %v", err)
+	}
+	first.SchemaVersion = 12
+	if _, err := ComparePlannerModels([]Scorecard{first, second}); err == nil || !strings.Contains(err.Error(), "lacks its run snapshot") {
+		t.Fatalf("missing schema-v12 snapshot error = %v", err)
+	}
 }

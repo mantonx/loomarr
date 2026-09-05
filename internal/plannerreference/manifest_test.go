@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/loomarr/loomarr/internal/quality"
 )
 
 func TestBuildManifestCanonicalizesAndBindsReferenceHostEvidence(t *testing.T) {
@@ -57,6 +59,59 @@ func TestBuildManifestCanonicalizesAndBindsReferenceHostEvidence(t *testing.T) {
 	if strings.Contains(text, "/Users/") || strings.Contains(text, "unrelated-resident-model") ||
 		strings.Contains(text, "raw capture") {
 		t.Fatal("manifest leaked raw capture content or local paths")
+	}
+}
+
+func TestBuildManifestDistinguishesArchivedV11FromSnapshotV12(t *testing.T) {
+	card, captured, evidence, generatedAt := validFixture(t)
+	var document map[string]any
+	if err := json.Unmarshal(card, &document); err != nil {
+		t.Fatal(err)
+	}
+	for _, version := range []int{11, 12} {
+		document["schemaVersion"] = version
+		raw, err := json.Marshal(document)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = BuildManifest(rawInputs(t, raw, captured, evidence, generatedAt))
+		if version == 11 && err != nil {
+			t.Fatalf("archived schema-v11 without snapshot: %v", err)
+		}
+		if version == 12 && (err == nil || !strings.Contains(err.Error(), "lacks its quality run snapshot")) {
+			t.Fatalf("schema-v12 without snapshot error = %v", err)
+		}
+	}
+}
+
+func TestBuildManifestAcceptsAndBindsScorecardV12RunSnapshot(t *testing.T) {
+	card, captured, evidence, generatedAt := validFixture(t)
+	var document map[string]any
+	if err := json.Unmarshal(card, &document); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := quality.RunSnapshot{
+		SchemaVersion:  quality.RunSnapshotSchemaVersion,
+		CorpusVersion:  "planner-certification-v3",
+		RequestedModel: captured.Model.Tag, ResolvedModel: captured.Model.Tag,
+		Provider: quality.ProviderOllama, BudgetProfile: captured.Protocol.Profile,
+		ApplicationVersion: "v0.1.0", AccountingAvailable: true,
+		CreatedAt: captured.StartedAt.Add(time.Minute),
+	}
+	snapshot.ID = quality.RunSnapshotID(snapshot)
+	document["schemaVersion"] = float64(12)
+	document["runSnapshot"] = snapshot
+	card, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	artifact, err := BuildManifest(rawInputs(t, card, captured, evidence, generatedAt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(artifact.JSON, []byte(`"schemaVersion": 12`)) {
+		t.Fatalf("reference manifest did not retain scorecard schema 12: %s", artifact.JSON)
 	}
 }
 

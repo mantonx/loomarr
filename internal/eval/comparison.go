@@ -60,6 +60,9 @@ func ComparePlannerModels(cards []Scorecard) (PlannerModelComparison, error) {
 		if card.Generator.Provider == "" || card.Generator.Model == "" {
 			return PlannerModelComparison{}, fmt.Errorf("planner scorecard %d has a blank model identity", index)
 		}
+		if err := validateScorecardRunSnapshot(card); err != nil {
+			return PlannerModelComparison{}, fmt.Errorf("planner scorecard %d: %w", index, err)
+		}
 		if err := validateQualityAssessment(*card.Assessment); err != nil {
 			return PlannerModelComparison{}, fmt.Errorf("planner scorecard %d: %w", index, err)
 		}
@@ -152,6 +155,7 @@ func validateQualityAssessment(assessment CertificationAssessment) error {
 
 func comparableCertification(first, candidate Scorecard) bool {
 	return first.SchemaVersion == candidate.SchemaVersion && first.CorpusVersion == candidate.CorpusVersion &&
+		first.Profile == candidate.Profile &&
 		first.CallBudget.Cases == candidate.CallBudget.Cases && first.CallBudget.Trials == candidate.CallBudget.Trials &&
 		first.CallBudget.MaxGeneratorCalls == candidate.CallBudget.MaxGeneratorCalls &&
 		first.CallBudget.MaxJudgeCalls == candidate.CallBudget.MaxJudgeCalls && first.CallBudget.Total == candidate.CallBudget.Total &&

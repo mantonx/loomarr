@@ -12,11 +12,12 @@ import (
 	"time"
 
 	"github.com/loomarr/loomarr/internal/provision"
+	"github.com/loomarr/loomarr/internal/quality"
 	"github.com/loomarr/loomarr/internal/suggest"
 )
 
 const (
-	scorecardSchemaVersion = 11
+	scorecardSchemaVersion = 12
 	corpusVersion          = "2026-08-27.8"
 )
 
@@ -139,6 +140,7 @@ type Scorecard struct {
 	Judge         ModelIdentity            `json:"judge"`
 	CallBudget    CallBudget               `json:"callBudget"`
 	ResourceUsage ResourceUsage            `json:"resourceUsage"`
+	RunSnapshot   *quality.RunSnapshot     `json:"runSnapshot,omitempty"`
 	Certified     bool                     `json:"certified"`
 	FailureCounts map[FailureStage]int     `json:"failureCounts"`
 	Results       []Result                 `json:"results"`
@@ -460,6 +462,7 @@ func (r *Runner) Run(ctx context.Context, cases []Case) Scorecard {
 			card.Certified = false
 		}
 	}
+	card.RunSnapshot = buildScorecardRunSnapshot(card, resourceBudgetEnabled(r.config.ResourceBudget) && suiteUsage.uncertain == "" && suiteUsage.calls > 0)
 	return card
 }
 

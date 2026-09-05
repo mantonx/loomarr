@@ -4,18 +4,22 @@
 package quality
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const (
-	MaxFactLength          = 200
-	MaxIdempotencyLength   = 160
-	MaxObservationDuration = 365 * 24 * time.Hour
-	MaxToolCalls           = 10_000
-	MaxCandidateCount      = 1_000_000
-	MaxCostNanos           = int64(1_000_000_000_000_000_000)
+	RunSnapshotSchemaVersion = 1
+	MaxFactLength            = 200
+	MaxIdempotencyLength     = 160
+	MaxObservationDuration   = 365 * 24 * time.Hour
+	MaxToolCalls             = 10_000
+	MaxCandidateCount        = 1_000_000
+	MaxCostNanos             = int64(1_000_000_000_000_000_000)
 )
 
 type Stage string
@@ -146,6 +150,23 @@ func (s RunSnapshot) Validate() error {
 		return fmt.Errorf("quality run snapshot: unknown provider %q", s.Provider)
 	}
 	return nil
+}
+
+// RunSnapshotID deterministically names the bounded snapshot facts. CreatedAt
+// is normalized to whole seconds because that is the store's durable precision.
+// The caller assigns the result to ID before validation or persistence.
+func RunSnapshotID(s RunSnapshot) string {
+	hash := sha256.New()
+	for _, fact := range []string{
+		strconv.Itoa(s.SchemaVersion), s.CorpusVersion, s.RequestedModel,
+		s.ResolvedModel, string(s.Provider), s.BudgetProfile,
+		s.ApplicationVersion, strconv.FormatBool(s.AccountingAvailable),
+		s.CreatedAt.UTC().Truncate(time.Second).Format(time.RFC3339),
+	} {
+		_, _ = hash.Write([]byte(fact))
+		_, _ = hash.Write([]byte{0})
+	}
+	return "eval-" + hex.EncodeToString(hash.Sum(nil))
 }
 
 func factToken(value string) bool {

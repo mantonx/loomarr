@@ -83,7 +83,7 @@ func (s *sqlStore) GetChannelByIntentRef(ctx context.Context, intentRef string) 
 }
 
 func (s *sqlStore) SaveChannel(ctx context.Context, ch Channel) (Channel, error) {
-	if ch.Status == schedule.StatusLive && ch.IntentRef != "" {
+	if (ch.Status == schedule.StatusLive || ch.Status == schedule.StatusDrifted) && ch.IntentRef != "" {
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return Channel{}, fmt.Errorf("save live channel %s: begin: %w", ch.ID, err)

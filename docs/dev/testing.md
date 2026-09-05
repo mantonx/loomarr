@@ -110,6 +110,12 @@ tokens are provider-reported prompt plus completion totals. The shared Runner le
 ceilings before generator/judge boundaries and after each bounded call record. Exhaustion records the
 closed `budget_exhausted` stage and prevents later calls/runs; it is not merely calculated after the
 suite. Missing provider attribution stays unknown and is never converted to fabricated usage.
+Scorecard schema v12 also embeds a canonical quality run snapshot when corpus, generator model, and
+profile are declared. It binds the requested model/provider, unanimously reported resolved model
+(or explicit missing resolution), profile as the budget profile, executable version, and accounting
+availability without retaining prompts, endpoints, credentials, payloads, or provider generation ids.
+Required certification therefore requires an identifier-shaped `LOOMARR_EVAL_PROFILE`; the name is
+the snapshot's budget profile and distinguishes runs made under different declared resource envelopes.
 With a hard ceiling active, missing token or hosted-spend facts fail as `budget_exhausted`; local
 Ollama remains explicitly non-billed rather than receiving an invented charge. A missing hosted
 usage fact also latches the shared suite ledger uncertain: every later trial or case is rejected
@@ -121,6 +127,7 @@ A required hosted example therefore declares every independent bound explicitly:
 
 ```sh
 LOOMARR_EVAL_REQUIRED=1 \
+LOOMARR_EVAL_PROFILE=hosted-bounded-v1 \
 LOOMARR_EVAL_MAX_CALLS_PER_RUN=25 \
 LOOMARR_EVAL_MAX_CALLS_PER_SUITE=1500 \
 LOOMARR_EVAL_MAX_TOKENS_PER_RUN=50000 \
