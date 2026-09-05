@@ -12,7 +12,7 @@ import (
 
 const (
 	TemporalStructureHoldoutSchemaVersion   = 1
-	TemporalStructureHoldoutContractVersion = "filler-temporal-structure-holdout-plan-v3"
+	TemporalStructureHoldoutContractVersion = "filler-temporal-structure-holdout-plan-v4"
 	TemporalStructureHoldoutCases           = 36
 	temporalStructureHoldoutClassCases      = 12
 	temporalStructureHoldoutParentSources   = 6
@@ -61,8 +61,9 @@ type TemporalStructureHoldoutReceipt struct {
 	CompilationConstructions   []TemporalStructureHoldoutCompilation     `json:"compilationConstructions"`
 	ProgrammeConstructions     []TemporalStructureHoldoutProgrammeCut    `json:"programmeConstructions"`
 	FutureTrainingExclusion    TemporalStructureHoldoutTrainingExclusion `json:"futureTrainingExclusion"`
-	TrainingAllowed            bool                                      `json:"trainingAllowed"`
-	ProductionAdmissionAllowed bool                                      `json:"productionAdmissionAllowed"`
+	BlindHumanAuditRequired    *bool                                     `json:"blindHumanAuditRequired"`
+	TrainingAllowed            *bool                                     `json:"trainingAllowed"`
+	ProductionAdmissionAllowed *bool                                     `json:"productionAdmissionAllowed"`
 }
 
 type TemporalStructureHoldoutTrainingExclusion struct {

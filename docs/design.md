@@ -4711,7 +4711,11 @@ the measured part durations, rather than requested timestamps, remain the join
 authority. Coverage-only suitability holds may remain as evaluation material;
 prohibited and operational holds cannot be selected. The constructed truth can test unit boundaries
 without a second blind full-corpus review, but it cannot establish broadcast suitability, enter
-training data, or authorize production admission. Both permissions remain explicitly false.
+training data, or authorize production admission. Plan contract v4 requires the receipt to contain
+`blindHumanAuditRequired=false`, `trainingAllowed=false`, and `productionAdmissionAllowed=false`.
+Missing, null, or true dispositions are rejected before media probing or rendering. Older receipts
+remain immutable historical evidence, not current-contract rendering authority. This explicit
+no-full-blind-audit disposition does not replace targeted human adjudication of challenged anchors.
 
 Suitability screening is repeated over every freshly rendered structure case because concatenation
 and excerpt construction create new viewing contexts. Its prompt identity binds the system prompt,

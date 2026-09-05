@@ -25,7 +25,7 @@ func constructTemporalStructureHoldout(config TemporalStructureHoldoutConfig, lo
 		IndependentSources: temporalStructureHoldoutClassCases, ProgrammeParents: temporalStructureHoldoutParentSources,
 		StandaloneRoleCounts:    map[fillereval.TemporalRole]int{},
 		FutureTrainingExclusion: TemporalStructureHoldoutTrainingExclusion{Split: "holdout"},
-		TrainingAllowed:         false, ProductionAdmissionAllowed: false,
+		BlindHumanAuditRequired: new(bool), TrainingAllowed: new(bool), ProductionAdmissionAllowed: new(bool),
 	}
 	for index := range anchors {
 		relative, err := temporalStructureHoldoutRelativeEvidencePath(config.SourceRoot, config.EvidenceManifestPath, anchors[index].source.Path)

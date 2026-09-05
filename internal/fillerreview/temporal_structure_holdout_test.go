@@ -110,7 +110,7 @@ func TestBuildTemporalStructureHoldoutPlanBindsAuthoritiesAndBuildsBalancedConst
 	for _, item := range authoring.Cases {
 		unitCounts[item.Unit]++
 	}
-	if unitCounts[fillereval.UnitStandalone] != 12 || unitCounts[fillereval.UnitCompilation] != 12 || unitCounts[fillereval.UnitProgrammeExcerpt] != 12 || len(authoring.Sources) != 18 || receipt.StandaloneRoleCounts[fillereval.TemporalRoleBumper] != 2 || receipt.StandaloneRoleCounts[fillereval.TemporalRoleCommercial] != 3 || receipt.StandaloneRoleCounts[fillereval.TemporalRolePromo] != 2 || receipt.StandaloneRoleCounts[fillereval.TemporalRolePSA] != 2 || receipt.StandaloneRoleCounts[fillereval.TemporalRoleTrailer] != 3 || receipt.TrainingAllowed || receipt.ProductionAdmissionAllowed {
+	if unitCounts[fillereval.UnitStandalone] != 12 || unitCounts[fillereval.UnitCompilation] != 12 || unitCounts[fillereval.UnitProgrammeExcerpt] != 12 || len(authoring.Sources) != 18 || receipt.StandaloneRoleCounts[fillereval.TemporalRoleBumper] != 2 || receipt.StandaloneRoleCounts[fillereval.TemporalRoleCommercial] != 3 || receipt.StandaloneRoleCounts[fillereval.TemporalRolePromo] != 2 || receipt.StandaloneRoleCounts[fillereval.TemporalRolePSA] != 2 || receipt.StandaloneRoleCounts[fillereval.TemporalRoleTrailer] != 3 || receipt.BlindHumanAuditRequired == nil || *receipt.BlindHumanAuditRequired || receipt.TrainingAllowed == nil || *receipt.TrainingAllowed || receipt.ProductionAdmissionAllowed == nil || *receipt.ProductionAdmissionAllowed {
 		t.Fatalf("authoring counts=%v sources=%d receipt=%+v", unitCounts, len(authoring.Sources), receipt)
 	}
 	bands := map[string]int{}
