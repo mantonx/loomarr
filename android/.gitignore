@@ -1,7 +1,0 @@
-# Gradle / Android build outputs — regenerated, never committed.
-.gradle/
-build/
-local.properties
-*.apk
-*.aab
-.kotlin/

@@ -1,6 +1,7 @@
 import type { MeBody, TitleDTO } from "@loomarr/api";
 import {
   getChannelGuideMockHandler,
+  getDeleteChannelMockHandler,
   getEnqueueTitleMockHandler,
   getListChannelsMockHandler,
   getListTitlesMockHandler,
@@ -215,6 +216,27 @@ describe("Guide", () => {
     // frame keep the surface current on their own.
     expect(screen.queryByRole("button", { name: /rebuild/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /refresh/i })).not.toBeInTheDocument();
+  });
+
+  it("removes a deleted channel from the current Guide without a page refresh", async () => {
+    const user = userEvent.setup();
+    let deleted = false;
+    stubGuide();
+    server.use(
+      getChannelGuideMockHandler(() => (deleted ? { ...GUIDE, channels: [] } : GUIDE)),
+      getDeleteChannelMockHandler(() => {
+        deleted = true;
+        return undefined as never;
+      }),
+    );
+    renderAt("/guide");
+
+    await user.click(await screen.findByRole("button", { name: /actions for saturday cartoons/i }));
+    await user.click(await screen.findByRole("menuitem", { name: /delete/i }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(await screen.findByText("Dead air")).toBeInTheDocument();
+    expect(screen.queryByText("Saturday Cartoons")).not.toBeInTheDocument();
   });
 
   it("owns origination: 'Add a channel' opens the describe panel in place", async () => {

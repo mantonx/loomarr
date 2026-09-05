@@ -20,4 +20,14 @@ describe("Loomarr QR code", () => {
     expect(markup).toContain("#FFB020");
     expect(markup).toContain("#8B93A3");
   });
+
+  it("can omit the centre mark when a product surface explicitly requests it", () => {
+    const markup = renderToStaticMarkup(
+      <LoomarrProvider>
+        <QrCode showBrandMark={false} value="https://loomarr.media/pair?code=LOOM-ARRR" />
+      </LoomarrProvider>,
+    );
+
+    expect(markup).not.toContain('aria-hidden="true"');
+  });
 });

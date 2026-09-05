@@ -1,12 +1,7 @@
 import { surfGroups } from "@loomarr/fixtures";
 import { describe, expect, it } from "vitest";
 
-import {
-  activateTvSurfSelection,
-  moveTvSurfSelection,
-  previousSurfChannel,
-  restoreTvSurfSelection,
-} from "../index";
+import { activateTvSurfSelection, moveTvSurfSelection, restoreTvSurfSelection } from "../index";
 
 describe("TV Surf navigation", () => {
   it("traverses populated groups in order without landing on an empty group", () => {
@@ -36,12 +31,5 @@ describe("TV Surf navigation", () => {
       channelId: "ch-springfield",
       group: "recent",
     });
-  });
-
-  it("offers previous-channel intent only while that distinct channel remains playable", () => {
-    const playable = ["ch-springfield", "ch-scifi"];
-    expect(previousSurfChannel("ch-springfield", "ch-scifi", playable)).toBe("ch-scifi");
-    expect(previousSurfChannel("ch-springfield", "ch-springfield", playable)).toBeUndefined();
-    expect(previousSurfChannel("ch-springfield", "removed", playable)).toBeUndefined();
   });
 });

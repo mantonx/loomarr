@@ -75,6 +75,9 @@ type MediaServer struct {
 	// used only when an adapter contract must preserve duplicate object members or
 	// malformed editorial values that a typed EpisodeStub cannot represent.
 	EpisodeJSON []json.RawMessage
+	// InventoryItems maps an item id to an exact rich Emby/Jellyfin item object. It drives the
+	// provider-neutral Media Inventory importer without adding a private service double.
+	InventoryItems map[string]json.RawMessage
 }
 
 // MediaServerRequest is one captured call to the shared media-server double. Tests that
@@ -291,6 +294,15 @@ func NewMediaServer(t testing.TB) *MediaServer {
 				}
 			}
 			_, _ = w.Write(Fixture(t, "emby/filler_library.json"))
+			return
+		}
+		if ids := r.URL.Query().Get("Ids"); ids != "" &&
+			strings.Contains(r.URL.Query().Get("Fields"), "MediaSources") {
+			if raw, ok := ms.InventoryItems[ids]; ok {
+				_, _ = fmt.Fprintf(w, `{"Items":[%s],"TotalRecordCount":1}`, raw)
+			} else {
+				_, _ = w.Write([]byte(`{"Items":[],"TotalRecordCount":0}`))
+			}
 			return
 		}
 		// Single-item runtime lookup (§9 ItemDurationMs): GET /Items?Ids=<id>&

@@ -20,6 +20,24 @@ const memoryStore = (credential?: PairingCredential) => ({
 });
 
 describe("pairing contract", () => {
+  it("returns a failed attempt to clean server selection without retaining a code", async () => {
+    const session = new PairingSession({
+      createTransport: () => ({
+        poll: vi.fn(),
+        start: vi.fn(async () => {
+          throw new Error("unreachable");
+        }),
+      }),
+      deviceName: "Living room",
+      store: memoryStore(),
+    });
+    await session.pair("http://loomarr.local:8080");
+    expect(session.snapshot()).toMatchObject({ status: "failed" });
+
+    session.chooseServer();
+
+    expect(session.snapshot()).toEqual({ status: "needs-server" });
+  });
   it("accepts only origin-like http addresses", () => {
     expect(normalizeServerUrl(" https://loomarr.media/// ")).toBe("https://loomarr.media");
     expect(normalizeServerUrl("https://user:secret@loomarr.media")).toBeUndefined();
@@ -216,6 +234,64 @@ describe("pairing contract", () => {
       serverUrl: "https://loomarr.media",
       status: "paired",
       token: "secret",
+    });
+  });
+  it("pairs a clean install again after an authoritative 401 revokes its credential", async () => {
+    const store = memoryStore();
+    let pairingAttempt = 0;
+    const transport: PairingTransport = {
+      poll: vi.fn(
+        async (): Promise<PairingPoll> => ({
+          body: { deviceName: "Living room", token: `token-${pairingAttempt}` },
+          status: "paired",
+        }),
+      ),
+      start: vi.fn(async () => {
+        pairingAttempt += 1;
+        return {
+          body: {
+            deviceCode: `device-${pairingAttempt}`,
+            expiresAt: "2026-08-24T12:10:00Z",
+            interval: 1,
+            userCode: `CODE-${pairingAttempt}`,
+          },
+          serverDate: "Sun, 24 Aug 2026 12:00:00 GMT",
+        };
+      }),
+    };
+    const session = new PairingSession({
+      createTransport: () => transport,
+      deviceName: "Loomarr TV",
+      sleep: async () => {},
+      store,
+    });
+
+    await session.initialize("https://loomarr.media");
+    const firstCredential = session.snapshot();
+    expect(firstCredential).toEqual({
+      deviceName: "Living room",
+      serverUrl: "https://loomarr.media",
+      status: "paired",
+      token: "token-1",
+    });
+    if (firstCredential.status !== "paired") throw new Error("expected the first fresh pairing");
+
+    await createAuthenticatedFetch(
+      firstCredential,
+      () => session.revoked(),
+      vi.fn(async () => new Response(null, { status: 401 })),
+    )("/v1/guide");
+    expect(store.clear).toHaveBeenCalledOnce();
+    expect(session.snapshot()).toEqual({ serverUrl: "https://loomarr.media", status: "revoked" });
+
+    await session.pair("https://loomarr.media");
+    expect(transport.start).toHaveBeenCalledTimes(2);
+    expect(store.write).toHaveBeenCalledTimes(2);
+    expect(session.snapshot()).toEqual({
+      deviceName: "Living room",
+      serverUrl: "https://loomarr.media",
+      status: "paired",
+      token: "token-2",
     });
   });
   it("mints a fresh code after expiry and clears a revoked credential", async () => {

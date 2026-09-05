@@ -113,6 +113,22 @@ func engineOf(e Encoder) Encoder {
 // hevc-plan transcode (§9.1 V49) — a thin wrapper over hevcVariant so the mapping stays single-sourced.
 func HEVCEncoderFor(h264 Encoder) Encoder { return hevcVariant(h264) }
 
+// SoftwareEncoderFor returns the software encoder that preserves the requested encoder's output
+// codec. A live session pins one codec for its lifetime, so an HEVC hardware failure must fall back
+// to libx265 rather than silently switching the stream to H.264/libx264.
+func SoftwareEncoderFor(enc Encoder) Encoder {
+	if engineOf(enc) != enc {
+		return EncoderSoftwareHEVC
+	}
+	return EncoderSoftware
+}
+
+// IsSoftwareEncoder reports whether enc is either supported software codec. Treating libx265 as a
+// hardware encoder would incorrectly acquire a GPU slot and attempt VRAM reclamation.
+func IsSoftwareEncoder(enc Encoder) bool {
+	return enc == EncoderSoftware || enc == EncoderSoftwareHEVC
+}
+
 func hevcVariant(h264 Encoder) Encoder {
 	switch h264 {
 	case EncoderSoftware:

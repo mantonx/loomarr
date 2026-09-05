@@ -205,6 +205,8 @@ from the same impact policy as CI. Use `make verify SCOPE=all` only for a compre
 | `make fe` | ✅ | biome + codegen + typecheck + unit tests + embedded SPA + storybook gallery |
 | `make clients` | ✅ | lint, test, typecheck, and bundle the shared browser, mobile, and TV scaffold <br>*runs:* `brand-assets-verify` |
 | `make client-android-debug` |  | memory-bounded arm64 debug build (CLIENT_APP=mobile|tv) <br>*runs:* `fe-api-codegen` |
+| `make shield-sideload` |  | build and inspect a signed permanent-identity Shield APK (SHIELD_VERSION=x.y.z) <br>*runs:* `fe-api-codegen` |
+| `make shield-sideload-test` |  | build with an ephemeral key, then clean-install and launch on the TV emulator <br>*runs:* `fe-api-codegen` |
 | `make client-apple-simulator` | ✅ | build and launch an Apple simulator proof (CLIENT_APP=mobile|tv; macOS) <br>*runs:* `fe-api-codegen` |
 | `make storybook` |  | Storybook dev workshop on this worktree's isolated port |
 | `make storybook-build` |  | offline storybook-static build (what fe-visual snapshots) |
@@ -225,22 +227,16 @@ from the same impact policy as CI. Use `make verify SCOPE=all` only for a compre
 | `make smoke-livetv` |  | Live TV wiring vs a DISPOSABLE Jellyfin (destroyed after — never touches your media server) |
 | `make smoke-down` |  | tear down the smoke stack (container, volume, temp database) |
 
-## Android TV client
+## Android TV React Native release
 
 | Target | CI | What it does |
 | --- | --- | --- |
-| `make android-tokens` |  | regenerate the Android design tokens from the shared tokens.json |
-| `make android-tokens-verify` |  | regenerated tokens must match committed (CI red on drift) <br>*runs:* `android-tokens` |
-| `make android-load` |  | report heavy local processes before starting a build |
-| `make android` | ✅ | Android TV client — tokens + ktlint + Android Lint + unit tests + screenshots + debug APK <br>*runs:* `android-tokens-verify` |
-| `make android-release-test` | ✅ | build an ephemeral signed AAB and verify release identity, ABIs, and 16 KiB alignment |
-| `make android-fmt` |  | Android TV client — apply ktlint formatting |
-| `make android-screenshots` |  | Android TV client — re-record screenshot baselines (review the diff!) |
-| `make android-stop` |  | stop the Gradle/Kotlin daemons this module started |
+| `make android` | ✅ | React Native Android TV — verified unsigned four-ABI Play artifact <br>*runs:* `android-release-test` |
+| `make android-release-test` |  | compile once, strip the ephemeral CI signature, and retain promotion evidence |
 
 ## What CI runs
 
-`agent-harness-test` · `android-release-test` · `android` · `arch-docs-verify` · `ci-lint` · `client-apple-simulator` · `clients` · `config-docs-verify` · `dev-docs-verify` · `e2e` · `fe-codegen` · `fe-install` · `fe-tokens-verify` · `fe-visual` · `fe` · `fmt` · `go-shard-verify` · `image-bench` · `image-cert` · `image-parallelism-bench` · `observability-verify` · `openapi-verify` · `retired-verify` · `rust-check` · `test-pg` · `test` · `tuner-e2e-host`
+`agent-harness-test` · `android` · `arch-docs-verify` · `ci-lint` · `client-apple-simulator` · `clients` · `config-docs-verify` · `dev-docs-verify` · `e2e` · `fe-codegen` · `fe-install` · `fe-tokens-verify` · `fe-visual` · `fe` · `fmt` · `go-shard-verify` · `image-bench` · `image-cert` · `image-parallelism-bench` · `observability-verify` · `openapi-verify` · `retired-verify` · `rust-check` · `test-pg` · `test` · `tuner-e2e-host`
 
 These are the targets a workflow step invokes DIRECTLY. Their prerequisites run too —
 for example, `check-static` expands to formatting, vet, lint, and repository

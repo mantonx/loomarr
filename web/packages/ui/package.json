@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@loomarr/core": "workspace:*",
-    "@loomarr/design-system": "workspace:*"
+    "@loomarr/design-system": "workspace:*",
+    "@loomarr/player": "workspace:*"
   },
   "peerDependencies": {
     "react": ">=19 <20",

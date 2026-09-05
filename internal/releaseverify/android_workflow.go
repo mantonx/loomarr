@@ -10,18 +10,17 @@ import (
 )
 
 var androidReleaseRuns = []string{
-	"./scripts/validate-android-release-source.sh",
-	`set -euo pipefail
-code=$(./scripts/android-version-code.sh "$REQUESTED_VERSION_NAME")
-echo "LOOMARR_ANDROID_VERSION_NAME=$REQUESTED_VERSION_NAME" >> "$GITHUB_ENV"
-echo "LOOMARR_ANDROID_VERSION_CODE=$code" >> "$GITHUB_ENV"`,
+	`./scripts/download-android-ci-artifact.sh "${{ inputs.ci_run_id }}" .artifacts/android-ci`,
 	`set -euo pipefail
 umask 077
 test -n "$ANDROID_UPLOAD_KEYSTORE_BASE64"
 keystore="$RUNNER_TEMP/loomarr-upload.p12"
 printf '%s' "$ANDROID_UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$keystore"
 echo "LOOMARR_ANDROID_KEYSTORE_PATH=$keystore" >> "$GITHUB_ENV"`,
-	"./scripts/build-android-beta.sh",
+	`set -euo pipefail
+unsigned=$(find .artifacts/android-ci -maxdepth 1 -type f -name '*-unsigned.aab' -print -quit)
+manifest=${unsigned%.aab}.json
+./scripts/sign-android-ci-artifact.sh "$unsigned" "$manifest" "$ANDROID_RELEASE_OUTPUT_DIR"`,
 	`set -euo pipefail
 umask 077
 service_account="$RUNNER_TEMP/google-play-service-account.json"
@@ -31,7 +30,7 @@ aab=$(find "$ANDROID_RELEASE_OUTPUT_DIR" -maxdepth 1 -type f -name '*.aab' -prin
 manifest=${aab%.aab}.json
 GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_PATH="$service_account" \
   ./scripts/publish-android-beta.sh "$aab" "$manifest"`,
-	`rm -f -- "$LOOMARR_ANDROID_KEYSTORE_PATH" "$RUNNER_TEMP/google-play-service-account.json"`,
+	`rm -f -- "${LOOMARR_ANDROID_KEYSTORE_PATH:-}" "$RUNNER_TEMP/google-play-service-account.json"`,
 }
 
 // VerifyAndroidReleaseWorkflow keeps upload signing and Play publication behind one manual,
@@ -76,8 +75,11 @@ func VerifyAndroidReleaseWorkflow(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := verifyOnlyKeys(job, "Android release job", "name", "runs-on", "environment", "env", "steps"); err != nil {
+	if err := verifyOnlyKeys(job, "Android release job", "name", "if", "runs-on", "environment", "env", "steps"); err != nil {
 		return err
+	}
+	if scalarValue(job, "if") != "github.ref == 'refs/heads/main'" {
+		return errors.New("android release job must run only from refs/heads/main")
 	}
 	if scalarValue(job, "runs-on") != "ubuntu-latest" || scalarValue(job, "environment") != "android-beta" {
 		return errors.New("android release job must run on ubuntu-latest in the android-beta environment")
@@ -107,10 +109,10 @@ func verifyAndroidTrigger(root *yaml.Node) error {
 	if err != nil {
 		return err
 	}
-	if len(inputs.Content) != 6 {
-		return errors.New("android release workflow must expose exactly version_name, publish_to_play, and track")
+	if len(inputs.Content) != 4 {
+		return errors.New("android release workflow must expose exactly ci_run_id and publish_to_play")
 	}
-	for _, name := range []string{"version_name", "publish_to_play", "track"} {
+	for _, name := range []string{"ci_run_id", "publish_to_play"} {
 		if _, err := requiredMap(inputs, name); err != nil {
 			return err
 		}
@@ -118,17 +120,6 @@ func verifyAndroidTrigger(root *yaml.Node) error {
 	publish, _ := requiredMap(inputs, "publish_to_play")
 	if scalarValue(publish, "type") != "boolean" || scalarValue(publish, "default") != "false" || scalarValue(publish, "required") != "true" {
 		return errors.New("play publication must be an explicit, default-false boolean input")
-	}
-	track, _ := requiredMap(inputs, "track")
-	if scalarValue(track, "type") != "choice" || scalarValue(track, "default") != "internal" {
-		return errors.New("android release track must be an internal-default choice")
-	}
-	options, err := requiredSequence(track, "options")
-	if err != nil {
-		return err
-	}
-	if len(options.Content) != 2 || options.Content[0].Value != "internal" || options.Content[1].Value != "closed-beta" {
-		return errors.New("android release workflow may target only internal and closed-beta")
 	}
 	return nil
 }
@@ -189,24 +180,22 @@ func verifyAndroidSteps(job *yaml.Node) error {
 	if err != nil {
 		return err
 	}
-	if len(steps.Content) != 11 {
-		return fmt.Errorf("android release job must contain exactly 11 audited steps, found %d", len(steps.Content))
+	if len(steps.Content) != 9 {
+		return fmt.Errorf("android release job must contain exactly 9 audited steps, found %d", len(steps.Content))
 	}
 
 	actions := map[int]string{
 		0: "actions/checkout",
-		2: "actions/setup-java",
-		3: "android-actions/setup-android",
-		4: "actions/cache",
-		8: "actions/upload-artifact",
+		1: "actions/setup-java",
+		2: "android-actions/setup-android",
+		6: "actions/upload-artifact",
 	}
 	runs := map[int]string{
-		1:  androidReleaseRuns[0],
-		5:  androidReleaseRuns[1],
-		6:  androidReleaseRuns[2],
-		7:  androidReleaseRuns[3],
-		9:  androidReleaseRuns[4],
-		10: androidReleaseRuns[5],
+		3: androidReleaseRuns[0],
+		4: androidReleaseRuns[1],
+		5: androidReleaseRuns[2],
+		7: androidReleaseRuns[3],
+		8: androidReleaseRuns[4],
 	}
 	for index, step := range steps.Content {
 		if step.Kind != yaml.MappingNode {
@@ -224,29 +213,29 @@ func verifyAndroidSteps(job *yaml.Node) error {
 			}
 		}
 	}
-	if scalarValue(steps.Content[9], "if") != "inputs.publish_to_play" {
+	if scalarValue(steps.Content[7], "if") != "inputs.publish_to_play" {
 		return errors.New("play publication step must require the explicit publish_to_play input")
 	}
-	if scalarValue(steps.Content[10], "if") != "always()" {
+	if scalarValue(steps.Content[8], "if") != "always()" {
 		return errors.New("android credential cleanup must run always")
 	}
 	return verifyAndroidStepDetails(steps)
 }
 
 func verifyAndroidStepDetails(steps *yaml.Node) error {
-	validationEnv, err := requiredMap(steps.Content[1], "env")
+	validationEnv, err := requiredMap(steps.Content[3], "env")
 	if err != nil || scalarValue(validationEnv, "GH_TOKEN") != "${{ github.token }}" {
 		return errors.New("android source validation must receive only the workflow token")
 	}
-	publishEnv, err := requiredMap(steps.Content[9], "env")
+	publishEnv, err := requiredMap(steps.Content[7], "env")
 	if err != nil {
 		return err
 	}
-	if len(publishEnv.Content) != 4 || scalarValue(publishEnv, "ANDROID_RELEASE_TRACK") != "${{ inputs.track }}" ||
+	if len(publishEnv.Content) != 4 || scalarValue(publishEnv, "ANDROID_RELEASE_TRACK") != "internal" ||
 		scalarValue(publishEnv, "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64") != "${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64 }}" {
 		return errors.New("play publisher must receive only the selected track and protected service account")
 	}
-	uploadWith, err := requiredMap(steps.Content[8], "with")
+	uploadWith, err := requiredMap(steps.Content[6], "with")
 	if err != nil {
 		return err
 	}

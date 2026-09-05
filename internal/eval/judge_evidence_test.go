@@ -35,7 +35,8 @@ func TestRunnerSendsGroundedPolicyAndStructuralEvidenceToJudge(t *testing.T) {
 		}},
 	}
 	observation := Observation{
-		ToolCalls: 3, TitleCalls: 1, GenreCalls: 1, KeywordCalls: 1,
+		ToolCalls: 7, TitleCalls: 1, GenreCalls: 1, KeywordCalls: 1,
+		NetworkCalls: 1, CastCalls: 1, CreatorCalls: 1, PeopleCalls: 1,
 		CandidatesSurfaced: 17, GroundingStage: "grounded",
 	}
 	judge := newSemanticRecordingJudge(func(observed JudgeEvidence) error {
@@ -64,6 +65,10 @@ func TestRunnerSendsGroundedPolicyAndStructuralEvidenceToJudge(t *testing.T) {
 			observed.Observation.TitleCalls != observation.TitleCalls ||
 			observed.Observation.GenreCalls != observation.GenreCalls ||
 			observed.Observation.KeywordCalls != observation.KeywordCalls ||
+			observed.Observation.NetworkCalls != observation.NetworkCalls ||
+			observed.Observation.CastCalls != observation.CastCalls ||
+			observed.Observation.CreatorCalls != observation.CreatorCalls ||
+			observed.Observation.PeopleCalls != observation.PeopleCalls ||
 			observed.Observation.CandidatesSurfaced != observation.CandidatesSurfaced ||
 			observed.Observation.GroundingStage != observation.GroundingStage {
 			return fmt.Errorf("structural observation changed: %+v", observed.Observation)

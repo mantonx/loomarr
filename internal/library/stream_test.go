@@ -1,6 +1,7 @@
 package library_test
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 
@@ -52,6 +53,20 @@ func TestStreamURL_EscapesTheItemID(t *testing.T) {
 	got := c.StreamURL("weird id/../etc")
 	if strings.Contains(got, "/../") {
 		t.Errorf("item id not escaped — path traversal reaches the media server: %q", got)
+	}
+}
+
+func TestStreamURLForSourceSelectsTheImportedOriginal(t *testing.T) {
+	t.Parallel()
+	c := library.New(library.Emby, "http://emby:8096", "token", "dev-1")
+	got := c.StreamURLForSource("item 1", "source/4k")
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.EscapedPath() != "/Videos/item%201/stream" || parsed.Query().Get("MediaSourceId") != "source/4k" ||
+		parsed.Query().Get("static") != "true" || parsed.Query().Get("api_key") != "token" {
+		t.Fatalf("source stream URL = %q", got)
 	}
 }
 

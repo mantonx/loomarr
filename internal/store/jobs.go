@@ -348,12 +348,13 @@ func listProposalJobAttempts(
 	return attempts, rows.Err()
 }
 
-// FindJobByIntentHash returns a recent job with a matching intent hash (§8 cache).
-// `since` bounds the TTL: only jobs created at/after `since` count. Returns the
-// most recent match, or ErrNotFound.
+// FindJobByIntentHash returns the most recent successful job with a matching
+// intent hash (§8 cache). `since` bounds the TTL: only jobs created at/after
+// `since` count. Queued, running, and failed attempts cannot shadow reusable
+// content from a completed job. Returns ErrNotFound when no success qualifies.
 func (s *sqlStore) FindJobByIntentHash(ctx context.Context, hash string, since time.Time) (Job, error) {
 	row := s.db.QueryRowContext(ctx, s.ph(jobSelect+
-		` WHERE intent_hash = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 1`),
+		` WHERE intent_hash = ? AND status = 'done' AND created_at >= ? ORDER BY created_at DESC LIMIT 1`),
 		hash, epoch(since))
 	return scanJob(row)
 }

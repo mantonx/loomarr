@@ -187,7 +187,7 @@ func TestCurrentHealthRefreshesContinuousChecksWithoutRewritingStartup(t *testin
 func TestCurrentHealthExpiresContinuousObservation(t *testing.T) {
 	now := time.Unix(100, 0)
 	report := NewStartup(now, 1, "v1", []StartupCheck{
-		{Key: "database", Required: true, Mode: HealthCheckContinuous, FreshFor: time.Minute},
+		{Key: "database", Label: "Database", Required: true, Mode: HealthCheckContinuous, FreshFor: time.Minute},
 		{Key: "media", Required: false, Mode: HealthCheckContinuous, FreshFor: 2 * time.Minute},
 	}, func() time.Time { return now })
 	report.Complete("database", StartupPassed, "available", "", "")
@@ -201,8 +201,8 @@ func TestCurrentHealthExpiresContinuousObservation(t *testing.T) {
 	if health.Checks[1].Status != HealthSkipped {
 		t.Fatalf("unconfigured optional check became stale: %+v", health.Checks[1])
 	}
-	if ready, _ := report.Ready(); ready {
-		t.Fatal("stale required observation remained ready")
+	if ready, detail := report.Ready(); ready || detail != "Database health observation is stale" {
+		t.Fatalf("stale required readiness = (%v, %q)", ready, detail)
 	}
 }
 

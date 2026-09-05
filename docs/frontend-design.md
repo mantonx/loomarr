@@ -1,37 +1,44 @@
 # Loomarr Client Platform — Architecture & Design System
 
-**Status:** Implemented legacy + approved refinement contract · companion to [`design.md`](design.md)
+**Status:** P3.5 shared system complete; Shield and Web parity migration active under #970 · companion to [`design.md`](design.md)
 **Precedence:** the main design doc is authoritative for *behavior* (endpoints, flows, auth, phases). This doc is authoritative for *how the frontend looks and is built*. Conflicts → main doc wins on what, this doc wins on how; fix the loser in the same PR.
 **Language policy (main doc §14) applies:** the web implementation compiles to static assets embedded in the Go binary; Expo and React Native are the approved client build/runtime exception and do not add an application backend.
 
 ## 0. Refinement authority and migration state
 
-The maintainer has authorized a Phase-0 refinement and cross-platform consolidation of the current
+The maintainer has authorized cross-platform consolidation of the current
 design system based on **Tamagui Core**, Expo, and `react-native-tvos`. Loomarr's existing Test Card
 identity is the visual foundation: its chroma bar, calibrated broadcast palette, Geist typography,
-and broadcast-console character are preserved and refined rather than replaced. The complete target interfaces,
-acceptance evidence, adoption gate, delivery sequence, and rollback contract live in
+and broadcast-console character are preserved. The complete target interfaces, acceptance evidence,
+delivery sequence, and retirement contract live in
 [`engineering/plans/shared-client-platform.md`](engineering/plans/shared-client-platform.md).
 
 The sections below describe the **shipping legacy implementation** until each surface migrates. They
-remain binding for code that still uses Tailwind/shadcn or Compose and are migration evidence for the
-refined target language. New shared design work follows the
+remain binding for code that still uses Tailwind/shadcn or Compose and are parity evidence. New shared design work follows the
 migration plan and these precedence rules:
 
 1. Loomarr owns the semantic interfaces; application code does not depend directly on Tamagui.
-2. A migration is a translation and refinement of Loomarr's shipping design, not permission to
-   invent an unrelated presentation. Before implementation, every migrated surface records a
-   parity inventory against the shipping client and the supplied approved mocks. Existing content,
-   actions, states, and recovery paths remain present unless the maintainer explicitly approves an
-   omission or replacement during visual review.
+2. A migration is an implementation translation, not a refinement. Shield preserves the accepted
+   Kotlin/Compose presentation through its React Native replacement; Web preserves the current Web
+   presentation. Before implementation,
+   every migrated surface records a parity inventory against that client's shipping references.
+   Existing content, actions, states, and recovery paths remain present unless the maintainer
+   explicitly approves an exception.
 3. Product rules, deterministic states, artwork treatment, and appropriate visual primitives are
    shared; navigation, focus, safe-area/overscan, DOM semantics, and player transport sit behind
    platform seams.
-4. Existing behavior, accessibility, authorization, pairing, playout, release, and rollback
-   guarantees survive every migration PR.
-5. The Guide-to-Playback slice must pass browser, iPhone, emulator, and physical Shield evidence
-   before a full migration or legacy retirement is authorized.
-6. Until that adoption decision, the current web and Compose applications remain releasable.
+4. Existing behavior, accessibility, authorization, pairing, and playout guarantees survive every
+   migration PR. Shield supports the accepted signed sideload plus a Google Play Internal test from
+   the same React Native source. A clean reinstall and fresh pairing remain acceptable between the
+   ephemeral-key sideload and the separately signed Play installation; cross-channel update
+   continuity is not promised.
+   A clean Play install discovers local Loomarr servers and makes selection remote-friendly; manual
+   URL entry is a troubleshooting fallback, never the normal onboarding path or a build instruction.
+5. P3.5 shared-interface publication is complete. The 2026-09-03 maintainer decision authorizes the
+   full Shield and Web parity migrations; other production native clients remain later work.
+6. The accepted React Native Shield surface is releasable and the Compose implementation is
+   retired. The current Web surface remains releasable until its parity gates pass, then its legacy
+   implementation is retired rather than maintained indefinitely.
 
 Brand identity and product iconography follow the consolidation contract as well. The canonical
 Loomarr chroma bar, wordmark, lockups, favicon, launcher icons, TV banner, and store artwork are generated
@@ -146,7 +153,7 @@ For legacy consumers, `web/packages/tokens` holds the TS source of truth and gen
 artifacts in CI:
 1. `theme.css` — Tailwind v4 `@theme` variables for the web app,
 2. a **Tailwind preset** — consumed by the legacy web implementation during migration,
-3. `tokens.json` — consumed by the legacy Compose adapter and migration tooling.
+3. `tokens.json` — consumed by legacy Web migration tooling.
 
 CI fails if generated artifacts drift from source (`make fe-tokens` regenerates; diff must be empty). This is the same committed-artifact discipline as `api/openapi.yaml`.
 
@@ -205,7 +212,7 @@ web/
   apps/tv/                 # Expo + react-native-tvos; Android TV and Apple TV clients
 ```
 
-The directory remains named `web/` through the adoption gate to avoid coupling a workspace move to
+The directory remains named `web/` through parity migration to avoid coupling a workspace move to
 the UI proof. A later rename is allowed only as an isolated mechanical change. Packages follow
 [`web/packages/README.md`](../web/packages/README.md): root files are the interface, nested source is
 private implementation, tests use the interface, and the graph is acyclic.
@@ -408,7 +415,9 @@ These suites join **phase 13's gate** in the main doc's build plan.
 
 - **Shared-client migration P0-P8:** the authoritative sequence and adoption evidence are in
   [`engineering/plans/shared-client-platform.md`](engineering/plans/shared-client-platform.md).
-  No full migration or legacy retirement begins before its P5 adoption gate.
+  The 2026-09-03 maintainer decision authorizes Shield and Web parity migration under #970. Web
+  route cohorts may run while physical Shield acceptance is pending once shared interfaces are
+  stable; visual refinements and the other native clients remain later work.
 
 - **Phase 1** (main doc; also add the `web/packages` layout to its repo-layout block): `web/` workspace skeleton + `packages/tokens` with generators + self-hosted fonts + the `fe-tokens` make target.
 - **Phase 13**: everything else here. **Gate additions:** story coverage = 100% of **Layer-1 primitives AND Layer-2 components** (each has a co-located `*.stories.tsx`); visual baselines committed for all stories at both viewports; axe clean (`addon-a11y` `test: 'error'`); `fe-visual` green in the Playwright Docker image.

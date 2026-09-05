@@ -30,7 +30,7 @@ func TestRunEmitsContentSafeJSONReport(t *testing.T) {
 			}
 			return suggest.ToolFinalizationDiagnostic{SchemaVersion: 1, PromptVersion: suggest.PlannerPromptVersion}, nil
 		})
-	if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), `"promptVersion": "suggester-prompt-v3"`) {
+	if code != 0 || stderr.Len() != 0 || !strings.Contains(stdout.String(), `"promptVersion": "suggester-prompt-v4"`) {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/loomarr/loomarr/internal/catalog"
 	"github.com/loomarr/loomarr/internal/llm"
 	"github.com/loomarr/loomarr/internal/provision"
+	"github.com/loomarr/loomarr/internal/reference"
 )
 
 // catalogToolName is the single tool the model may call. The grounding guarantee
@@ -18,6 +19,13 @@ const catalogToolName = "catalog_search"
 // maxToolRounds bounds the tool-call loop so a misbehaving model can't spin
 // forever (defense-in-depth; JOB_TIMEOUT is the outer bound).
 const maxToolRounds = 6
+
+// maxEmptyRetrievals gives the model exactly the initial search plus the
+// alternate mode required by the prompt contract. A model that keeps searching
+// after both return no candidates cannot become grounded in that run; letting it
+// consume the remaining structural budget turns an honest empty retrieval into
+// a misleading budget failure.
+const maxEmptyRetrievals = 2
 
 // catalogSearchLimit is how many candidates the catalog tool returns per call.
 // Higher than the old hardcoded 12 so an abstract/themed intent surfaces enough
@@ -81,12 +89,13 @@ type FeedbackSource interface {
 // provider-neutral LLM, the catalog (grounding tool + search), and the validator
 // (TMDB exists-check).
 type Suggester struct {
-	llm       llm.Provider
-	catalog   *catalog.Catalog
-	validator Validator
-	ratings   RatingSource // optional acquisition-rating enrichment (§389)
-	feedback  FeedbackSource
-	maxAcq    int // default SUGGEST_MAX_ACQUISITIONS cap
+	llm        llm.Provider
+	catalog    *catalog.Catalog
+	validator  Validator
+	ratings    RatingSource // optional acquisition-rating enrichment (§389)
+	feedback   FeedbackSource
+	references reference.Resolver
+	maxAcq     int // default SUGGEST_MAX_ACQUISITIONS cap
 }
 
 func (s *Suggester) WithFeedback(source FeedbackSource) *Suggester {
@@ -98,6 +107,13 @@ func (s *Suggester) WithFeedback(source FeedbackSource) *Suggester {
 // suggester for chaining; keeps New's signature stable.
 func (s *Suggester) WithRatings(r RatingSource) *Suggester {
 	s.ratings = r
+	return s
+}
+
+// WithReferences enables bounded source resolution for pasted public pages. A
+// nil resolver makes a URL-backed Intent fail closed before model inference.
+func (s *Suggester) WithReferences(resolver reference.Resolver) *Suggester {
+	s.references = resolver
 	return s
 }
 
@@ -155,11 +171,26 @@ func (s *Suggester) Suggest(ctx context.Context, intent Intent) (Proposal, error
 		}
 		intent.Adjacent = filterAdjacentFeedback(intent.Adjacent, feedback)
 	}
+	referenceSeed, hasReference, referenceErr := s.groundReference(ctx, &intent)
+	if referenceErr != nil {
+		trace := DecisionTrace{Version: DecisionTraceVersion, Terminal: TerminalRetrievalFailure}
+		cause := fmt.Errorf("%w: %v", ErrNoGroundedTitles, referenceErr)
+		return Proposal{}, NewFailure(FailureCodeNoGroundedTitles, trace, cause)
+	}
+	if hasReference && len(referenceSeed.candidates) == 0 {
+		trace := DecisionTrace{Version: DecisionTraceVersion, Terminal: ReasonRetrievalEmpty}
+		cause := fmt.Errorf("%w: reference titles were not found in the configured catalog", ErrNoGroundedTitles)
+		return Proposal{}, NewFailure(FailureCodeNoGroundedTitles, trace, cause)
+	}
 	messages := []llm.Message{
 		{Role: llm.System, Content: systemPrompt},
 		{Role: llm.User, Content: userPrompt(intent)},
 	}
 	tools := []llm.ToolSchema{catalogTool()}
+	if hasReference {
+		messages = append(messages, referenceSeed.messages...)
+		tools = nil
+	}
 
 	// Track every candidate the tool surfaced this run, keyed by provisioning key.
 	// A pick is grounded IFF it matches one of these — the model cannot smuggle in
@@ -167,7 +198,13 @@ func (s *Suggester) Suggest(ctx context.Context, intent Intent) (Proposal, error
 	// re-asks, so grounding holds even when the final JSON is retried.
 	surfaced := map[provision.Key]catalog.Candidate{}
 	trace := DecisionTrace{Version: DecisionTraceVersion}
+	mergeDecisionTrace(&trace, &referenceSeed.trace)
 	temp := groundedTemp
+	for _, candidate := range referenceSeed.candidates {
+		if key, err := candidate.Key(); err == nil {
+			surfaced[key] = candidate
+		}
+	}
 
 	// PRE-SEED the adjacency corpus (§8.3) before generation. These are real catalog
 	// candidates with real ids — the same shape a tool call produces — so seeding them here
@@ -223,14 +260,26 @@ func (s *Suggester) Suggest(ctx context.Context, intent Intent) (Proposal, error
 	// re-asks. JOB_TIMEOUT + httpx.TimeoutLLM are the hard ceilings.
 	repairs := 0
 	groundingRetried := false
-	finalizationOnly := false
+	finalizationOnly := hasReference
+	emptyRetrievals := 0
 	for {
-		final, err := s.generate(ctx, &messages, tools, surfaced, &trace, temp, intent, feedback, &finalizationOnly)
+		final, err := s.generate(ctx, &messages, tools, surfaced, &trace, temp, intent, feedback, &finalizationOnly, &emptyRetrievals)
 		if err != nil {
 			return Proposal{}, err
 		}
 		out, perr := parsePicks(final)
 		if perr == nil {
+			if len(surfaced) == 0 && len(out.Picks) > 0 {
+				out.Picks, err = s.groundPickNames(ctx, intent, feedback, out.Picks, surfaced, &trace)
+				if err != nil {
+					trace.Terminal = TerminalRetrievalFailure
+					return Proposal{}, NewFailure(FailureProvider, trace, err)
+				}
+				if len(out.Picks) == 0 {
+					trace.Terminal = FailureSelectionEmpty
+					return Proposal{}, NewFailure(FailureCodeNoGroundedTitles, trace, ErrNoGroundedTitles)
+				}
+			}
 			reportProgress(ctx, PhaseScoring, 0)
 			prop, buildErr := s.buildProposal(ctx, intent, out, surfaced, &trace)
 			if errors.Is(buildErr, ErrNoGroundedTitles) && len(surfaced) == 0 && !groundingRetried {
@@ -266,7 +315,7 @@ func (s *Suggester) Suggest(ctx context.Context, intent Intent) (Proposal, error
 // turn, appending assistant/tool messages to *messages and recording surfaced
 // candidates for grounding. Returns the final content (possibly empty — the
 // caller's repair loop handles that).
-func (s *Suggester) generate(ctx context.Context, messages *[]llm.Message, tools []llm.ToolSchema, surfaced map[provision.Key]catalog.Candidate, trace *DecisionTrace, temp float64, intent Intent, feedback []FeedbackSignal, finalizationOnly *bool) (string, error) {
+func (s *Suggester) generate(ctx context.Context, messages *[]llm.Message, tools []llm.ToolSchema, surfaced map[provision.Key]catalog.Candidate, trace *DecisionTrace, temp float64, intent Intent, feedback []FeedbackSignal, finalizationOnly *bool, emptyRetrievals *int) (string, error) {
 	if *finalizationOnly {
 		tools = nil
 	}
@@ -315,10 +364,21 @@ func (s *Suggester) generate(ctx context.Context, messages *[]llm.Message, tools
 				if len(cands) > 0 {
 					*finalizationOnly = true
 					tools = nil
+				} else if rankedTrace.Terminal == ReasonRetrievalEmpty {
+					*emptyRetrievals++
+					if *emptyRetrievals >= maxEmptyRetrievals && len(surfaced) == 0 {
+						trace.Terminal = ReasonRetrievalEmpty
+						return "", NewFailure(FailureCodeNoGroundedTitles, *trace, ErrNoGroundedTitles)
+					}
 				}
 			}
 			continue
 		}
+		// Retain the assistant's final turn before the caller decides whether it
+		// needs a schema or grounding repair. Both repair prompts refer to the
+		// previous reply, and a model cannot correct unsupported ids (or malformed
+		// JSON) if that reply is absent from the conversation it receives next.
+		*messages = append(*messages, llm.Message{Role: llm.Assistant, Content: resp.Content})
 		return resp.Content, nil
 	}
 	// Ran out of tool rounds without a final turn: expose the bounded terminal fact.

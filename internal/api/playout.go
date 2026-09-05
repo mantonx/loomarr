@@ -22,6 +22,21 @@ const atCapacityDetail = "Loomarr is already using its measured transcode capaci
 	"Please wait for a channel to stop, or choose a lower quality tier. " +
 	"If a safety cap is below measured capacity, increase or clear it; Loomarr will never exceed what it measured."
 
+const (
+	// rawPlayoutPreferredStartupTimeout is the native/full plan's opportunity to prove transport.
+	// Cold-start measurements put healthy sessions well below this bound; waiting longer on a
+	// silent HEVC shape only delays the known-playable baseline recovery.
+	rawPlayoutPreferredStartupTimeout = 5 * time.Second
+	// rawPlayoutStartupTimeout bounds the baseline attempt. A false 200 with no MPEG-TS makes media
+	// servers wait on a channel that never started; a bounded 502 lets them retry or fail honestly.
+	rawPlayoutStartupTimeout = 15 * time.Second
+)
+
+var (
+	errPlayoutStartupEnded   = errors.New("playout presentation ended before transport")
+	errPlayoutStartupTimeout = errors.New("playout presentation produced no transport before timeout")
+)
+
 // Internal playout's HTTP surface (§9.1, §11 device auth).
 //
 // These stream bytes (some forever), which Huma's typed-JSON MODEL cannot express — but that does
@@ -95,6 +110,9 @@ type PlayoutObserver interface {
 	// remuxing and its encoder would be copy. Encoding happens in the per-program children,
 	// and the load-aware Resolve can legitimately pick differently between programs.
 	ReportProgram(channelID string, target playout.EncodePlan, enc playout.Encoder, transcoding bool, p playout.Progress)
+	// AdmitProgram changes the live session's real transcode cost before a child starts. It
+	// prevents zero-cost prepared sessions from oversubscribing when they later fall back live.
+	AdmitProgram(channelID string, target playout.EncodePlan, transcoding bool) bool
 }
 
 // authorizePlayout checks the device token, writing a response and returning false on failure.
@@ -228,29 +246,44 @@ func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The raw MPEG-TS tuner audience is a media server (Emby/Jellyfin), which ingests HEVC/AC3 and
-	// adapts per-client downstream — so it attaches as TargetMediaServer and keeps HEVC as a copy
-	// (§9.1 V47). The browser's HLS remux attaches as TargetBrowser separately.
-	presentation, err := s.playout.Tune(r.Context(), playout.TuneRequest{
-		ChannelID: channelID, Plan: playout.PlanFull, Delivery: playout.DeliveryMPEGTS,
-	})
+	// The raw MPEG-TS tuner audience is a media server (Emby/Jellyfin), so first ask for the broad
+	// full plan that can preserve HEVC/AC3. A full session that starts but cannot emit even one byte
+	// is retried as the known-playable H.264/AAC baseline below, before this response commits.
+	presentation, err := s.tuneRaw(r.Context(), channelID, playout.PlanFull)
 	if err != nil {
-		// At capacity is a real, actionable condition rather than a generic failure. 503 +
-		// Retry-After makes a media server back off politely instead of hammering; the detail
-		// offers only recovery choices that preserve the measured safety boundary.
-		if errors.Is(err, playout.ErrAtCapacity) {
-			w.Header().Set("Retry-After", "30")
-			s.writeProblem(w, r, http.StatusServiceUnavailable, "All tuners are busy",
-				atCapacityDetail)
-			return
-		}
-		s.log.Warn("playout: attach failed", "channel", channelID, "err", err)
-		s.writeProblem(w, r, http.StatusBadGateway, "Couldn't start the channel",
-			"Loomarr couldn't start encoding this channel. Check the playout log for details.")
+		s.writeRawTuneError(w, r, channelID, err)
 		return
 	}
-	// MUST run: it is what decrements the refcount, and a leaked viewer keeps a channel
-	// encoding forever (playout.Manager.Attach).
+
+	// Prove the session has transport BEFORE committing the streaming response. The finite-program
+	// child performs the same first-byte proof for each block; this is the outer guard for a parent
+	// that cannot produce even its first block. Empty chunks are not media and do not earn a 200.
+	first, startErr := firstTransportChunk(r.Context(), presentation.Stream, rawPlayoutPreferredStartupTimeout)
+	if startErr != nil && r.Context().Err() == nil {
+		presentation.Release()
+		s.log.Warn("playout: preferred session produced no startup transport; falling back to baseline",
+			"channel", channelID, "from_plan", playout.PlanFull.String(),
+			"to_plan", playout.PlanBaseline.String(), "err", startErr)
+		presentation, err = s.tuneRaw(r.Context(), channelID, playout.PlanBaseline)
+		if err != nil {
+			s.writeRawTuneError(w, r, channelID, err)
+			return
+		}
+		first, startErr = firstTransportChunk(r.Context(), presentation.Stream, rawPlayoutStartupTimeout)
+	}
+	if startErr != nil {
+		presentation.Release()
+		if r.Context().Err() != nil {
+			return
+		}
+		s.log.Warn("playout: baseline session produced no startup transport", "channel", channelID,
+			"plan", playout.PlanBaseline.String(), "err", startErr)
+		s.writeProblem(w, r, http.StatusBadGateway, "Couldn't start the channel",
+			"Loomarr couldn't produce media for this channel in time.")
+		return
+	}
+	// MUST run: it decrements the successful presentation's refcount. The failed full presentation
+	// was already released before the baseline tune, so the recovery never occupies two slots.
 	defer presentation.Release()
 	chunks := presentation.Stream
 
@@ -260,7 +293,10 @@ func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
 	// Explicitly refuse ranges rather than staying silent — see above.
 	w.Header().Set("Accept-Ranges", "none")
 	w.WriteHeader(http.StatusOK)
-	flusher.Flush() // send headers now so the player knows it is connected
+	if _, err := w.Write(first); err != nil {
+		return
+	}
+	flusher.Flush()
 
 	for {
 		select {
@@ -276,6 +312,45 @@ func (s *Server) streamHandler(w http.ResponseWriter, r *http.Request) {
 				return // the client went away mid-write
 			}
 			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) tuneRaw(ctx context.Context, channelID string, plan playout.EncodePlan) (playout.Presentation, error) {
+	return s.playout.Tune(ctx, playout.TuneRequest{
+		ChannelID: channelID, Plan: plan, Delivery: playout.DeliveryMPEGTS,
+	})
+}
+
+func (s *Server) writeRawTuneError(w http.ResponseWriter, r *http.Request, channelID string, err error) {
+	// At capacity is actionable. 503 + Retry-After makes a media server back off politely instead
+	// of hammering and preserves the measured safety boundary.
+	if errors.Is(err, playout.ErrAtCapacity) {
+		w.Header().Set("Retry-After", "30")
+		s.writeProblem(w, r, http.StatusServiceUnavailable, "All tuners are busy", atCapacityDetail)
+		return
+	}
+	s.log.Warn("playout: attach failed", "channel", channelID, "err", err)
+	s.writeProblem(w, r, http.StatusBadGateway, "Couldn't start the channel",
+		"Loomarr couldn't start encoding this channel. Check the playout log for details.")
+}
+
+func firstTransportChunk(ctx context.Context, chunks <-chan []byte, timeout time.Duration) ([]byte, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-timer.C:
+			return nil, errPlayoutStartupTimeout
+		case chunk, ok := <-chunks:
+			if !ok {
+				return nil, errPlayoutStartupEnded
+			}
+			if len(chunk) > 0 {
+				return chunk, nil
+			}
 		}
 	}
 }

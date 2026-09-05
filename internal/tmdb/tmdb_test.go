@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/loomarr/loomarr/internal/catalog"
@@ -136,6 +138,152 @@ func TestDiscover_AppliesAuthoritativeScalarQualifiersToMovieAndTV(t *testing.T)
 	}
 	if !seen["/discover/movie"] || !seen["/discover/tv"] {
 		t.Fatalf("discover requests = %+v, want movie and TV", mock.Requests())
+	}
+}
+
+func TestDiscover_ResolvesMovieCastAndCreatorsToGroundedPeople(t *testing.T) {
+	mock := testkit.NewTMDB(t)
+	mock.AddPerson(31, "Tom Hanks")
+	mock.AddPerson(560, "Nora Ephron")
+	mock.SetMoviePeople(100, []int{31}, []int{560})
+	c := tmdb.NewWithBase(mock.URL, "key")
+
+	got, err := c.Discover(context.Background(), catalog.DiscoveryQuery{
+		MediaType: provision.Movie, Cast: []string{"Tom Hanks"}, Creators: []string{"Nora Ephron"},
+	}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].TMDBID != 100 || !reflect.DeepEqual(got[0].Cast, []string{"Tom Hanks"}) ||
+		!reflect.DeepEqual(got[0].Creators, []string{"Nora Ephron"}) {
+		t.Fatalf("person-qualified discovery = %+v", got)
+	}
+	var searches int
+	for _, request := range mock.Requests() {
+		if request.Path == "/search/person" {
+			searches++
+		}
+		if request.Path == "/discover/movie" {
+			query, parseErr := url.ParseQuery(request.RawQuery)
+			if parseErr != nil {
+				t.Fatal(parseErr)
+			}
+			if query.Get("with_cast") != "31" || query.Get("with_crew") != "560" {
+				t.Fatalf("person filters = %q/%q", query.Get("with_cast"), query.Get("with_crew"))
+			}
+		}
+	}
+	if searches != 2 {
+		t.Fatalf("person searches = %d, want 2", searches)
+	}
+}
+
+func TestDiscover_ResolvesAmbiguousNetworkByCountryWithoutLeakingCredentialToExport(t *testing.T) {
+	mock := testkit.NewTMDB(t)
+	mock.AddSeries(20_001, "Signal House", 2024, []int{18}, "A prestige drama.")
+	mock.SetDiscoveryEvidence(provision.Series, 20_001, "en", []string{"US"}, 55, 8.1, 800)
+	mock.AddNetwork(49, "HBO", "US")
+	mock.AddNetwork(1590, "HBO", "DE")
+	mock.SetSeriesNetwork(20_001, 49)
+	c := tmdb.NewWithBase(mock.URL, "secret-key")
+
+	got, err := c.Discover(context.Background(), catalog.DiscoveryQuery{
+		MediaType: provision.Series, Network: "HBO", OriginCountry: "US",
+	}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].TMDBID != 20_001 || !reflect.DeepEqual(got[0].Networks, []string{"HBO"}) {
+		t.Fatalf("network-qualified discovery = %+v", got)
+	}
+	var exportRequests, detailRequests, discoverRequests int
+	for _, request := range mock.Requests() {
+		switch {
+		case strings.HasPrefix(request.Path, "/p/exports/"):
+			exportRequests++
+			if request.Authorization != "" {
+				t.Fatalf("TMDB credential leaked to export host: %q", request.Authorization)
+			}
+		case strings.HasPrefix(request.Path, "/network/"):
+			detailRequests++
+			if request.Authorization != "Bearer secret-key" {
+				t.Fatalf("network detail authorization = %q", request.Authorization)
+			}
+		case request.Path == "/discover/tv":
+			discoverRequests++
+			query, parseErr := url.ParseQuery(request.RawQuery)
+			if parseErr != nil {
+				t.Fatal(parseErr)
+			}
+			if query.Get("with_networks") != "49" {
+				t.Fatalf("with_networks = %q, want 49", query.Get("with_networks"))
+			}
+		}
+	}
+	if exportRequests != 1 || detailRequests != 2 || discoverRequests != 1 {
+		t.Fatalf("request counts export/detail/discover = %d/%d/%d", exportRequests, detailRequests, discoverRequests)
+	}
+}
+
+func TestDiscover_UnresolvedOrAmbiguousEntityFailsBeforeDiscovery(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(*testkit.TMDB)
+		query catalog.DiscoveryQuery
+		want  string
+	}{
+		{
+			name:  "ambiguous person",
+			setup: func(mock *testkit.TMDB) { mock.AddPerson(1, "Alex Smith"); mock.AddPerson(2, "Alex Smith") },
+			query: catalog.DiscoveryQuery{MediaType: provision.Movie, Cast: []string{"Alex Smith"}},
+			want:  "2 exact identities",
+		},
+		{
+			name:  "person interior whitespace is not normalized",
+			setup: func(mock *testkit.TMDB) { mock.AddPerson(31, "Tom Hanks") },
+			query: catalog.DiscoveryQuery{MediaType: provision.Movie, Cast: []string{"Tom  Hanks"}},
+			want:  "0 exact identities",
+		},
+		{
+			name:  "unresolved network",
+			setup: func(mock *testkit.TMDB) { mock.AddNetwork(49, "HBO", "US") },
+			query: catalog.DiscoveryQuery{MediaType: provision.Series, Network: "Imaginary Network"},
+			want:  "no exact identity",
+		},
+		{
+			name:  "ambiguous network without country",
+			setup: func(mock *testkit.TMDB) { mock.AddNetwork(49, "HBO", "US"); mock.AddNetwork(1590, "HBO", "DE") },
+			query: catalog.DiscoveryQuery{MediaType: provision.Series, Network: "HBO"},
+			want:  "include origin_country",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := testkit.NewTMDB(t)
+			tt.setup(mock)
+			_, err := tmdb.NewWithBase(mock.URL, "key").Discover(context.Background(), tt.query, 20)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want substring %q", err, tt.want)
+			}
+			for _, request := range mock.Requests() {
+				if strings.HasPrefix(request.Path, "/discover/") {
+					t.Fatalf("failed entity resolution reached discovery: %+v", mock.Requests())
+				}
+			}
+		})
+	}
+}
+
+func TestDiscover_RejectsUnsupportedEntityMediaTypeBeforeHTTP(t *testing.T) {
+	mock := testkit.NewTMDB(t)
+	_, err := tmdb.NewWithBase(mock.URL, "key").Discover(context.Background(), catalog.DiscoveryQuery{
+		MediaType: provision.Series, Cast: []string{"Idris Elba"},
+	}, 20)
+	if err == nil || !strings.Contains(err.Error(), "movie media type") {
+		t.Fatalf("error = %v", err)
+	}
+	if mock.RequestCount() != 0 {
+		t.Fatalf("unsupported entity query made requests: %+v", mock.Requests())
 	}
 }
 

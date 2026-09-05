@@ -13,11 +13,13 @@ import (
 	"github.com/loomarr/loomarr/internal/diagnostics"
 	"github.com/loomarr/loomarr/internal/events"
 	"github.com/loomarr/loomarr/internal/filler"
+	"github.com/loomarr/loomarr/internal/httpx"
 	"github.com/loomarr/loomarr/internal/images"
 	"github.com/loomarr/loomarr/internal/library"
 	"github.com/loomarr/loomarr/internal/metrics"
 	"github.com/loomarr/loomarr/internal/proposalworkflow"
 	"github.com/loomarr/loomarr/internal/recurate"
+	"github.com/loomarr/loomarr/internal/reference"
 	"github.com/loomarr/loomarr/internal/scheduler"
 	"github.com/loomarr/loomarr/internal/store"
 	"github.com/loomarr/loomarr/internal/suggest"
@@ -100,7 +102,9 @@ func buildSuggestions(
 		provider = overrides.LLM
 	}
 	suggester := suggest.New(provider, catalogService, tmdbClient, set.intv("suggest.max_acquisitions"))
-	suggester.WithRatings(tmdbClient).WithFeedback(discoveryFeedbackSource{store: st})
+	suggester.WithRatings(tmdbClient).
+		WithFeedback(discoveryFeedbackSource{store: st}).
+		WithReferences(reference.NewWeb(httpx.NewPublicNamedObserved("reference", httpx.TimeoutReference, metricRecorder)))
 	service := suggest.NewService(st, suggester, suggest.Config{
 		Workers: set.intv("job.workers"), Timeout: set.dur("job.timeout"), CacheTTL: 24 * time.Hour,
 	}, newID, time.Now, log).

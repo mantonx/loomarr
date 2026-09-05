@@ -77,14 +77,18 @@ func TestToolResultCarriesGroundedDiscoveryEvidence(t *testing.T) {
 	candidates := []catalog.Candidate{{
 		MediaType: provision.Movie, TMDBID: 603, Name: "The Matrix", OriginalLanguage: "en",
 		OriginCountries: []string{"US"}, RuntimeMinutes: 136, VoteAverage: 8.2, VoteCount: 26000,
-		Keywords: []string{"artificial reality"},
+		Keywords: []string{"artificial reality"}, Networks: []string{"HBO"},
+		Cast: []string{"Keanu Reeves"}, Creators: []string{"Lana Wachowski", "Lilly Wachowski"},
 	}}
 
 	got := toolResult(candidates)
 	if len(got) != 1 || got[0].OriginalLanguage != "en" || got[0].RuntimeMinutes != 136 ||
 		got[0].VoteAverage != 8.2 || got[0].VoteCount != 26000 ||
 		!reflect.DeepEqual(got[0].OriginCountries, []string{"US"}) ||
-		!reflect.DeepEqual(got[0].Keywords, []string{"artificial reality"}) {
+		!reflect.DeepEqual(got[0].Keywords, []string{"artificial reality"}) ||
+		!reflect.DeepEqual(got[0].Networks, []string{"HBO"}) ||
+		!reflect.DeepEqual(got[0].Cast, []string{"Keanu Reeves"}) ||
+		!reflect.DeepEqual(got[0].Creators, []string{"Lana Wachowski", "Lilly Wachowski"}) {
 		t.Fatalf("tool discovery evidence = %+v", got)
 	}
 }

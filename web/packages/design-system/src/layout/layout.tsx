@@ -1,6 +1,6 @@
 import { useTheme, View } from "@tamagui/core";
-import type { ComponentProps, ReactNode } from "react";
-import { useId, useState } from "react";
+import type { ComponentProps, ComponentRef, ReactNode } from "react";
+import { forwardRef, useId, useState } from "react";
 import { Pressable, ScrollView, useWindowDimensions } from "react-native";
 
 import { Text } from "../primitives";
@@ -68,26 +68,34 @@ type ScrollFrameProps = Omit<
 };
 
 /** A vertical application scroller with consistent content rhythm and keyboard behavior. */
-const ScrollFrame = ({
-  children,
-  contentContainerStyle,
-  density = "pointer",
-  keyboardShouldPersistTaps = "handled",
-  style,
-  ...props
-}: ScrollFrameProps) => (
-  <ScrollView
-    {...props}
-    contentContainerStyle={[
-      { flexGrow: 1, gap: density === "tv" ? semanticSpace.section : semanticSpace.control },
+const ScrollFrame = forwardRef<ComponentRef<typeof ScrollView>, ScrollFrameProps>(
+  (
+    {
+      children,
       contentContainerStyle,
-    ]}
-    keyboardShouldPersistTaps={keyboardShouldPersistTaps}
-    style={[{ flex: 1 }, style]}
-  >
-    {children}
-  </ScrollView>
+      density = "pointer",
+      keyboardShouldPersistTaps = "handled",
+      style,
+      ...props
+    },
+    ref,
+  ) => (
+    <ScrollView
+      {...props}
+      contentContainerStyle={[
+        { flexGrow: 1, gap: density === "tv" ? semanticSpace.section : semanticSpace.control },
+        contentContainerStyle,
+      ]}
+      keyboardShouldPersistTaps={keyboardShouldPersistTaps}
+      ref={ref}
+      style={[{ flex: 1 }, style]}
+    >
+      {children}
+    </ScrollView>
+  ),
 );
+
+ScrollFrame.displayName = "ScrollFrame";
 
 type DisclosureProps = Omit<ComponentProps<typeof View>, "children"> & {
   children: ReactNode;

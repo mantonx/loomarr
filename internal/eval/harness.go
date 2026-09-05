@@ -92,6 +92,10 @@ type Observation struct {
 	TitleCalls          int    `json:"titleCalls"`
 	GenreCalls          int    `json:"genreCalls"`
 	KeywordCalls        int    `json:"keywordCalls"`
+	NetworkCalls        int    `json:"networkCalls"`
+	CastCalls           int    `json:"castCalls"`
+	CreatorCalls        int    `json:"creatorCalls"`
+	PeopleCalls         int    `json:"peopleCalls"`
 	CandidatesSurfaced  int    `json:"candidatesSurfaced"`
 	GroundingStage      string `json:"groundingStage"`
 	generatorCalls      []InferenceCall
@@ -164,7 +168,18 @@ func (p *observedProvider) observeToolCalls(messages []llm.Message) {
 	defer p.mu.Unlock()
 	for _, call := range calls[p.obs.toolCallsSeen:] {
 		p.obs.ToolCalls++
+		network, _ := call.Arguments["network"].(string)
+		cast := stringSliceAny(call.Arguments["cast"])
+		creators := stringSliceAny(call.Arguments["creators"])
 		switch {
+		case strings.TrimSpace(network) != "":
+			p.obs.NetworkCalls++
+		case len(cast) > 0 && len(creators) > 0:
+			p.obs.PeopleCalls++
+		case len(cast) > 0:
+			p.obs.CastCalls++
+		case len(creators) > 0:
+			p.obs.CreatorCalls++
 		case len(stringSliceAny(call.Arguments["keywords"])) > 0:
 			p.obs.KeywordCalls++
 		case len(stringSliceAny(call.Arguments["genres"])) > 0:

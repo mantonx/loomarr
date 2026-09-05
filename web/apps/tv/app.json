@@ -16,7 +16,22 @@
       }
     },
     "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#0B0C0E",
+          "dark": {
+            "image": "./assets/icon.png",
+            "backgroundColor": "#0B0C0E"
+          }
+        }
+      ],
       "../../scripts/with-memory-safe-android-build.cjs",
+      "../../scripts/with-workspace-bundle-inputs.cjs",
+      "../../scripts/with-shield-release-signing.cjs",
+      "../../scripts/with-loomarr-android-network.cjs",
       [
         "@react-native-tvos/config-tv",
         {

@@ -1,0 +1,19 @@
+plugins {
+  id 'com.android.library'
+}
+
+group = 'media.loomarr.tv'
+version = '0.0.0'
+
+android {
+  namespace 'media.loomarr.tv.discovery'
+  compileSdk rootProject.ext.compileSdkVersion
+
+  defaultConfig {
+    minSdk rootProject.ext.minSdkVersion
+  }
+}
+
+dependencies {
+  implementation 'com.facebook.react:react-android'
+}

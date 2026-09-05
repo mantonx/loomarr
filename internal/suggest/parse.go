@@ -18,6 +18,7 @@ type pick struct {
 	TMDBID     int     `json:"tmdbId"`
 	TVDBID     int     `json:"tvdbId"`
 	Name       string  `json:"name"`
+	Year       int     `json:"year"`
 	Rationale  string  `json:"rationale"`
 	Confidence float64 `json:"confidence"`
 	// SeasonMin/SeasonMax: an OPTIONAL airing season window the model proposes for a
@@ -140,6 +141,9 @@ type toolCandidate struct {
 	VoteAverage      float64  `json:"voteAverage,omitempty"`
 	VoteCount        int      `json:"voteCount,omitempty"`
 	Keywords         []string `json:"keywords,omitempty"`
+	Networks         []string `json:"networks,omitempty"`
+	Cast             []string `json:"cast,omitempty"`
+	Creators         []string `json:"creators,omitempty"`
 }
 
 // overviewMax caps the per-candidate overview length sent to the model — enough to
@@ -159,6 +163,9 @@ func toolResult(cands []catalog.Candidate) []toolCandidate {
 			VoteAverage:      c.VoteAverage,
 			VoteCount:        c.VoteCount,
 			Keywords:         append([]string(nil), c.Keywords...),
+			Networks:         append([]string(nil), c.Networks...),
+			Cast:             append([]string(nil), c.Cast...),
+			Creators:         append([]string(nil), c.Creators...),
 		})
 	}
 	return out

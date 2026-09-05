@@ -170,6 +170,41 @@ func TestDecisionRankQueryRecordsMatchedConstraintCategoriesWithoutRawTerms(t *t
 	}
 }
 
+func TestDecisionRankQueryDoesNotTreatRequestScaffoldingAsEvidence(t *testing.T) {
+	intent := Intent{Description: "Please build a channel like this reference"}
+	candidate := catalog.Candidate{
+		MediaType: provision.Movie, TMDBID: 604, Name: "Unrelated Mechanics",
+		Overview: "They build this machine for a difficult job.",
+	}
+
+	got := rankGroundedCandidatesWithTrace(decisionRankQuery(intent), []catalog.Candidate{candidate}, nil).Trace.Candidates[0]
+	if got.Rank.Relevance != 0 || got.Constraints.Request {
+		t.Fatalf("request scaffolding became relevance evidence: terms=%v decision=%+v", decisionRankQuery(intent).request, got)
+	}
+}
+
+func TestMembershipEvidenceGateTargetsNamedSetsWithoutHardcodingOneBlock(t *testing.T) {
+	for _, description := range []string{
+		"make a channel for FFS like the 90s",
+		"shows from NBN",
+		"the XYZ programming block",
+		"lineup from Friday Family Showcase",
+	} {
+		if !requiresMembershipEvidence(Intent{Description: description}) {
+			t.Fatalf("named-set request was not gated: %q", description)
+		}
+	}
+	for _, description := range []string{
+		"UFO movies",
+		"feel-good sci-fi",
+		"1990s family comedies",
+	} {
+		if requiresMembershipEvidence(Intent{Description: description}) {
+			t.Fatalf("ordinary theme request was over-gated: %q", description)
+		}
+	}
+}
+
 func TestMergeDecisionTracePreservesPreTruncationTotalsAndLatestDuplicateFacts(t *testing.T) {
 	dst := DecisionTrace{Version: DecisionTraceVersion, SurfacedTotal: 1, RecordedTotal: 1,
 		Candidates: []DecisionCandidate{{Key: "movie:tmdb:603", Source: string(catalog.ScopeAdjacent)}}}

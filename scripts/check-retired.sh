@@ -255,8 +255,16 @@ RETIRED=(
   'SetBcryptCostForTests|the mutable bcrypt cost test hook was removed; bcrypt is read-only legacy verification (§11/§14)'
 	# SMTP is one notification provider. Restoring this route or operation recreates the second
 	# test/configuration authority that Settings → Notifications removed.
-	'/v1/notifications/email/test|SMTP tests use the selected notification provider row'
-	'notifications-email-test|SMTP tests use the common notification-destination test operation'
+  '/v1/notifications/email/test|SMTP tests use the selected notification provider row'
+  'notifications-email-test|SMTP tests use the common notification-destination test operation'
+  # P5c: the accepted React Native TV client is the only Shield implementation. These identifiers
+  # recreate the removed Kotlin/Compose application, its JVM visual authority, or its old signing
+  # seam. Historical engineering evidence is exempt below; shipping source and operator docs are not.
+  'org.jetbrains.kotlin.android|P5c: the Shield application is React Native; do not restore the Kotlin Android plugin'
+  'androidx.compose|P5c: the Shield presentation is the accepted React Native implementation'
+  'io.github.takahirom.roborazzi|P5c: native reference captures replaced the retired JVM screenshot harness'
+  'gen-android-tokens.mjs|P5c: no Kotlin token consumer remains'
+  'with-shield-sideload-signing|P5b: all React Native release channels use the release-signing plugin'
 )
 # ⚠ `internal/store/migrations/` is exempt, and it is the one exemption that is forced rather than
 # chosen. A migration that CREATES a table names it, and §16 makes applied migrations immutable —
@@ -297,7 +305,7 @@ ALLOW_LINE='retired-ok|[Rr]etired|[Ss]uperseded|no longer exist|was deleted|was 
 # a hand-maintained list of WHAT to look for. Anything a human reads as a statement about the
 # product belongs here. docs-site/ is deliberately absent — it renders docs/ and holds no prose
 # of its own (design §13).
-SEARCH=(docs internal docker scripts web/apps/web/src .github README.md SECURITY.md
+SEARCH=(docs internal docker scripts android web/apps/web/src .github README.md SECURITY.md
         CODE_OF_CONDUCT.md CLAUDE.md AGENTS.md CONTRIBUTING.md CONTEXT.md CHANGELOG.md
         THIRD_PARTY_NOTICES.md Dockerfile Makefile go.mod .env.example)
 fail=0

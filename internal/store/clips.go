@@ -954,6 +954,12 @@ func (s *sqlStore) UpdateClipClassification(ctx context.Context, id string, era 
 // assembly. Assembly re-runs on every reconcile sweep and would count SCHEDULED rather than
 // AIRED, inflating without bound (see migration 00017).
 //
+// `at` is the scheduled clip start, not the wall clock when the resolver happened to arrive.
+// A finite encoder child normally requests its successor milliseconds after that boundary, and
+// a viewer reconnect or retry may resolve it again. The per-channel upsert accepts only a NEWER
+// scheduled start, so all callbacks for one airing are one durable write without process-local
+// memory; only that accepted write increments the global catalog counter.
+//
 // A missing clip is NOT an error. Playout resolves a path that the catalog may have pruned
 // between the schedule being built and the break airing; failing here would turn a stale
 // catalog row into a playback error, and the counter is telemetry, not correctness. The row
@@ -961,19 +967,14 @@ func (s *sqlStore) UpdateClipClassification(ctx context.Context, id string, era 
 //
 // updated_at is left alone: this is not a catalog edit, and touching it would make every clip
 // look freshly re-synced in the UI's "last updated" column.
-func (s *sqlStore) RecordClipPlay(ctx context.Context, channelID, id string, at time.Time) error {
+func (s *sqlStore) RecordClipPlay(ctx context.Context, channelID, id string, at time.Time) (bool, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("record clip play %s: %w", id, err)
+		return false, fmt.Errorf("record clip play %s: %w", id, err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, s.ph(
-		`UPDATE clips SET play_count = play_count + 1, last_played_at = ? WHERE hash = ?`),
-		epoch(at), id); err != nil {
-		return fmt.Errorf("record clip play %s: %w", id, err)
-	}
-	if _, err := tx.ExecContext(ctx, s.ph(`INSERT INTO filler_exposures
+	res, err := tx.ExecContext(ctx, s.ph(`INSERT INTO filler_exposures
 		(channel_id, clip_hash, play_count, last_played_at, previous_played_at) VALUES (?, ?, 1, ?, 0)
 		ON CONFLICT(channel_id, clip_hash) DO UPDATE SET
 			play_count = filler_exposures.play_count + 1,
@@ -982,14 +983,32 @@ func (s *sqlStore) RecordClipPlay(ctx context.Context, channelID, id string, at 
 				THEN filler_exposures.last_played_at ELSE filler_exposures.previous_played_at END,
 			last_played_at = CASE
 				WHEN excluded.last_played_at > filler_exposures.last_played_at
-				THEN excluded.last_played_at ELSE filler_exposures.last_played_at END`),
-		channelID, id, at.UnixMilli()); err != nil {
-		return fmt.Errorf("record channel clip play %s/%s: %w", channelID, id, err)
+				THEN excluded.last_played_at ELSE filler_exposures.last_played_at END
+		WHERE excluded.last_played_at > filler_exposures.last_played_at`),
+		channelID, id, at.UnixMilli())
+	if err != nil {
+		return false, fmt.Errorf("record channel clip play %s/%s: %w", channelID, id, err)
+	}
+	changed, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("read channel clip play result %s/%s: %w", channelID, id, err)
+	}
+	if changed == 0 {
+		if err := tx.Commit(); err != nil {
+			return false, fmt.Errorf("commit duplicate clip play %s: %w", id, err)
+		}
+		return false, nil
+	}
+	if _, err := tx.ExecContext(ctx, s.ph(
+		`UPDATE clips SET play_count = play_count + 1,
+		 last_played_at = CASE WHEN ? > last_played_at THEN ? ELSE last_played_at END
+		 WHERE hash = ?`), epoch(at), epoch(at), id); err != nil {
+		return false, fmt.Errorf("record clip play %s: %w", id, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("record clip play %s: %w", id, err)
+		return false, fmt.Errorf("record clip play %s: %w", id, err)
 	}
-	return nil
+	return true, nil
 }
 
 // FillerExposuresByChannel returns one channel's durable aggregate rotation snapshot (§10 V58).

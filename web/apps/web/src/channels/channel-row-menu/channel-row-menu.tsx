@@ -59,8 +59,13 @@ const ChannelRowMenu = ({ channel }: ChannelRowMenuProps) => {
   const { confirming, arm, reset: resetConfirm } = useDeleteConfirm();
   const paused = channel.status === "paused";
 
-  const invalidate = () =>
+  const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: channelsApi.getListChannelsQueryKey() });
+    // Guide rows come from their own time-windowed read model. Passing the prefix key
+    // invalidates every currently cached window, so a successful delete disappears from
+    // the view that issued it instead of waiting for a reload or a later SSE frame.
+    void queryClient.invalidateQueries({ queryKey: channelsApi.getChannelGuideQueryKey() });
+  };
 
   const update = channelsApi.useUpdateChannel({
     mutation: {

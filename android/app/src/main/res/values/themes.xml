@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- NoActionBar: a TV app draws its own chrome; the system action bar is a phone affordance. -->
-    <style name="Theme.LoomarrTv" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@android:color/black</item>
-    </style>
-</resources>

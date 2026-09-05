@@ -254,13 +254,17 @@ func normalizedIntentText(intent Intent) string {
 }
 
 func decisionRankQuery(intent Intent) rankQuery {
+	request := intentWordSet(intent.Description)
+	for term := range intentWordSet(strings.Join(intent.ReferenceTitles, " ")) {
+		request[term] = true
+	}
 	return rankQuery{
-		request:     wordSet(intent.Description),
-		tone:        wordSet(intent.Tone),
-		era:         wordSet(intent.Era),
-		mustInclude: wordSet(strings.Join(intent.MustInclude, " ")),
-		mustExclude: wordSet(strings.Join(intent.MustExclude, " ")),
-		refine:      wordSet(intent.RefineText),
+		request:     request,
+		tone:        intentWordSet(intent.Tone),
+		era:         intentWordSet(intent.Era),
+		mustInclude: intentWordSet(strings.Join(intent.MustInclude, " ")),
+		mustExclude: intentWordSet(strings.Join(intent.MustExclude, " ")),
+		refine:      intentWordSet(intent.RefineText),
 	}
 }
 

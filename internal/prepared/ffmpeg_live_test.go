@@ -2,16 +2,24 @@
 
 // Tests that execute ffmpeg. Unit tests stay external-binary-free; run with `make test-ffmpeg`.
 
-package prepared
+package prepared_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/subtle"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/loomarr/loomarr/internal/prepared"
+	"github.com/loomarr/loomarr/internal/testkit"
 )
 
 func TestLiveFFmpegPackagerPublishesPlayableHLS(t *testing.T) {
@@ -40,31 +48,54 @@ func TestLiveFFmpegPackagerPublishesPlayableHLS(t *testing.T) {
 		t.Fatalf("generate source: %v\n%s", err, output)
 	}
 
-	library, err := NewLibrary(t.TempDir())
+	media, err := os.ReadFile(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := RenditionContract{
+	const token = "prepared-http-test-token"
+	var authenticatedRequests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("api_key")), []byte(token)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		authenticatedRequests.Add(1)
+		http.ServeContent(w, r, "source.mp4", time.Time{}, bytes.NewReader(media))
+	}))
+	defer server.Close()
+
+	library, err := prepared.NewLibrary(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := prepared.RenditionContract{
 		VideoCodec: "h264", VideoProfile: "high", VideoLevel: "4.1", PixelFormat: "yuv420p", HDR: "sdr",
 		AudioCodec: "aac", AudioLayout: "stereo", Width: 320, Height: 180, FrameRate: 25,
 		VideoBitrateKbps: 500, AudioBitrateKbps: 96, SegmentDurationMS: 1000, PackagingVersion: 1,
 	}
-	readiness, err := OpenReadiness(library)
-	if err != nil {
-		t.Fatal(err)
-	}
-	preparer := NewPreparer(PreparerDependencies{
-		Library: library, Packager: NewFFmpegPackager(bin), Readiness: readiness,
+	preparer := prepared.NewPreparer(prepared.PreparerDependencies{
+		Library: library, Packager: prepared.NewFFmpegPackager(bin), Access: &testkit.PreparedSourceAccess{
+			Input: prepared.HTTPInput(server.URL + "/original?api_key=" + token),
+		},
 	})
-	pub, err := preparer.Prepare(ctx, Request{Source: Source{Path: source}, Rendition: r})
+	request := prepared.Request{Source: prepared.Source{
+		ItemID: "live-http-item", SourceID: "live-http-source", Revision: "generated-v1",
+	}, Rendition: r}
+	if _, ok, err := preparer.Lookup(request); err != nil || ok {
+		t.Fatalf("cold prepared lookup = (_, %v, %v), want miss", ok, err)
+	}
+	pub, err := preparer.Prepare(ctx, request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := preparer.Lookup(Request{Source: Source{Path: source}, Rendition: r}); err != nil || !ok {
+	if _, ok, err := preparer.Lookup(request); err != nil || !ok {
 		t.Fatalf("prepared publication lookup = (_, %v, %v), want hit", ok, err)
 	}
 
-	manifest, ok, err := library.Open(pub.Key, MediaManifestName)
+	if authenticatedRequests.Load() == 0 {
+		t.Fatal("ffmpeg made no authenticated HTTP original request")
+	}
+	manifest, ok, err := library.Open(pub.Key, prepared.MediaManifestName)
 	if err != nil || !ok {
 		t.Fatalf("manifest = (_, %v, %v), want hit", ok, err)
 	}
@@ -78,9 +109,10 @@ func TestLiveFFmpegPackagerPublishesPlayableHLS(t *testing.T) {
 		t.Fatalf("manifest is not playable fMP4 HLS:\n%s", text)
 	}
 
+	manifestPath := filepath.Join(pub.Directory, prepared.MediaManifestName)
 	output, err := exec.CommandContext(ctx, probe, "-v", "error",
 		"-show_entries", "stream=codec_type,codec_name", "-of", "default=noprint_wrappers=1",
-		filepath.Join(pub.Directory, MediaManifestName),
+		manifestPath,
 	).Output()
 	if err != nil {
 		t.Fatalf("ffprobe publication: %v", err)
@@ -89,5 +121,10 @@ func TestLiveFFmpegPackagerPublishesPlayableHLS(t *testing.T) {
 		if !strings.Contains(string(output), want) {
 			t.Errorf("publication probe missing %q:\n%s", want, output)
 		}
+	}
+	if output, err := exec.CommandContext(ctx, bin, "-hide_banner", "-loglevel", "error", "-nostdin",
+		"-i", manifestPath, "-frames:v", "1", "-f", "null", "-",
+	).CombinedOutput(); err != nil {
+		t.Fatalf("decode first prepared frame: %v\n%s", err, output)
 	}
 }

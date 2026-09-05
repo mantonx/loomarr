@@ -41,6 +41,10 @@ import (
 
 // AudioTrack is one audio stream's identity, as far as selection cares.
 type AudioTrack struct {
+	// SourceIndex is the source-global stream index reported by ffprobe. Selection still returns
+	// an audio-relative ordinal; Inventory retains this index so the measured observation preserves
+	// the source's actual ordering rather than inventing global indexes.
+	SourceIndex int
 	// Language is the ISO 639-2 tag from the container, lowercased. Empty when untagged —
 	// which is common enough that it must never be treated as a mismatch.
 	Language string

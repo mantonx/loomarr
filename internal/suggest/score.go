@@ -29,8 +29,8 @@ func score(intent Intent, lineup, acquisitions []ProposalItem) Scores {
 
 // themeFit measures how well the proposal matches the intent — deterministically
 // (§8: "not pure vibes"; same inputs → same score). It scores each item's THEME
-// SIGNALS (genres + overview + the model's why-it-fits rationale, plus the title
-// as a weak fallback) against the intent's terms — NOT the title alone. That fix
+// SIGNALS (genres + overview + source-backed keywords, plus the title as a weak
+// fallback) against the intent's terms — NOT the title alone. That fix
 // matters: an intent like "90s action" almost never appears in a *title*, so
 // title-substring scoring returned ~0 even on a perfect lineup; genres/overview
 // carry the actual theme.
@@ -56,8 +56,9 @@ func themeFit(intent Intent, lineup, acquisitions []ProposalItem) float64 {
 	return float64(hits) / float64(len(items))
 }
 
-// themeHaystack is the lowercased text an item is scored against: its genres,
-// overview, the model's rationale, and the name (weakest signal, last).
+// themeHaystack is the lowercased source-backed text an item is scored against:
+// its genres, overview, keyword evidence, and name (weakest signal, last). The
+// model rationale is presentation-only and cannot award itself a good score.
 func themeHaystack(it ProposalItem) string {
 	var b strings.Builder
 	for _, g := range it.Genres {
@@ -66,8 +67,10 @@ func themeHaystack(it ProposalItem) string {
 	}
 	b.WriteString(strings.ToLower(it.Overview))
 	b.WriteByte(' ')
-	b.WriteString(strings.ToLower(it.Rationale))
-	b.WriteByte(' ')
+	for _, keyword := range it.Keywords {
+		b.WriteString(strings.ToLower(keyword))
+		b.WriteByte(' ')
+	}
 	b.WriteString(strings.ToLower(it.Name))
 	return b.String()
 }

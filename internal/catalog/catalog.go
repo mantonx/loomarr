@@ -79,6 +79,9 @@ type Candidate struct {
 	VoteAverage      float64  `json:"voteAverage,omitempty"`
 	VoteCount        int      `json:"voteCount,omitempty"`
 	Keywords         []string `json:"keywords,omitempty"`
+	Networks         []string `json:"networks,omitempty"`
+	Cast             []string `json:"cast,omitempty"`
+	Creators         []string `json:"creators,omitempty"`
 	// RelevanceRank is the one-based position assigned by the source operation.
 	// It is transport-internal: callers observe its effect through result order,
 	// not as another score they could reinterpret. Zero is assigned from encounter
@@ -132,6 +135,9 @@ type DiscoveryQuery struct {
 	RuntimeMax       int
 	VoteAverageMin   float64
 	VoteCountMin     int
+	Network          string
+	Cast             []string
+	Creators         []string
 }
 
 // TMDBDiscoverer is the TMDB discovery corpus for structured, authoritative
@@ -643,6 +649,15 @@ func mergeCandidate(dst *Candidate, src Candidate) {
 	}
 	if len(dst.Keywords) == 0 && len(src.Keywords) > 0 {
 		dst.Keywords = append([]string(nil), src.Keywords...)
+	}
+	if len(dst.Networks) == 0 && len(src.Networks) > 0 {
+		dst.Networks = append([]string(nil), src.Networks...)
+	}
+	if len(dst.Cast) == 0 && len(src.Cast) > 0 {
+		dst.Cast = append([]string(nil), src.Cast...)
+	}
+	if len(dst.Creators) == 0 && len(src.Creators) > 0 {
+		dst.Creators = append([]string(nil), src.Creators...)
 	}
 	// OfficialRating comes from the library keyword search or the presence backfill —
 	// TMDB *search/discover* leaves it empty, though TMDB's content-ratings endpoint

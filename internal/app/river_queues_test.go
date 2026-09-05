@@ -58,8 +58,10 @@ func TestRiverQueues_ALongJobDoesNotStarveTheCheapOnes(t *testing.T) {
 		Add(scheduler.Job{
 			Name: "cheap", Group: scheduler.GroupSystem, Title: "Cheap", Description: "a cheap sweep.",
 			DefaultCron: "0 0 5 1 1 *",
-			// No Timeout: River's default, and therefore the `default` queue.
-			Run: func(context.Context) error { fired <- struct{}{}; return nil },
+			// A short explicit ceiling must preserve cancellation without putting health-like work
+			// behind the long media queue.
+			Timeout: 10 * time.Second,
+			Run:     func(context.Context) error { fired <- struct{}{}; return nil },
 		})
 
 	log := slog.New(slog.DiscardHandler)

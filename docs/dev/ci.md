@@ -361,7 +361,8 @@ skip Playwright in this first slice.
 Tuner is the third active job. Its macOS browser matrix consumes `impact_tuner` directly. Every
 shipping Web runtime source remains tuner-sensitive because the matrix loads the real SPA and HLS
 controller; unit, spec, and story-only modules may skip it. Tuner e2e inputs, browser build
-configuration, shared API/core/fixture packages, runtime tokens, and OpenAPI select it explicitly.
+configuration, shared API/core/fixture/player packages, runtime tokens, and OpenAPI select it
+explicitly.
 
 Apple mobile is the fourth active decision and Apple TV is the fifth. iOS and tvOS are separate
 top-level jobs with hard-coded app commands, dedicated impact selectors, and independent required
@@ -384,9 +385,11 @@ reveal those dependencies.
 
 Client decisions follow the actual consumer graph. An app-local mobile change selects shared-client,
 iOS, and Expo Android mobile evidence; a TV change selects shared-client, tvOS, and Expo Android TV.
-Changes to `api`, `core`, `fixtures`, `design-system`, or `ui` select both apps on both native
-platforms because those packages are transitive inputs to both. Browser-only client-proof and
-Turborepo contract changes select the shared JavaScript gate without spending a native runner.
+Changes to `api`, `core`, `fixtures`, `player`, `design-system`, or `ui` select both apps on both
+native platforms because those packages are transitive inputs to both. The shared player package
+also selects Web, Tuner, Image, and Android TV because its browser and native adapters share one
+transport contract. Browser-only client-proof and Turborepo contract changes select the shared
+JavaScript gate without spending a native runner.
 Apple mobile and Apple TV are active. Expo Android mobile and Expo Android TV remain classifier
 decisions until each has an independently required job and current-main evidence.
 

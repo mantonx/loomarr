@@ -11,15 +11,46 @@ import (
 
 // Corpus is a deterministic search/discovery corpus.
 type Corpus struct {
-	Candidates []catalog.Candidate
+	Candidates  []catalog.Candidate
+	mu          sync.Mutex
+	searches    []SearchRequest
+	discoveries []DiscoveryRequest
 }
 
-func (c *Corpus) Search(context.Context, string, int) ([]catalog.Candidate, error) {
+type SearchRequest struct {
+	Query string
+	Limit int
+}
+
+type DiscoveryRequest struct {
+	Query catalog.DiscoveryQuery
+	Limit int
+}
+
+func (c *Corpus) Search(_ context.Context, query string, limit int) ([]catalog.Candidate, error) {
+	c.mu.Lock()
+	c.searches = append(c.searches, SearchRequest{Query: query, Limit: limit})
+	c.mu.Unlock()
 	return append([]catalog.Candidate(nil), c.Candidates...), nil
 }
 
-func (c *Corpus) Discover(context.Context, catalog.DiscoveryQuery, int) ([]catalog.Candidate, error) {
+func (c *Corpus) Discover(_ context.Context, query catalog.DiscoveryQuery, limit int) ([]catalog.Candidate, error) {
+	c.mu.Lock()
+	c.discoveries = append(c.discoveries, DiscoveryRequest{Query: query, Limit: limit})
+	c.mu.Unlock()
 	return append([]catalog.Candidate(nil), c.Candidates...), nil
+}
+
+func (c *Corpus) Searches() []SearchRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]SearchRequest(nil), c.searches...)
+}
+
+func (c *Corpus) Discoveries() []DiscoveryRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]DiscoveryRequest(nil), c.discoveries...)
 }
 
 // Presence is a deterministic library-ownership adapter.

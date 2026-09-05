@@ -23,12 +23,12 @@ type eagerAttacher struct {
 	drained chan struct{}
 }
 
-func (a *eagerAttacher) AttachSink(_ context.Context, _ string, _ EncodePlan, sink sessionSink) (func(), error) {
+func (a *eagerAttacher) AttachSink(_ context.Context, _ string, _ EncodePlan, sink sessionSink) (sinkLease, error) {
 	if !sink.offer([]byte("initial session burst")) {
-		return nil, errors.New("sink rejected initial burst")
+		return sinkLease{}, errors.New("sink rejected initial burst")
 	}
 	close(a.drained)
-	return func() { sink.close() }, nil
+	return sinkLease{release: func() { sink.close() }}, nil
 }
 
 // burstAttacher models the larger-than-memory startup burst a warm session produces when its
@@ -39,14 +39,14 @@ type burstAttacher struct {
 	sent   chan struct{}
 }
 
-func (a *burstAttacher) AttachSink(_ context.Context, _ string, _ EncodePlan, sink sessionSink) (func(), error) {
+func (a *burstAttacher) AttachSink(_ context.Context, _ string, _ EncodePlan, sink sessionSink) (sinkLease, error) {
 	for _, chunk := range a.chunks {
 		if !sink.offer(chunk) {
-			return nil, errors.New("sink rejected startup burst")
+			return sinkLease{}, errors.New("sink rejected startup burst")
 		}
 	}
 	close(a.sent)
-	return func() { sink.close() }, nil
+	return sinkLease{release: func() { sink.close() }}, nil
 }
 
 type recordingWriteCloser struct {
@@ -83,15 +83,15 @@ type fakeAttacher struct {
 	sinks    []sessionSink
 }
 
-func (f *fakeAttacher) AttachSink(_ context.Context, _ string, _ EncodePlan, sink sessionSink) (func(), error) {
+func (f *fakeAttacher) AttachSink(_ context.Context, _ string, _ EncodePlan, sink sessionSink) (sinkLease, error) {
 	f.attaches.Add(1)
 	f.mu.Lock()
 	f.sinks = append(f.sinks, sink)
 	f.mu.Unlock()
-	return func() {
+	return sinkLease{release: func() {
 		f.detaches.Add(1)
 		sink.close()
-	}, nil
+	}}, nil
 }
 
 // newTestHLSManager builds a manager whose ffmpeg spawn is faked: it writes a stub master
@@ -504,6 +504,126 @@ func TestHLSManager_RejoinWithinGraceKeepsOneAttach(t *testing.T) {
 
 	if got := att.attaches.Load(); got != 1 {
 		t.Fatalf("a rejoin within grace caused %d attaches, want 1", got)
+	}
+}
+
+// HLS has its own client-level grace above the session manager. Its retained remux sink must become
+// idle demand when the client releases, allowing the one-slot session manager to reclaim that warm
+// channel for the next foreground HLS tune.
+func TestHLSManager_AtCapacityReclaimsIdleWarmSession(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	sessions := testManager(t, spawn, 1, time.Minute)
+	m := newTestHLSManager(t, sessions)
+	m.grace = time.Minute
+
+	_, detachFirst, err := m.Playlist("ch1", PlanFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := encoder("ch1").w.Write([]byte("transport")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	detachFirst()
+	stats := sessions.Stats(time.Now())
+	if len(stats) != 1 || stats[0].Viewers != 0 {
+		t.Fatalf("first HLS release left session state %+v, want one idle session", stats)
+	}
+
+	_, detachSecond, err := m.Playlist("ch2", PlanFull)
+	if err != nil {
+		t.Fatalf("foreground HLS tune was refused while a warm session was idle: %v", err)
+	}
+	defer detachSecond()
+
+	select {
+	case <-encoder("ch1").stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("idle HLS session was not reclaimed for the foreground tune")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok := m.AssetPath("ch1", PlanFull, hlsPlaylistName); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("reclaimed session left its HLS remux and assets alive")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Aggregate warm-session eviction has to retire the delivery adapter as well as the parent. An
+// idle HLS remux still owns a sink, process, and scratch tree even though its lease reports zero
+// viewer demand; closing the LRU parent must cascade through that sink and make stale assets vanish.
+func TestHLSManager_WarmIdleHotSetEvictionRetiresRemuxAssets(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	sessions := testManager(t, spawn, 0, time.Minute)
+	m := newTestHLSManager(t, sessions)
+	m.grace = time.Minute
+
+	for _, channelID := range []string{"ch1", "ch2", "ch3"} {
+		_, detach, err := m.Playlist(channelID, PlanFull)
+		if err != nil {
+			t.Fatalf("start %s HLS: %v", channelID, err)
+		}
+		if _, err := encoder(channelID).w.Write([]byte("transport")); err != nil {
+			t.Fatal(err)
+		}
+		sessions.ReportProgram(channelID, PlanFull, EncoderSoftware, false, Progress{})
+		// The fan-out pump is asynchronous; allow it to publish the byte before release makes the
+		// HLS sink idle. This mirrors the established capacity-reclamation test above.
+		time.Sleep(20 * time.Millisecond)
+		detach()
+	}
+
+	select {
+	case <-encoder("ch1").stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("oldest idle HLS parent was not stopped")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok := m.AssetPath("ch1", PlanFull, hlsPlaylistName); !ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("warm hot-set eviction left the HLS remux and assets alive")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for _, channelID := range []string{"ch2", "ch3"} {
+		if _, ok := m.AssetPath(channelID, PlanFull, hlsPlaylistName); !ok {
+			t.Fatalf("newer warm remux %s was retired before the LRU", channelID)
+		}
+	}
+}
+
+// The HLS remux is an internal sink, not a viewer. Once the manifest request releases its client
+// lease, the underlying session must report zero active viewers even though the remux stays warm and
+// continues consuming transport through its own grace interval.
+func TestHLSManager_IdleWarmRemuxDoesNotCountAsActiveSessionViewer(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	sessions := testManager(t, spawn, 4, time.Minute)
+	m := newTestHLSManager(t, sessions)
+	m.grace = time.Minute
+
+	_, detach, err := m.Playlist("ch1", PlanFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := encoder("ch1").w.Write([]byte("transport")); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	detach()
+
+	stats := sessions.Stats(time.Now())
+	if len(stats) != 1 {
+		t.Fatalf("live sessions = %d, want one warm session", len(stats))
+	}
+	if stats[0].Viewers != 0 {
+		t.Fatalf("active viewers = %d, want zero after the HLS client released", stats[0].Viewers)
 	}
 }
 

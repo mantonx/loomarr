@@ -2,11 +2,15 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,9 +19,11 @@ import (
 	"github.com/loomarr/loomarr/internal/api"
 	"github.com/loomarr/loomarr/internal/diagnostics"
 	"github.com/loomarr/loomarr/internal/filler"
+	"github.com/loomarr/loomarr/internal/inventory"
 	"github.com/loomarr/loomarr/internal/library"
 	"github.com/loomarr/loomarr/internal/metrics"
 	"github.com/loomarr/loomarr/internal/playout"
+	"github.com/loomarr/loomarr/internal/prepared"
 	"github.com/loomarr/loomarr/internal/provision"
 	"github.com/loomarr/loomarr/internal/schedule"
 	"github.com/loomarr/loomarr/internal/store"
@@ -56,9 +62,10 @@ type titleReader interface {
 
 // playoutResolver answers "what is airing now, and where does ffmpeg read it from".
 // clipPlayRecorder is the one-method slice of the store the resolver needs to count an
-// airing. Narrow deliberately — the resolver has no other business writing.
+// airing. `at` is the scheduled clip start, which makes repeated resolves of one airing
+// idempotent in the store. Narrow deliberately — the resolver has no other business writing.
 type clipPlayRecorder interface {
-	RecordClipPlay(ctx context.Context, channelID, clipHash string, at time.Time) error
+	RecordClipPlay(ctx context.Context, channelID, clipHash string, at time.Time) (bool, error)
 }
 
 // airingRecorder stamps that a PROGRAMME aired (§5, programming-design §3.1) — the recency
@@ -130,6 +137,9 @@ type playoutResolver struct {
 
 	// ffmpegPath is the binary the capability probe executes.
 	ffmpegPath func() string
+	// capabilityRoot is the persistent prepared root that carries bounded, regenerable host
+	// capability evidence across restarts. Nil/empty keeps ordinary full detection.
+	capabilityRoot func() string
 	// gpuName reports the primary GPU's name so the capability probe can prefer that vendor's
 	// native encoder (Detect's gpuVendor arg). Nil or "" ⇒ unknown GPU ⇒ the cross-vendor default
 	// order, so an install without the wiring still detects an encoder, just without the native hint.
@@ -138,10 +148,12 @@ type playoutResolver struct {
 	// read live like every other setting. Empty ⇒ the file's first track, which is what playout
 	// did before this existed — and is how a channel played a film in Russian.
 	audioLanguage func() string
-	// probeAudio lists a source's audio tracks so the preference can be resolved to a concrete
-	// index. Nil ⇒ track 0, the pre-existing behaviour: an install that cannot probe still
-	// plays, it just cannot honour the preference.
-	probeAudio playout.AudioProber
+	// probeSource returns the shared ffprobe superset so the audio choice and durable technical
+	// observation come from one process. Nil ⇒ track 0, preserving best-effort playout.
+	probeSource playout.SourceProber
+	// inventory is Loomarr's durable provider-neutral source observation (§5 V66). Audio selection
+	// reads it before Library or ffprobe I/O; nil preserves the safe direct-probe fallback.
+	inventory inventory.Service
 	// probeTracks lists a source's audio AND subtitle tracks for the Watch pickers (§9.1, V46) —
 	// the options come from the airing media, not a list. Nil ⇒ empty tracks, so the pickers show
 	// only the current channel default rather than blocking.
@@ -159,19 +171,29 @@ type playoutResolver struct {
 	// don't store", never to a failed bind.
 	codecs codecWriter
 	cycles *cycleCache
-	// detectOnce / detected cache the measured encoder choice (detectedEncoder). detectStart lets
-	// the first tune kick that work off without waiting for it; detectReady publishes the completed
-	// fields atomically so later programme boundaries use the measured hardware result.
+	// detectOnce / detected cache the measured encoder choice (detectedEncoder). The first live
+	// demand synchronously checks only the persisted evidence fingerprint, then detectStart validates
+	// a match (or performs the full benchmark on a miss) without making playback wait.
 	//
-	// Cached because Detect trial-encodes every candidate at ~5s apiece — fine once, far too
-	// slow on the per-program path. NOT a plain field set at construction: probing eagerly
-	// would add ~20s to every boot for a value most installs never override.
-	detectOnce    sync.Once
-	detectStart   sync.Once
-	detectReady   atomic.Bool
-	detectContext context.Context
-	detected      playout.Encoder
-	maxChannels   atomic.Int64
+	// Process-cached because Detect trial-encodes every candidate at ~5s apiece — fine once, far
+	// too slow on the per-program path. A verified hardware result can also survive restart through
+	// capabilityRoot when its cheap host fingerprint still matches; a bounded real validation then
+	// runs asynchronously.
+	detectOnce     sync.Once
+	detectStart    sync.Once
+	detectEvidence sync.Once
+	inputsOnce     sync.Once
+	detectReady    atomic.Bool
+	detectedMu     sync.RWMutex
+	detectContext  context.Context
+	detected       playout.Encoder
+	maxChannels    atomic.Int64
+	capabilityBin  string
+	capabilityGPU  string
+	capabilityPath string
+	// Test seam for the cheap persisted-evidence identity check. Nil fingerprints the real
+	// FFmpeg/GPU/profile and reads the evidence; it starts no encoder trial or full benchmark.
+	loadCapabilityEvidence func(context.Context) (playout.Capacity, bool)
 }
 
 // AiringNow resolves the channel's current program and its ffmpeg input URL.
@@ -780,12 +802,12 @@ func (r *playoutResolver) airingFiller(
 			// tempting alternatives are both wrong:
 			//   - pod ASSEMBLY re-runs on every 10m reconcile sweep, so it counts what was
 			//     scheduled, over and over, not what aired;
-			//   - the /playout/program HANDLER would count per tune-in, so three viewers on
-			//     one break would be three plays.
-			// Here the resolver is answering one demuxer request for one item, and Attach
-			// starts at most one parent encoder per channel — so this fires once per clip
-			// actually encoded. `into == 0` restricts it to the item's START rather than every
-			// mid-clip re-resolve.
+			//   - counting every resolve as a new play would count viewer reconnects and child
+			//     retries rather than airings.
+			// Here the resolver passes the clip's SCHEDULED start on every resolve. The store
+			// makes that stable identity idempotent. Requiring `into == 0` instead lost every
+			// real transition: a finite encoder child asks for its successor milliseconds after
+			// the boundary, not at the exact nanosecond.
 			//
 			// ⚠ Internal playout only. A Tunarr-backed channel airs its filler through Tunarr,
 			// which never reports back, so those clips stay at zero — "not counted here", not
@@ -795,16 +817,15 @@ func (r *playoutResolver) airingFiller(
 			// `e.Path` from V38c until V41 and every counter stayed at zero. The error below is
 			// swallowed by design, so the miss was silent — the guard is `PodEntry.Hash` now
 			// existing at all, plus the store's ClipKeyIsHashNotPath conformance test.
-			if into == 0 && e.Hash != "" {
-				if r.metrics != nil {
+			if e.Hash != "" && r.clipPlays != nil {
+				startedAt := now.Add(-into)
+				recorded, err := r.clipPlays.RecordClipPlay(ctx, channelID, e.Hash, startedAt)
+				if err != nil {
+					// Telemetry, never correctness: a failed count must not stop a break from
+					// airing. Logged at debug because a pruned clip is an ordinary race.
+					_ = err
+				} else if recorded && r.metrics != nil {
 					r.metrics.FillerRotationAired(e.RecentRepeat, e.RecentRepeat && !e.RotationPinned, e.RotationPinned)
-				}
-				if r.clipPlays != nil {
-					if err := r.clipPlays.RecordClipPlay(ctx, channelID, e.Hash, now); err != nil {
-						// Telemetry, never correctness: a failed count must not stop a break from
-						// airing. Logged at debug because a pruned clip is an ordinary race.
-						_ = err
-					}
 				}
 			}
 			remaining := d - into
@@ -855,10 +876,68 @@ func (r *playoutResolver) airingFiller(
 // One probe per PROGRAMME, not per request: the block supervisor asks for a new program at each
 // boundary, so this runs about as often as a film is long. That is what makes an exec on the
 // broadcast path affordable — and why it must not become per-segment.
-func (r *playoutResolver) AudioTrackFor(ctx context.Context, channelID, streamURL string) int {
-	if r.audioLanguage == nil || r.probeAudio == nil || streamURL == "" {
+const inventoryAudioFreshness = 24 * time.Hour
+
+func (r *playoutResolver) AudioTrackFor(ctx context.Context, channelID, libraryItemID, streamURL string) int {
+	if r.audioLanguage == nil || streamURL == "" {
 		return 0
 	}
+	prefer := r.preferredAudioLanguage(ctx, channelID)
+	if strings.TrimSpace(prefer) == "" {
+		// Explicitly cleared ⇒ the operator wants ffmpeg's original behaviour. Skip the probe
+		// entirely rather than paying for an answer that cannot change the outcome.
+		return 0
+	}
+	if tracks, ok := r.inventoryAudioTracks(ctx, libraryItemID, streamURL); ok {
+		return playout.PickAudioTrack(tracks, prefer)
+	}
+	if r.probeSource == nil {
+		return 0
+	}
+	observed, err := r.probeSource(ctx, streamURL)
+	if err != nil {
+		if r.log != nil {
+			r.log.Debug("playout: audio tracks not probed, using the first",
+				"err", err)
+		}
+		return 0
+	}
+	tracks := observed.AudioTracks()
+	r.recordSourceMeasurement(ctx, libraryItemID, streamURL, observed)
+	return playout.PickAudioTrack(tracks, prefer)
+}
+
+// AudioTrackFromInventory applies the channel's audio policy using only Loomarr-owned durable
+// metadata. A missing observation is explicit so the planner can spend its bounded refresh budget;
+// this path never contacts the Library server and never invokes ffprobe.
+func (r *playoutResolver) AudioTrackFromInventory(
+	ctx context.Context, channelID, libraryItemID string,
+) (int, bool) {
+	if r.audioLanguage == nil {
+		return 0, true
+	}
+	prefer := r.preferredAudioLanguage(ctx, channelID)
+	if strings.TrimSpace(prefer) == "" {
+		return 0, true
+	}
+	if r.inventory == nil || r.lib == nil || strings.TrimSpace(libraryItemID) == "" {
+		return 0, false
+	}
+	origin, err := r.lib.InventoryOrigin(libraryItemID)
+	if err != nil {
+		return 0, false
+	}
+	source, ok, err := r.inventory.ResolveSource(ctx, inventory.SourceRequest{
+		Item: inventory.ItemRef{Origin: &origin}, Kinds: []inventory.SourceKind{inventory.SourceLibraryOriginal},
+		RequiredCoverage: []string{"audioStreams"},
+	})
+	if err != nil || !ok {
+		return 0, false
+	}
+	return playout.PickAudioTrack(playoutAudioTracks(source.Observation.Facts.Streams), prefer), true
+}
+
+func (r *playoutResolver) preferredAudioLanguage(ctx context.Context, channelID string) string {
 	prefer := r.audioLanguage()
 	// A channel override wins over the instance default. Failure to reload the channel is
 	// deliberately non-fatal: AiringNow already resolved enough state to play, so falling back
@@ -868,20 +947,425 @@ func (r *playoutResolver) AudioTrackFor(ctx context.Context, channelID, streamUR
 			prefer = schedule.ResolveAudioLanguage(ch.Policy, prefer)
 		}
 	}
-	if strings.TrimSpace(prefer) == "" {
-		// Explicitly cleared ⇒ the operator wants ffmpeg's original behaviour. Skip the probe
-		// entirely rather than paying for an answer that cannot change the outcome.
-		return 0
+	return prefer
+}
+
+func (r *playoutResolver) inventoryAudioTracks(
+	ctx context.Context,
+	libraryItemID, streamURL string,
+) ([]playout.AudioTrack, bool) {
+	if r.inventory == nil {
+		return nil, false
 	}
-	tracks, err := r.probeAudio(ctx, streamURL)
-	if err != nil {
-		if r.log != nil {
-			r.log.Debug("playout: audio tracks not probed, using the first",
-				"err", err)
+	if localOrigin, ok := r.ensureLocalInventorySource(ctx, streamURL); ok {
+		source, found, err := r.inventory.ResolveSource(ctx, inventory.SourceRequest{
+			Item: inventory.ItemRef{Origin: &localOrigin}, Now: r.inventoryNow(),
+			Kinds: []inventory.SourceKind{inventory.SourceLocalFile}, RequiredCoverage: []string{"audioStreams"},
+		})
+		if err == nil && found {
+			return playoutAudioTracks(source.Observation.Facts.Streams), true
 		}
+		// A local file's stat revision is the authoritative freshness boundary. Library metadata
+		// cannot validate changed local bytes, so a miss falls directly through to one probe.
+		return nil, false
+	}
+	if r.lib == nil || strings.TrimSpace(libraryItemID) == "" {
+		return nil, false
+	}
+	origin, err := r.lib.InventoryOrigin(libraryItemID)
+	if err != nil {
+		return nil, false
+	}
+	request := inventory.SourceRequest{
+		Item: inventory.ItemRef{Origin: &origin}, Now: r.inventoryNow(), MaxAge: inventoryAudioFreshness,
+		RequiredCoverage: []string{"audioStreams"},
+	}
+	if source, ok, resolveErr := r.inventory.ResolveSource(ctx, request); resolveErr == nil && ok {
+		return playoutAudioTracks(source.Observation.Facts.Streams), true
+	}
+
+	snapshot, present, importErr := r.lib.InventorySnapshot(ctx, libraryItemID)
+	if importErr == nil && present {
+		if _, applyErr := r.inventory.ApplySnapshot(ctx, snapshot); applyErr == nil {
+			if source, ok, resolveErr := r.inventory.ResolveSource(ctx, request); resolveErr == nil && ok {
+				return playoutAudioTracks(source.Observation.Facts.Streams), true
+			}
+		} else if r.log != nil {
+			r.log.Debug("playout: library media observation not persisted", "err", applyErr)
+		}
+	} else if importErr != nil && r.log != nil {
+		r.log.Debug("playout: library media observation unavailable", "err", importErr)
+	}
+	return nil, false
+}
+
+func (r *playoutResolver) recordSourceMeasurement(
+	ctx context.Context,
+	libraryItemID, streamURL string,
+	observed playout.SourceObservation,
+) {
+	if r.inventory == nil {
+		return
+	}
+	var ref inventory.ItemRef
+	if localOrigin, ok := r.ensureLocalInventorySource(ctx, streamURL); ok {
+		ref = inventory.ItemRef{Origin: &localOrigin}
+	} else {
+		if r.lib == nil || strings.TrimSpace(libraryItemID) == "" {
+			return
+		}
+		origin, err := r.lib.InventoryOrigin(libraryItemID)
+		if err != nil {
+			return
+		}
+		ref = inventory.ItemRef{Origin: &origin}
+		if _, ok, itemErr := r.inventory.Item(ctx, ref); itemErr == nil && !ok {
+			_ = r.ensureRemoteInventorySource(ctx, origin)
+		}
+	}
+	source, ok, err := r.inventory.ResolveSource(ctx, inventory.SourceRequest{Item: ref})
+	if err != nil || !ok {
+		return
+	}
+	facts := inventoryFactsOf(observed)
+	audioCoverage := inventory.CoverageEmpty
+	for _, stream := range facts.Streams {
+		if stream.Kind == inventory.StreamAudio {
+			audioCoverage = inventory.CoveragePresent
+			break
+		}
+	}
+	measurement := inventory.Measurement{
+		SourceID: source.ID, Revision: source.Revision,
+		Observation: inventory.Observation[inventory.SourceFacts]{
+			SchemaVersion: 1, ObservedAt: r.inventoryNow(),
+			Coverage: map[string]inventory.Coverage{
+				"streams": inventory.CoveragePresent, "audioStreams": audioCoverage,
+			},
+			Facts: facts,
+		},
+	}
+	if err := r.inventory.RecordMeasurement(ctx, measurement); err != nil && r.log != nil {
+		r.log.Debug("playout: measured audio observation not persisted", "err", err)
+	}
+}
+
+// ResolvePreparedSource performs the bounded control-plane half of prepared playout. It keeps
+// direct disk first, imports the exact source into Loomarr's Inventory, and returns only durable
+// identity plus a transient input hint for preferred-audio selection.
+func (r *playoutResolver) ResolvePreparedSource(
+	ctx context.Context, libraryItemID string, pathMap library.PathMap,
+) (prepared.Source, string, bool) {
+	if r == nil || r.lib == nil || r.inventory == nil || strings.TrimSpace(libraryItemID) == "" {
+		return prepared.Source{}, "", false
+	}
+	lib := r.lib.Snapshot()
+	input := lib.ResolveInput(ctx, libraryItemID, pathMap, library.StatReadableFile)
+	if input.URL == "" {
+		return prepared.Source{}, "", false
+	}
+	request := inventory.SourceRequest{Now: r.inventoryNow()}
+	if input.Kind == library.InputFile {
+		origin, ok := r.ensureLocalInventorySource(ctx, input.URL)
+		if !ok {
+			return prepared.Source{}, "", false
+		}
+		request.Item = inventory.ItemRef{Origin: &origin}
+		request.Kinds = []inventory.SourceKind{inventory.SourceLocalFile}
+	} else {
+		origin, err := lib.InventoryOrigin(libraryItemID)
+		if err != nil {
+			return prepared.Source{}, "", false
+		}
+		if snapshot, present, snapshotErr := lib.InventorySnapshot(ctx, libraryItemID); snapshotErr == nil && present {
+			if _, applyErr := r.inventory.ApplySnapshot(ctx, snapshot); applyErr != nil {
+				return prepared.Source{}, "", false
+			}
+		}
+		request.Item = inventory.ItemRef{Origin: &origin}
+		request.Kinds = []inventory.SourceKind{inventory.SourceLibraryOriginal}
+	}
+	resolved, ok, err := r.inventory.ResolveSource(ctx, request)
+	if err != nil || !ok {
+		return prepared.Source{}, "", false
+	}
+	if input.Kind == library.InputHTTP && resolved.Locator.ExternalSourceID != "" {
+		input.URL = lib.StreamURLForSource(resolved.Locator.ExternalItemID, resolved.Locator.ExternalSourceID)
+	}
+	if input.URL == "" {
+		return prepared.Source{}, "", false
+	}
+	return prepared.Source{
+		ItemID: string(resolved.ItemID), SourceID: string(resolved.ID), Revision: resolved.Revision,
+	}, input.URL, true
+}
+
+// ResolvePreparedSourceFromInventory resolves an already imported Library original without a
+// media-server request. When a path map exists it deliberately misses: the refresh path must first
+// attempt the operator's direct-disk mapping instead of silently rebinding the item to HTTP.
+func (r *playoutResolver) ResolvePreparedSourceFromInventory(
+	ctx context.Context, libraryItemID string, pathMap library.PathMap,
+) (prepared.Source, string, bool) {
+	if r == nil || r.lib == nil || r.inventory == nil || len(pathMap) > 0 ||
+		strings.TrimSpace(libraryItemID) == "" {
+		return prepared.Source{}, "", false
+	}
+	lib := r.lib.Snapshot()
+	origin, err := lib.InventoryOrigin(libraryItemID)
+	if err != nil {
+		return prepared.Source{}, "", false
+	}
+	resolved, ok, err := r.inventory.ResolveSource(ctx, inventory.SourceRequest{
+		Item: inventory.ItemRef{Origin: &origin}, Kinds: []inventory.SourceKind{inventory.SourceLibraryOriginal},
+	})
+	if err != nil || !ok {
+		return prepared.Source{}, "", false
+	}
+	input := lib.StreamURLForSource(resolved.Locator.ExternalItemID, resolved.Locator.ExternalSourceID)
+	if input == "" {
+		return prepared.Source{}, "", false
+	}
+	return prepared.Source{
+		ItemID: string(resolved.ItemID), SourceID: string(resolved.ID), Revision: resolved.Revision,
+	}, input, true
+}
+
+// PreparedSourceCurrent compares a durable binding with Loomarr's latest Inventory observation.
+// It performs no source or Library I/O and is called only by the readiness control plane, never tune.
+func (r *playoutResolver) PreparedSourceCurrent(ctx context.Context, selected prepared.Source) bool {
+	if r == nil || r.inventory == nil || strings.TrimSpace(selected.ItemID) == "" {
+		return false
+	}
+	item, ok, err := r.inventory.Item(ctx, inventory.ItemRef{ID: inventory.ItemID(selected.ItemID)})
+	if err != nil || !ok {
+		return false
+	}
+	_, _, ok = preparedInventoryOrigin(item, selected)
+	return ok
+}
+
+// OpenInput is Source Access for background preparation. It verifies the exact Inventory revision,
+// then exposes a protected local path or freshly minted authenticated original-file URL only to
+// FFmpeg. Tune never calls this method.
+func (r *playoutResolver) OpenInput(ctx context.Context, selected prepared.Source) (prepared.Input, error) {
+	if r == nil || r.inventory == nil || strings.TrimSpace(selected.ItemID) == "" ||
+		strings.TrimSpace(selected.SourceID) == "" || strings.TrimSpace(selected.Revision) == "" {
+		return prepared.Input{}, prepared.ErrInvalidSource
+	}
+	item, ok, err := r.inventory.Item(ctx, inventory.ItemRef{ID: inventory.ItemID(selected.ItemID)})
+	if err != nil || !ok {
+		return prepared.Input{}, prepared.ErrSourceChanged
+	}
+	source, origin, ok := preparedInventoryOrigin(item, selected)
+	if !ok {
+		return prepared.Input{}, prepared.ErrSourceChanged
+	}
+	switch source.Kind {
+	case inventory.SourceLocalFile:
+		info, statErr := os.Stat(origin.Locator.Path)
+		if statErr != nil || !info.Mode().IsRegular() || localInventoryRevision(info) != selected.Revision ||
+			!library.StatReadableFile(origin.Locator.Path) {
+			return prepared.Input{}, prepared.ErrSourceChanged
+		}
+		return prepared.LocalInput(origin.Locator.Path), nil
+	case inventory.SourceLibraryOriginal:
+		if r.lib == nil {
+			return prepared.Input{}, prepared.ErrSourceChanged
+		}
+		lib := r.lib.Snapshot()
+		current, originErr := lib.InventoryOrigin(origin.Locator.ExternalItemID)
+		if originErr != nil || current.Authority != origin.Locator.Authority {
+			return prepared.Input{}, prepared.ErrSourceChanged
+		}
+		snapshot, present, refreshErr := lib.InventorySnapshot(ctx, origin.Locator.ExternalItemID)
+		if refreshErr != nil || !present {
+			return prepared.Input{}, prepared.ErrSourceChanged
+		}
+		if _, applyErr := r.inventory.ApplySnapshot(ctx, snapshot); applyErr != nil {
+			return prepared.Input{}, prepared.ErrSourceChanged
+		}
+		item, ok, itemErr := r.inventory.Item(ctx, inventory.ItemRef{ID: inventory.ItemID(selected.ItemID)})
+		if itemErr != nil || !ok {
+			return prepared.Input{}, prepared.ErrSourceChanged
+		}
+		_, origin, ok = preparedInventoryOrigin(item, selected)
+		if !ok {
+			return prepared.Input{}, prepared.ErrSourceChanged
+		}
+		input := lib.StreamURLForSource(origin.Locator.ExternalItemID, origin.Locator.ExternalSourceID)
+		if input == "" {
+			return prepared.Input{}, prepared.ErrSourceChanged
+		}
+		return prepared.HTTPInput(input), nil
+	}
+	return prepared.Input{}, prepared.ErrSourceChanged
+}
+
+func preparedInventoryOrigin(
+	item inventory.Item, selected prepared.Source,
+) (inventory.Source, inventory.SourceOrigin, bool) {
+	for _, source := range item.Sources {
+		if string(source.ID) != selected.SourceID || source.Revision != selected.Revision {
+			continue
+		}
+		for _, origin := range source.Origins {
+			if origin.MissingAt.IsZero() {
+				return source, origin, true
+			}
+		}
+	}
+	return inventory.Source{}, inventory.SourceOrigin{}, false
+}
+
+func (r *playoutResolver) ensureLocalInventorySource(ctx context.Context, input string) (inventory.OriginKey, bool) {
+	info, err := os.Stat(input)
+	if err != nil || info.IsDir() || !info.Mode().IsRegular() {
+		return inventory.OriginKey{}, false
+	}
+	digest := sha256.Sum256([]byte(input))
+	origin := inventory.OriginKey{
+		Authority: "local-playout:v1", ExternalItemID: hex.EncodeToString(digest[:16]),
+	}
+	revision := localInventoryRevision(info)
+	if item, ok, itemErr := r.inventory.Item(ctx, inventory.ItemRef{Origin: &origin}); itemErr == nil && ok {
+		for _, source := range item.Sources {
+			if source.Kind == inventory.SourceLocalFile && source.Revision == revision {
+				return origin, true
+			}
+		}
+	}
+	at := r.inventoryNow()
+	_, err = r.inventory.ApplySnapshot(ctx, inventory.Snapshot{
+		Origin: origin, Kind: "unknown",
+		Observation: inventory.Observation[inventory.ItemFacts]{
+			SchemaVersion: 1, ObservedAt: at,
+			Coverage: map[string]inventory.Coverage{"sources": inventory.CoveragePresent},
+		},
+		Sources: []inventory.SourceSnapshot{{
+			ExternalSourceID: "file", Kind: inventory.SourceLocalFile,
+			Revision: revision,
+			Locator:  inventory.Locator{Path: input},
+			Observation: inventory.Observation[inventory.SourceFacts]{
+				SchemaVersion: 1, ObservedAt: at,
+				Coverage: map[string]inventory.Coverage{"sourceStat": inventory.CoveragePresent},
+				Facts: inventory.SourceFacts{
+					SizeBytes: info.Size(), ModifiedUnixNano: info.ModTime().UnixNano(),
+				},
+			},
+		}},
+	})
+	return origin, err == nil
+}
+
+func localInventoryRevision(info os.FileInfo) string {
+	return fmt.Sprintf("stat:%d:%d", info.Size(), info.ModTime().UnixNano())
+}
+
+func (r *playoutResolver) ensureRemoteInventorySource(ctx context.Context, origin inventory.OriginKey) error {
+	at := r.inventoryNow()
+	_, err := r.inventory.ApplySnapshot(ctx, inventory.Snapshot{
+		Origin: origin, Kind: "unknown",
+		Observation: inventory.Observation[inventory.ItemFacts]{
+			SchemaVersion: 1, ObservedAt: at,
+			Coverage: map[string]inventory.Coverage{"sources": inventory.CoveragePresent},
+		},
+		Sources: []inventory.SourceSnapshot{{
+			ExternalSourceID: "default", Kind: inventory.SourceLibraryOriginal, Revision: "unversioned",
+			Locator: inventory.Locator{
+				Authority: origin.Authority, ExternalItemID: origin.ExternalItemID, ExternalSourceID: "default",
+			},
+			Observation: inventory.Observation[inventory.SourceFacts]{SchemaVersion: 1, ObservedAt: at},
+		}},
+	})
+	return err
+}
+
+func inventoryFactsOf(observed playout.SourceObservation) inventory.SourceFacts {
+	facts := inventory.SourceFacts{
+		Container: observed.Container, DurationMillis: observed.DurationMillis, Bitrate: observed.Bitrate,
+		UnsafePreroll: observed.UnsafePreroll,
+	}
+	for _, stream := range observed.Streams {
+		facts.Streams = append(facts.Streams, inventory.Stream{
+			Index: stream.Index, Kind: inventory.StreamKind(stream.Kind), Codec: stream.Codec,
+			Profile: stream.Profile, Level: stream.Level, Language: stream.Language, Title: stream.Title,
+			Disposition: inventory.Disposition{Default: stream.Default, Forced: stream.Forced},
+			Channels:    stream.Channels, ChannelLayout: stream.ChannelLayout, SampleRate: stream.SampleRate,
+			Width: stream.Width, Height: stream.Height, FrameRate: stream.FrameRate,
+			PixelFormat: stream.PixelFormat, ColorSpace: stream.ColorSpace,
+			ColorTransfer: stream.ColorTransfer, ColorPrimaries: stream.ColorPrimaries,
+			HDR: stream.HDR, Interlaced: stream.Interlaced,
+			SubtitleFormat: func() string {
+				if stream.Kind == string(inventory.StreamSubtitle) {
+					return stream.Codec
+				}
+				return ""
+			}(),
+		})
+	}
+	return facts
+}
+
+func playoutFormatOf(facts inventory.SourceFacts) playout.MediaFormat {
+	format := playout.MediaFormat{
+		Container:    strings.ToLower(strings.TrimSpace(facts.Container)),
+		Duration:     float64(facts.DurationMillis) / float64(time.Second/time.Millisecond),
+		Bitrate:      facts.Bitrate,
+		VideoPreroll: facts.UnsafePreroll,
+	}
+	for _, stream := range facts.Streams {
+		switch stream.Kind {
+		case inventory.StreamVideo:
+			if format.VideoCodec != "" {
+				continue
+			}
+			format.VideoCodec = strings.ToLower(strings.TrimSpace(stream.Codec))
+			format.Width = stream.Width
+			format.Height = stream.Height
+			format.FrameRate = parseInventoryRational(stream.FrameRate)
+			format.PixelFormat = strings.ToLower(strings.TrimSpace(stream.PixelFormat))
+			format.ColorTransfer = strings.ToLower(strings.TrimSpace(stream.ColorTransfer))
+		case inventory.StreamAudio:
+			if format.AudioCodec != "" {
+				continue
+			}
+			format.AudioCodec = strings.ToLower(strings.TrimSpace(stream.Codec))
+			format.AudioChannels = stream.Channels
+			format.AudioSampleRate = stream.SampleRate
+		}
+	}
+	return format
+}
+
+func parseInventoryRational(value string) float64 {
+	numerator, denominator, found := strings.Cut(strings.TrimSpace(value), "/")
+	if !found {
+		parsed, _ := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		return parsed
+	}
+	n, numeratorErr := strconv.ParseFloat(strings.TrimSpace(numerator), 64)
+	d, denominatorErr := strconv.ParseFloat(strings.TrimSpace(denominator), 64)
+	if numeratorErr != nil || denominatorErr != nil || d == 0 {
 		return 0
 	}
-	return playout.PickAudioTrack(tracks, prefer)
+	return n / d
+}
+
+func (r *playoutResolver) inventoryNow() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
+
+func playoutAudioTracks(streams []inventory.Stream) []playout.AudioTrack {
+	tracks := make([]playout.AudioTrack, 0)
+	for _, stream := range streams {
+		if stream.Kind == inventory.StreamAudio {
+			tracks = append(tracks, playout.AudioTrack{SourceIndex: stream.Index, Language: stream.Language})
+		}
+	}
+	return tracks
 }
 
 // Tracks probes the audio + subtitle tracks of what's airing on a channel right now (§9.1 Watch,
@@ -929,7 +1413,22 @@ func (r *playoutResolver) Tracks(ctx context.Context, channelID string) (playout
 func (r *playoutResolver) PlanFor(
 	ctx context.Context, input string, target playout.EncodePlan,
 ) (playout.CopyPlan, playout.MediaFormat) {
-	if r.probeFormat == nil || input == "" {
+	if input == "" {
+		return playout.CopyPlan{}, playout.MediaFormat{} // transcode both
+	}
+	if r.inventory != nil {
+		if origin, ok := r.ensureLocalInventorySource(ctx, input); ok {
+			source, found, err := r.inventory.ResolveSource(ctx, inventory.SourceRequest{
+				Item: inventory.ItemRef{Origin: &origin}, Now: r.inventoryNow(),
+				Kinds: []inventory.SourceKind{inventory.SourceLocalFile}, RequiredCoverage: []string{"streams"},
+			})
+			if err == nil && found {
+				format := playoutFormatOf(source.Observation.Facts)
+				return playout.PlanCopy(format, target), format
+			}
+		}
+	}
+	if r.probeFormat == nil {
 		return playout.CopyPlan{}, playout.MediaFormat{} // transcode both
 	}
 	f, err := r.probeFormat(ctx, input)
@@ -945,9 +1444,9 @@ func (r *playoutResolver) PlanFor(
 func (r *playoutResolver) Profile(ctx context.Context) playout.Profile {
 	enc := playout.Encoder(r.encoder())
 	if enc == "" {
-		// No operator override ⇒ warm the measured answer once, but NEVER make this viewer wait
-		// for the machine benchmark. Until it completes, software is the conservative encoder that
-		// is immediately available; later programme boundaries switch to the cached hardware result.
+		// A matching persisted result is available to this first tune after only its host fingerprint
+		// matches. Its real encoder validation runs asynchronously; a miss likewise starts the full
+		// benchmark in the background and uses software until a safe result is ready.
 		//
 		// This used to fall straight through to libx264 with a comment claiming the
 		// capability prober's choice "was stored at wizard time" — but nothing ever stored
@@ -956,13 +1455,32 @@ func (r *playoutResolver) Profile(ctx context.Context) playout.Profile {
 		// measured rather than inferred from `ffmpeg -encoders` (which lists encoders the
 		// hardware cannot actually run — the exact trap that took a live channel down: the
 		// host listed h264_vulkan, the container had no /dev/dri).
-		r.warmEncoderDetection(ctx)
+		r.reuseEncoderEvidence(ctx)
 		enc = playout.EncoderSoftware
 		if r.detectReady.Load() {
-			enc = r.detected
+			enc = r.publishedEncoder()
 		}
+		r.warmEncoderDetection(ctx)
 	}
 	return playout.Resolve(playout.TierFor(r.tier()), enc, r.capacity(), r.activeChannels())
+}
+
+func (r *playoutResolver) reuseEncoderEvidence(ctx context.Context) {
+	r.detectEvidence.Do(func() {
+		var capacity playout.Capacity
+		var ok bool
+		if r.loadCapabilityEvidence != nil {
+			capacity, ok = r.loadCapabilityEvidence(ctx)
+		} else {
+			bin, gpu, root := r.capabilityInputs()
+			capacity, ok = playout.LoadMatchingObservedCapabilityEvidence(
+				ctx, bin, playout.DefaultProfile(), gpu, root,
+			)
+		}
+		if ok {
+			r.publishDetectedCapacity(capacity, true)
+		}
+	})
 }
 
 // warmEncoderDetection starts the expensive host probe once without putting it on a viewer's
@@ -981,42 +1499,62 @@ func (r *playoutResolver) warmEncoderDetection(fallback context.Context) {
 // detectedEncoder returns the best encoder that actually WORKS here, probing once. Control-plane
 // callers may wait for it; Profile deliberately uses warmEncoderDetection + detectReady instead.
 //
-// Lazily and exactly once, which is the only workable timing: Detect trial-encodes every
-// candidate (~5s each), so it is far too slow for the per-program path and would add ~20s to
-// every boot if done eagerly — for a value most installs never need. The first demand starts it
-// asynchronously; everything after completion reads the cached answer.
-//
-// An operator who changes their hardware (adds GPU passthrough, which is a compose change and
-// needs a restart anyway) gets a fresh probe on the next start.
+// Lazily and exactly once per process, which is the only workable timing: a full Detect trials
+// every candidate and then measures the winner warm. The first demand starts it asynchronously;
+// everything after completion reads the result. A matching persisted hardware result substitutes
+// one short real TS encode, while an FFmpeg/GPU/profile mismatch or failed validation performs the
+// complete measurement and atomically replaces that evidence.
 func (r *playoutResolver) detectedEncoder(ctx context.Context) playout.Encoder {
 	r.detectOnce.Do(func() {
-		bin := r.ffmpegPath()
-		if bin == "" {
-			bin = "ffmpeg"
-		}
-		gpu := ""
-		if r.gpuName != nil {
-			gpu = r.gpuName()
-		}
-		cap := playout.DetectObserved(ctx, bin, playout.DefaultProfile(), gpu, r.processDiagnostics)
-		r.detected = cap.Chosen
-		r.maxChannels.Store(int64(cap.MaxChannels))
-		if r.log != nil {
-			// INFO, not DEBUG: which encoder a box settled on is the first thing anyone asks
-			// when playout is slow, and the per-candidate reasons explain WHY a GPU was
-			// skipped ("Device creation failed" vs "not in this ffmpeg build").
-			skipped := make([]string, 0, len(cap.All))
-			for _, c := range cap.All {
-				if !c.Works {
-					skipped = append(skipped, string(c.Encoder)+": "+c.Err)
-				}
-			}
-			r.log.Info("playout: encoder probed",
-				"chosen", cap.Chosen, "measured_max_channels", cap.MaxChannels,
-				"skipped", skipped)
-		}
-		r.detectReady.Store(true)
+		bin, gpu, root := r.capabilityInputs()
+		cap, reused := playout.DetectObservedWithEvidence(
+			ctx, bin, playout.DefaultProfile(), gpu, root, r.processDiagnostics,
+		)
+		r.publishDetectedCapacity(cap, reused)
 	})
+	return r.publishedEncoder()
+}
+
+func (r *playoutResolver) capabilityInputs() (bin, gpu, root string) {
+	r.inputsOnce.Do(func() {
+		if r.ffmpegPath != nil {
+			r.capabilityBin = r.ffmpegPath()
+		}
+		if r.capabilityBin == "" {
+			r.capabilityBin = "ffmpeg"
+		}
+		if r.gpuName != nil {
+			r.capabilityGPU = r.gpuName()
+		}
+		if r.capabilityRoot != nil {
+			r.capabilityPath = r.capabilityRoot()
+		}
+	})
+	return r.capabilityBin, r.capabilityGPU, r.capabilityPath
+}
+
+func (r *playoutResolver) publishDetectedCapacity(cap playout.Capacity, reused bool) {
+	r.detectedMu.Lock()
+	r.detected = cap.Chosen
+	r.detectedMu.Unlock()
+	r.maxChannels.Store(int64(cap.MaxChannels))
+	if r.log != nil {
+		skipped := make([]string, 0, len(cap.All))
+		for _, c := range cap.All {
+			if !c.Works {
+				skipped = append(skipped, string(c.Encoder)+": "+c.Err)
+			}
+		}
+		r.log.Info("playout: encoder probed",
+			"chosen", cap.Chosen, "measured_max_channels", cap.MaxChannels,
+			"reused_verified_evidence", reused, "skipped", skipped)
+	}
+	r.detectReady.Store(true)
+}
+
+func (r *playoutResolver) publishedEncoder() playout.Encoder {
+	r.detectedMu.RLock()
+	defer r.detectedMu.RUnlock()
 	return r.detected
 }
 
@@ -1050,14 +1588,18 @@ func effectivePlayoutAnchor(ch store.Channel) (time.Time, error) {
 // encode regardless of how many programs it plays.
 func playoutSpawner(
 	ffmpegBin string, publicURL func() string, token func() string, log *slog.Logger,
-	processDiagnostics *diagnostics.ProcessManager,
+	processDiagnostics *diagnostics.ProcessManager, preparedSource func() playout.BlockSource,
 ) playout.Spawner {
 	return func(ctx context.Context, channelID string, target playout.EncodePlan) (*playout.Process, error) {
 		base := publicURL()
 		if base == "" {
 			return nil, fmt.Errorf("playout: server.public_url is not set, so the session cannot open blocks")
 		}
-		source := playoutBlockSource(base, token, http.DefaultClient)
+		var prepared playout.BlockSource
+		if preparedSource != nil {
+			prepared = preparedSource()
+		}
+		source := playoutBlockSource(base, token, http.DefaultClient, prepared)
 		return playout.BlockSpawner(ffmpegBin, source, log, processDiagnostics)(ctx, channelID, target)
 	}
 }
@@ -1065,9 +1607,27 @@ func playoutSpawner(
 // playoutBlockSource owns the internal HTTP hop and the session-scoped broadcast token. The first
 // child chooses a format from the load ladder; every later child must acknowledge that exact format
 // before its bytes can enter the long-lived mux.
-func playoutBlockSource(base string, token func() string, client *http.Client) playout.BlockSource {
+func playoutBlockSource(
+	base string, token func() string, client *http.Client, preparedSource playout.BlockSource,
+) playout.BlockSource {
 	var broadcast string
 	return func(blockCtx context.Context, blockChannel string, blockPlan playout.EncodePlan) (playout.Block, error) {
+		if preparedSource != nil {
+			block, err := preparedSource(blockCtx, blockChannel, blockPlan)
+			if err == nil && block.Content != nil {
+				format, valid := playout.ParseBroadcastFormat(block.Format.String())
+				canonical := format.String()
+				if valid && (broadcast == "" || canonical == broadcast) {
+					broadcast = canonical
+					block.Format = format
+					return block, nil
+				}
+				_ = block.Content.Close()
+			}
+			if blockCtx.Err() != nil {
+				return playout.Block{}, blockCtx.Err()
+			}
+		}
 		query := url.Values{
 			"token": []string{token()},
 			"plan":  []string{blockPlan.String()},
@@ -1109,6 +1669,6 @@ func playoutBlockSource(base string, token func() string, client *http.Client) p
 			_ = resp.Body.Close()
 			return playout.Block{}, fmt.Errorf("playout: block endpoint returned no valid airing identity")
 		}
-		return playout.Block{Content: resp.Body, Identity: identity}, nil
+		return playout.Block{Content: resp.Body, Identity: identity, Format: format}, nil
 	}
 }

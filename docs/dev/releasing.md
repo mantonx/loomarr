@@ -34,8 +34,10 @@ limitations.
 ## What the model can and cannot do
 
 The helper first asks GitHub to generate the exact merged-PR list, contributor list, and compare link.
-It sends only each PR number and title to OpenRouter. The response must assign every number exactly
-once to one of these fixed sections:
+It sends only each PR number and title to OpenRouter. The structured response is one closed object:
+every exact PR number is a required property, and its value must be one of these fixed sections. That
+shape encodes one assignment per PR even for unusually large releases instead of asking the model to
+repeat PR numbers across seven independent arrays:
 
 - New Features
 - Improvements
@@ -45,10 +47,10 @@ once to one of these fixed sections:
 - Dependencies
 - Maintenance
 
-Repository code renders GitHub's original bullet for each assignment. It rejects unknown JSON fields,
-invented PRs, duplicate PRs, omitted PRs, malformed output, and unrecognized GitHub change lines. It
-retries inference three times and then fails without creating a GitHub Release. It never silently
-publishes uncategorized or model-authored notes.
+Repository code renders GitHub's original bullet for each assignment. It independently rejects unknown
+JSON fields, invented PRs, duplicate keys, omitted PRs, invalid categories, malformed output, and
+unrecognized GitHub change lines. It retries inference three times and then fails without creating a
+GitHub Release. It never silently publishes uncategorized or model-authored notes.
 
 ## Tag and verify
 

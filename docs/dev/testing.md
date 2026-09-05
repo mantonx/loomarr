@@ -110,7 +110,7 @@ tokens are provider-reported prompt plus completion totals. The shared Runner le
 ceilings before generator/judge boundaries and after each bounded call record. Exhaustion records the
 closed `budget_exhausted` stage and prevents later calls/runs; it is not merely calculated after the
 suite. Missing provider attribution stays unknown and is never converted to fabricated usage.
-Scorecard schema v11 also embeds a canonical quality run snapshot when corpus, generator model, and
+Scorecard schema v12 also embeds a canonical quality run snapshot when corpus, generator model, and
 profile are declared. It binds the requested model/provider, unanimously reported resolved model
 (or explicit missing resolution), profile as the budget profile, executable version, and accounting
 availability without retaining prompts, endpoints, credentials, payloads, or provider generation ids.

@@ -26,6 +26,16 @@ func TestClassifySuggestionQualityFailureStageBoundaries(t *testing.T) {
 			},
 		},
 		{
+			name:    "alternate searches returned no candidates",
+			trace:   DecisionTrace{Version: DecisionTraceVersion, Terminal: ReasonRetrievalEmpty},
+			failure: &Failure{Code: FailureCodeNoGroundedTitles},
+			want: []quality.Observation{
+				{Stage: quality.StageRetrieval, Outcome: quality.OutcomeEmpty},
+				{Stage: quality.StageGeneration, Outcome: quality.OutcomeAbstained, Duration: time.Second},
+				{Stage: quality.StageGrounding, Outcome: quality.OutcomeRejected},
+			},
+		},
+		{
 			name:    "provider failed before retrieval",
 			trace:   DecisionTrace{Version: DecisionTraceVersion, Terminal: TerminalProviderFailure},
 			failure: &Failure{Code: FailureProvider},

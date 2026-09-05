@@ -67,11 +67,13 @@ func NewFFmpegPackager(path string, videoArgs ...VideoArgs) *FFmpegPackager {
 	return &FFmpegPackager{path: path, videoArgs: args}
 }
 
-func (p *FFmpegPackager) Package(ctx context.Context, workspace string, source Source, rendition RenditionContract) (Output, error) {
+func (p *FFmpegPackager) Package(
+	ctx context.Context, workspace string, input Input, audioTrack int, rendition RenditionContract,
+) (Output, error) {
 	if p == nil {
 		return Output{}, ErrPackagerUnavailable
 	}
-	args, err := ffmpegPackageArgsWith(workspace, source, rendition, p.videoArgs)
+	args, err := ffmpegPackageArgsWith(workspace, input, audioTrack, rendition, p.videoArgs)
 	if err != nil {
 		return Output{}, err
 	}
@@ -83,7 +85,7 @@ func (p *FFmpegPackager) Package(ctx context.Context, workspace string, source S
 	cmd.Stdout = io.Discard
 	run := p.diagnostics.Begin(diagnostics.ProcessSpec{
 		Purpose: "prepared_package", Target: fmt.Sprintf("%s-%dx%d", rendition.VideoCodec, rendition.Width, rendition.Height),
-		Executable: p.path, Args: args,
+		Executable: p.path, Args: diagnosticArgs(args, input.url),
 	})
 	if err := cmd.Start(); err != nil {
 		if run != nil {
@@ -110,7 +112,8 @@ func (p *FFmpegPackager) Package(ctx context.Context, workspace string, source S
 		run.Finish(diagnostics.ProcessResult{Err: err, Cancelled: ctx.Err() != nil, TerminationReason: cancellationReason(ctx)})
 	}
 	if err != nil {
-		return Output{}, fmt.Errorf("prepared: ffmpeg package: %w: %s", err, commandDiagnostic(output.bytes()))
+		diagnostic := strings.ReplaceAll(commandDiagnostic(output.bytes()), input.url, "[input]")
+		return Output{}, fmt.Errorf("prepared: ffmpeg package: %w: %s", err, diagnostic)
 	}
 	return collectPackagedOutput(workspace)
 }
@@ -144,14 +147,14 @@ func cancellationReason(ctx context.Context) string {
 	return ""
 }
 
-func ffmpegPackageArgs(workspace string, source Source, r RenditionContract) ([]string, error) {
-	return ffmpegPackageArgsWith(workspace, source, r, softwareVideoArgs)
+func ffmpegPackageArgs(workspace string, input Input, audioTrack int, r RenditionContract) ([]string, error) {
+	return ffmpegPackageArgsWith(workspace, input, audioTrack, r, softwareVideoArgs)
 }
 
 func ffmpegPackageArgsWith(
-	workspace string, source Source, r RenditionContract, videoArgs VideoArgs,
+	workspace string, input Input, audioTrack int, r RenditionContract, videoArgs VideoArgs,
 ) ([]string, error) {
-	if strings.TrimSpace(workspace) == "" || strings.TrimSpace(source.Path) == "" || source.AudioTrack < 0 ||
+	if strings.TrimSpace(workspace) == "" || strings.TrimSpace(input.url) == "" || audioTrack < 0 ||
 		r.Width <= 0 || r.Height <= 0 || r.FrameRate <= 0 || r.VideoBitrateKbps <= 0 ||
 		r.AudioBitrateKbps <= 0 || r.SegmentDurationMS <= 0 || r.PackagingVersion != CurrentPackagingVersion ||
 		videoArgs == nil {
@@ -178,7 +181,16 @@ func ffmpegPackageArgsWith(
 	segmentSeconds := float64(r.SegmentDurationMS) / 1000
 	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin"}
 	args = append(args, video.InputArgs...)
-	args = append(args, "-i", source.Path, "-map", "0:v:0", "-map", fmt.Sprintf("0:a:%d", source.AudioTrack))
+	if input.http {
+		args = append(args,
+			"-reconnect", "1", "-reconnect_on_network_error", "1",
+			"-reconnect_streamed", "1", "-multiple_requests", "1",
+		)
+	}
+	args = append(args,
+		"-probesize", "256k", "-analyzeduration", "500000",
+		"-i", input.url, "-map", "0:v:0", "-map", fmt.Sprintf("0:a:%d", audioTrack),
+	)
 	args = append(args, video.OutputArgs...)
 	args = append(args,
 		"-c:a", "aac", "-b:a", fmt.Sprintf("%dk", r.AudioBitrateKbps), "-ac", strconv.Itoa(audioChannels),
@@ -189,6 +201,16 @@ func ffmpegPackageArgsWith(
 		filepath.Join(workspace, MediaManifestName),
 	)
 	return args, nil
+}
+
+func diagnosticArgs(args []string, input string) []string {
+	clean := append([]string(nil), args...)
+	for i := range clean {
+		if clean[i] == input {
+			clean[i] = "[input]"
+		}
+	}
+	return clean
 }
 
 func softwareVideoArgs(r RenditionContract) (VideoPlan, error) {

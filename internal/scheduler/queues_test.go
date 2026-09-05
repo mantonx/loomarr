@@ -27,8 +27,11 @@ func TestQueueFor_TheCeilingChoosesTheQueue(t *testing.T) {
 	if got := queueFor(queueTestJob("quick", 0)); got != river.QueueDefault {
 		t.Errorf("a job with no declared ceiling = %q, want %q", got, river.QueueDefault)
 	}
+	if got := queueFor(queueTestJob("bounded", 10*time.Second)); got != river.QueueDefault {
+		t.Errorf("a job bounded below River's default ceiling = %q, want %q", got, river.QueueDefault)
+	}
 	if got := queueFor(queueTestJob("slow", LongJobTimeout)); got != longQueue {
-		t.Errorf("a job with a declared ceiling = %q, want %q", got, longQueue)
+		t.Errorf("a job above River's default ceiling = %q, want %q", got, longQueue)
 	}
 }
 
@@ -63,12 +66,14 @@ func TestRiverQueues_EveryJobRoutesToAQueueThatHasAProducer(t *testing.T) {
 
 // A registry with no long-running job must not mint an idle producer.
 func TestRiverQueues_NoLongJobsMeansNoLongQueue(t *testing.T) {
-	s := New(newFakeStore(), NewRegistry().Add(queueTestJob("quick", 0)), nil, time.Now, testLog())
+	s := New(newFakeStore(), NewRegistry().
+		Add(queueTestJob("quick", 0)).
+		Add(queueTestJob("bounded", 10*time.Second)), nil, time.Now, testLog())
 
 	queues := s.riverQueues(nil)
 
 	if _, ok := queues[longQueue]; ok {
-		t.Errorf("queues = %v, want no `long` producer when nothing declares a ceiling", queues)
+		t.Errorf("queues = %v, want no `long` producer when no ceiling exceeds River's default", queues)
 	}
 }
 

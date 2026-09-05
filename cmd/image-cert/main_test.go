@@ -14,7 +14,7 @@ import (
 )
 
 func TestRunWritesTheRepositoryCertificationReport(t *testing.T) {
-	worker, err := filepath.Abs(filepath.Join("..", "..", "target", "debug", "loomarr-image"))
+	worker, err := testkit.RustImageWorker()
 	if err != nil {
 		t.Fatal(err)
 	}

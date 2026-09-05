@@ -181,6 +181,20 @@ func TestScore_EmptyInputZeroScores(t *testing.T) {
 	}
 }
 
+func TestThemeFitDoesNotUseModelRationaleAsEvidence(t *testing.T) {
+	got := suggest.ThemeFitForTest(
+		suggest.Intent{Description: "friday family showcase"},
+		[]suggest.ProposalItem{{
+			Name: "Orbital Detectives", Genres: []string{"Science Fiction"},
+			Rationale: "A perfect match for the Friday Family Showcase.",
+		}},
+		nil,
+	)
+	if got != 0 {
+		t.Fatalf("model-authored rationale manufactured theme evidence: got %v", got)
+	}
+}
+
 // TestComposite_WeightsSumToOne: the composite weights sum to exactly 1.0, so a
 // proposal that maxes every sub-score gets Overall == 1.0 exactly (and an all-zero
 // one gets 0.0). This pins the invariant the design doc calls out ("Weights sum to

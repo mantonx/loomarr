@@ -20,9 +20,9 @@ import (
 // That inverts the usual VOD shape, where each viewer legitimately has their own position
 // and their own transcode. viewra is a VOD transcoder, and its session manager EVICTED
 // other sessions to make room when it hit its limit (prior-art, viewra §1) — behaviour
-// which for playout means one person tuning in kills someone else's channel. Here the
-// limit is an admission bound (`AtCapacity`) instead: we refuse the newcomer and keep
-// faith with the people already watching.
+// which for playout means one person tuning in kills someone else's channel. Here active
+// viewers are never eviction candidates: admission first retires the least-recently-viewed
+// grace-idle transcode, then returns `AtCapacity` if every costly session is still wanted.
 //
 // Three failure modes get explicit machinery below, because each is easy to write wrong
 // and none of them fails loudly:
@@ -46,6 +46,15 @@ var ErrAtCapacity = errors.New("playout: at channel capacity")
 // the drop while holding more memory per stalled TV.
 const viewerBuffer = 8
 
+// warmIdleSessionLimit is the complete process-wide speculative/retained live hot set. The Watch
+// controller warms only the previous and next Channels beside current, so retaining more than two
+// proven-warm idle (Channel, EncodePlan) sessions buys no product latency while keeping their parent
+// and HLS process/file-descriptor/scratch cost alive. Viewer-active sessions are outside this limit.
+//
+// This is deliberately an internal invariant rather than a setting or constructor argument: callers
+// request playback and report demand; they do not arbitrate the Manager's lifecycle policy.
+const warmIdleSessionLimit = 2
+
 // Session is one channel's encoder plus its connected viewers.
 type Session struct {
 	ChannelID string
@@ -56,8 +65,9 @@ type Session struct {
 	Plan EncodePlan
 
 	// cost is this session's contribution to the manager's committedCost — 1 if it TRANSCODES video,
-	// 0 if it `-c copy`s (§9.1 V49 admission). Starts as Plan.EstimatedCost() at admission (a
-	// conservative guess) and is corrected to the real CopyPlan.Cost() when the first program reports.
+	// 0 if it `-c copy`s (§9.1 V49 admission). It starts from the tune-time estimate and transitions
+	// atomically to each real program's cost before that child starts; progress reports repeat the
+	// transition idempotently for legacy callers.
 	// Read/written under Manager.mu (the manager owns the budget accounting), not the session mu.
 	cost int
 
@@ -84,6 +94,12 @@ type Session struct {
 	// stopped. Copied down for the same reason as `grace`: a parent pointer would mean
 	// reaching back through the manager's lock from inside the session's.
 	onClosed func()
+	// onDemandChange publishes active↔idle viewer transitions after the session lock is released.
+	onDemandChange func()
+	// onBecameIdle lets the Manager enforce its process-wide warm-session invariant after the
+	// session lock is released. Separate from onDemandChange because active transitions need
+	// telemetry but cannot make the idle set exceed its limit.
+	onBecameIdle func()
 
 	// startedAt is when the channel came on air — the dashboard's uptime, and the denominator
 	// for judging whether a low speed is a cold start or a sustained problem.
@@ -93,6 +109,10 @@ type Session struct {
 	// one number that tracks the black-screen symptom directly; 0 until the first bytes arrive.
 	// Written once in pump under mu, read in stat().
 	coldStartMs int64
+	// hasTransport distinguishes a genuinely warm session from a process that started but never
+	// emitted a byte. coldStartMs cannot do that: a healthy first read may complete in under 1ms and
+	// legitimately round to zero. Only proven transport earns the idle grace window.
+	hasTransport bool
 	// encoder is the hardware/software choice the CURRENT program resolved (§9.1). The single
 	// most actionable telemetry an operator has: it is the difference between four concurrent
 	// streams and one.
@@ -108,7 +128,14 @@ type Session struct {
 
 	mu      sync.Mutex
 	viewers map[int]sessionViewer
-	nextID  int
+	// inactiveViewers are internal sinks retained only to keep a delivery adapter warm. They still
+	// receive bytes, but do not represent current viewer demand and are eligible for idle eviction.
+	inactiveViewers map[int]bool
+	nextID          int
+	// idleSince is nonzero only while this proven-warm session has no viewers. Admission uses it to
+	// reclaim the least-recently-viewed idle transcode before refusing a foreground tune.
+	idleSince      time.Time
+	idleGeneration uint64
 	// last is the most recent progress sample from the CURRENT program's encoder (see
 	// `encoder` above for why it is not the session's own process). The parser has always run
 	// and every caller passed `nil` for its callback, so each sample was parsed and discarded —
@@ -145,6 +172,9 @@ type SessionStat struct {
 	// ColdStartMS is how long this channel took from session start to first frame — the black-screen
 	// window a viewer waited through (§9.1 V47 doctor). 0 before the first bytes arrive.
 	ColdStartMS int64 `json:"coldStartMs"`
+	// TranscodeCost is this session's current video-transcode admission cost. Zero means the
+	// programme copies video; one means it consumes one measured hardware/software encode slot.
+	TranscodeCost int `json:"transcodeCost"`
 }
 
 // sessionKey identifies one live encoder. A channel does NOT have a single stream — it has one
@@ -177,6 +207,10 @@ type Manager struct {
 	// hardware encodes) and capped by any operator override. Re-read on every admission so a settings
 	// change or a model loading/unloading re-applies without a restart. <=0 ⇒ unmeasured, never block.
 	budget func() int
+	// estimateCost may prove a cold session will begin from an already prepared copy-only block.
+	// It runs outside mu so independent Channel lookups remain parallel. Nil keeps the conservative
+	// one-slot reservation until the first live program report.
+	estimateCost func(context.Context, string, EncodePlan) int
 	// committedCost is the summed admission cost of live sessions — the number of them currently
 	// TRANSCODING video (a `-c copy` session costs 0). Compared against budget() to admit. Guarded by
 	// mu; each session's contribution is tracked on the Session (cost) so a report/teardown adjusts it.
@@ -230,6 +264,13 @@ func (m *Manager) OnChange(fn func()) { m.onChange = fn }
 // WithObserver binds one application generation's session lifecycle observer.
 func (m *Manager) WithObserver(observer SessionObserver) *Manager {
 	m.observer = observer
+	return m
+}
+
+// WithCostEstimator installs a lookup-only cold-session cost proof. Only zero is a relaxation;
+// every other result retains the conservative one-transcode reservation.
+func (m *Manager) WithCostEstimator(estimate func(context.Context, string, EncodePlan) int) *Manager {
+	m.estimateCost = estimate
 	return m
 }
 
@@ -304,18 +345,38 @@ func (m *Manager) Attach(ctx context.Context, channelID string, plan EncodePlan)
 // HLS remux, whose input must absorb ffmpeg's finite readrate startup burst without crossing the
 // eight-chunk mailbox intended for network viewers. The sink's offer is synchronous and must stay
 // non-blocking; returning false drops only that sink, preserving the channel for every other viewer.
-func (m *Manager) AttachSink(ctx context.Context, channelID string, plan EncodePlan, sink sessionSink) (func(), error) {
+func (m *Manager) AttachSink(ctx context.Context, channelID string, plan EncodePlan, sink sessionSink) (sinkLease, error) {
 	key := sessionKey{channel: channelID, plan: plan}
 	for {
 		s, err := m.acquire(ctx, key)
 		if err != nil {
-			return nil, err
+			return sinkLease{}, err
 		}
-		if detach, ok := s.addSink(sink); ok {
-			return detach, nil
+		if lease, ok := s.addSink(sink); ok {
+			return lease, nil
 		}
 		m.discardClosed(key, s)
 	}
+}
+
+// sinkLease lets an in-process delivery adapter distinguish retained warmth from current viewer
+// demand without exposing Session lifecycle machinery. A plain byte-stream viewer is always active.
+type sinkLease struct {
+	release   func()
+	setActive func(bool) bool
+}
+
+func (l sinkLease) Release() {
+	if l.release != nil {
+		l.release()
+	}
+}
+
+func (l sinkLease) SetActive(active bool) bool {
+	if l.setActive == nil {
+		return true
+	}
+	return l.setActive(active)
 }
 
 // acquire finds or starts the one session for a channel/plan. Viewer registration is deliberately
@@ -343,16 +404,47 @@ func (m *Manager) acquire(ctx context.Context, key sessionKey) (*Session, error)
 		}
 		return s, nil
 	}
-	// Admission, not eviction (§9.1 V49 — COST-AWARE). The bound counts concurrent VIDEO TRANSCODES,
+	m.mu.Unlock()
+
+	// A prepared lookup can prove this exact cold start is copy-only before admission. Keep it
+	// outside the Manager lock: the lookup reads durable schedule/readiness state, and serializing
+	// unrelated Channels behind that I/O would recreate the multi-Channel cold-start convoy.
+	newCost := key.plan.EstimatedCost()
+	if m.estimateCost != nil && m.estimateCost(ctx, key.channel, key.plan) == 0 {
+		newCost = 0
+	}
+
+	// Another caller may have reserved this key while the estimate ran. Join its placeholder rather
+	// than spawning a second process; the same-key atomicity contract still holds.
+	m.mu.Lock()
+	if s := m.sessions[key]; s != nil {
+		m.mu.Unlock()
+		<-s.ready
+		if s.initErr != nil {
+			m.discardFailed(key, s)
+			return m.acquire(ctx, key)
+		}
+		return s, nil
+	}
+	// Cost-aware admission with idle reclamation (§9.1 V49). The bound counts concurrent VIDEO TRANSCODES,
 	// not sessions: a `-c copy` session (an h264 channel, or HEVC to an HEVC-capable client) costs 0
 	// and is always admitted, so a channel watched at two plans (baseline + hevc8) costs ONE (the
 	// baseline transcode), not two — the plan-split no longer halves capacity. The incoming cost is
-	// conservatively estimated as one here and corrected to the real cost on the first
-	// program report. Checked under the lock against the live committedCost so parallel starts cannot
-	// overshoot the budget.
-	newCost := key.plan.EstimatedCost()
+	// estimated here and atomically transitioned to the real cost before each program child starts.
+	// Checked under the lock against the live committedCost so parallel starts cannot
+	// overshoot the budget. A full budget may reclaim proven-warm work with zero viewer demand, but
+	// never an actively watched session.
 	if !Admit(m.budget(), m.committedCost, newCost) {
+		candidates := make([]idleCandidate, 0, len(m.sessions))
+		for candidateKey, candidateSession := range m.sessions {
+			if candidateSession.cost > 0 {
+				candidates = append(candidates, idleCandidate{key: candidateKey, session: candidateSession})
+			}
+		}
 		m.mu.Unlock()
+		if reclaimOldestIdle(candidates) {
+			return m.acquire(ctx, key)
+		}
 		if m.observer != nil {
 			m.observer.PlayoutSessionStarted("capacity")
 		}
@@ -396,6 +488,81 @@ func (m *Manager) acquire(ctx context.Context, key sessionKey) (*Session, error)
 	return s, nil
 }
 
+type idleCandidate struct {
+	key     sessionKey
+	session *Session
+}
+
+// reclaimOldestIdle retires at most one proven-warm, zero-viewer transcode. Candidate sessions are
+// snapshotted under Manager.mu, then inspected and closed without it: Session.close calls back into
+// the manager to release cost, so holding the manager lock across close would deadlock.
+func reclaimOldestIdle(candidates []idleCandidate) bool {
+	_, oldest, oldestGeneration, ok := oldestIdle(candidates)
+	if !ok {
+		return false
+	}
+	return oldest.session.closeIfIdle(oldestGeneration)
+}
+
+// oldestIdle inspects one snapshot without holding Manager.mu. It returns the total currently-idle
+// count as well as the oldest exact idle generation, so both transcode admission and the aggregate
+// warm-session invariant share one LRU/ABA decision instead of growing subtly different policies.
+func oldestIdle(candidates []idleCandidate) (int, idleCandidate, uint64, bool) {
+	idleCount := 0
+	var oldest idleCandidate
+	var oldestSince time.Time
+	var oldestGeneration uint64
+	found := false
+	for _, candidate := range candidates {
+		candidate.session.mu.Lock()
+		idleSince := candidate.session.idleSince
+		idleGeneration := candidate.session.idleGeneration
+		idle := !candidate.session.closed && candidate.session.activeViewerCountLocked() == 0 && !idleSince.IsZero()
+		candidate.session.mu.Unlock()
+		if !idle {
+			continue
+		}
+		idleCount++
+		if !found || idleSince.Before(oldestSince) ||
+			(idleSince.Equal(oldestSince) && lessSessionKey(candidate.key, oldest.key)) {
+			oldest = candidate
+			oldestSince = idleSince
+			oldestGeneration = idleGeneration
+			found = true
+		}
+	}
+	return idleCount, oldest, oldestGeneration, found
+}
+
+// enforceWarmIdleLimit closes the least-recently-viewed exact idle generation until at most the
+// two useful adjacent sessions remain. Selection and close are deliberately outside Manager.mu:
+// close calls back into forget, and holding the manager lock across it would deadlock. A failed
+// close means a viewer or a newer idle generation won the ABA race, so resnapshot rather than
+// evicting a now-active session or leaving a stale over-limit decision in force.
+func (m *Manager) enforceWarmIdleLimit() {
+	for {
+		m.mu.Lock()
+		candidates := make([]idleCandidate, 0, len(m.sessions))
+		for key, session := range m.sessions {
+			candidates = append(candidates, idleCandidate{key: key, session: session})
+		}
+		m.mu.Unlock()
+
+		idleCount, oldest, idleGeneration, ok := oldestIdle(candidates)
+		if idleCount <= warmIdleSessionLimit || !ok {
+			return
+		}
+		_ = oldest.session.closeIfIdle(idleGeneration)
+	}
+}
+
+func lessSessionKey(left, right sessionKey) bool {
+	if left.channel != right.channel {
+		return left.channel < right.channel
+	}
+	return left.plan < right.plan
+}
+
 func (m *Manager) discardFailed(key sessionKey, s *Session) {
 	m.mu.Lock()
 	if m.sessions[key] == s {
@@ -420,7 +587,7 @@ func (m *Manager) discardClosed(key sessionKey, s *Session) {
 // spawnPlaceholder resolves it (success or initErr), so concurrent same-key callers share one spawn.
 func (m *Manager) newPlaceholder(channelID string, plan EncodePlan) *Session {
 	key := sessionKey{channel: channelID, plan: plan}
-	return &Session{
+	s := &Session{
 		ChannelID: channelID,
 		Plan:      plan,
 		log:       m.log,
@@ -428,11 +595,18 @@ func (m *Manager) newPlaceholder(channelID string, plan EncodePlan) *Session {
 		// On terminal close (grace teardown, encoder death, or Stop), the session must both leave the
 		// map AND release its admission cost (§9.1 V49), then notify. close() is single-fire (guarded
 		// by s.closed), so forget runs exactly once — no double-subtract. forget does the notify.
-		onClosed:  func() { m.forget(key) },
-		startedAt: time.Now(),
-		viewers:   map[int]sessionViewer{},
-		ready:     make(chan struct{}),
+		onDemandChange:  m.notifyChange,
+		onBecameIdle:    m.enforceWarmIdleLimit,
+		startedAt:       time.Now(),
+		viewers:         map[int]sessionViewer{},
+		inactiveViewers: map[int]bool{},
+		ready:           make(chan struct{}),
 	}
+	// Capture identity as well as key. An old close callback can race a foreground Attach that
+	// has already replaced this closed session at the same key; it must never delete or release
+	// the replacement's admission cost.
+	s.onClosed = func() { m.forget(key, s) }
+	return s
 }
 
 // spawnPlaceholder runs the ffmpeg spawn for a reserved placeholder OUTSIDE m.mu, then closes
@@ -499,7 +673,8 @@ func (s *Session) pump() {
 				// First bytes — the cold-start window (start → first frame) closes here.
 				s.mu.Lock()
 				s.coldStartMs = time.Since(s.startedAt).Milliseconds()
-				vc := len(s.viewers)
+				s.hasTransport = true
+				vc := s.activeViewerCountLocked()
 				cold := s.coldStartMs
 				s.mu.Unlock()
 				if s.log != nil {
@@ -541,15 +716,37 @@ func (s *Session) pump() {
 // else notices.
 func (s *Session) broadcast(chunk []byte) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	droppedActive := false
 	for id, viewer := range s.viewers {
 		if !viewer.offer(chunk) {
 			if s.log != nil {
 				s.log.Debug("playout: dropping viewer that fell behind",
 					"channel", s.ChannelID, "viewer", id)
 			}
+			if !s.inactiveViewers[id] {
+				droppedActive = true
+			}
 			delete(s.viewers, id)
+			delete(s.inactiveViewers, id)
 			viewer.close()
+		}
+	}
+	becameIdle := droppedActive && s.activeViewerCountLocked() == 0 && !s.closed && s.hasTransport
+	idleGeneration := s.idleGeneration
+	if becameIdle {
+		s.idleSince = time.Now()
+		s.idleGeneration++
+		idleGeneration = s.idleGeneration
+	}
+	s.mu.Unlock()
+
+	if droppedActive && s.onDemandChange != nil {
+		s.onDemandChange()
+	}
+	if becameIdle {
+		s.onIdle(idleGeneration)
+		if s.onBecameIdle != nil {
+			s.onBecameIdle()
 		}
 	}
 }
@@ -582,49 +779,173 @@ type sessionSink interface {
 // addViewer registers a viewer. Reports false if the session is already tearing down.
 func (s *Session) addViewer() (<-chan []byte, func(), bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil, nil, false
 	}
 	id := s.nextID
 	s.nextID++
 	ch := make(chan []byte, viewerBuffer)
 	s.viewers[id] = &channelViewer{chunks: ch}
+	s.idleSince = time.Time{}
+	s.idleGeneration++
 
 	var once sync.Once
 	detach := func() { once.Do(func() { s.removeViewer(id) }) }
+	s.mu.Unlock()
+	if s.onDemandChange != nil {
+		s.onDemandChange()
+	}
 	return ch, detach, true
 }
 
-func (s *Session) addSink(sink sessionSink) (func(), bool) {
+func (s *Session) addSink(sink sessionSink) (sinkLease, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
-		return nil, false
+		s.mu.Unlock()
+		return sinkLease{}, false
 	}
 	id := s.nextID
 	s.nextID++
 	s.viewers[id] = sink
+	s.idleSince = time.Time{}
+	s.idleGeneration++
 
 	var once sync.Once
 	detach := func() { once.Do(func() { s.removeViewer(id) }) }
-	return detach, true
+	lease := sinkLease{
+		release:   detach,
+		setActive: func(active bool) bool { return s.setViewerActive(id, active) },
+	}
+	s.mu.Unlock()
+	if s.onDemandChange != nil {
+		s.onDemandChange()
+	}
+	return lease, true
+}
+
+func (s *Session) activeViewerCountLocked() int {
+	return len(s.viewers) - len(s.inactiveViewers)
+}
+
+// setViewerActive changes only demand, not delivery. An idle HLS remux continues receiving bytes so
+// it stays warm, while admission and telemetry see that no person is currently watching it.
+func (s *Session) setViewerActive(id int, active bool) bool {
+	s.mu.Lock()
+	if s.closed || s.viewers[id] == nil {
+		s.mu.Unlock()
+		return false
+	}
+	wasActive := !s.inactiveViewers[id]
+	if wasActive == active {
+		s.mu.Unlock()
+		return true
+	}
+	if active {
+		delete(s.inactiveViewers, id)
+		s.idleSince = time.Time{}
+		s.idleGeneration++
+		s.mu.Unlock()
+		if s.onDemandChange != nil {
+			s.onDemandChange()
+		}
+		return true
+	}
+
+	s.inactiveViewers[id] = true
+	becameIdle := s.activeViewerCountLocked() == 0
+	warm := s.hasTransport
+	idleGeneration := s.idleGeneration
+	if becameIdle && warm {
+		s.idleSince = time.Now()
+		s.idleGeneration++
+		idleGeneration = s.idleGeneration
+	}
+	s.mu.Unlock()
+
+	if s.onDemandChange != nil {
+		s.onDemandChange()
+	}
+	if becameIdle {
+		if !warm {
+			s.close()
+			return false
+		}
+		s.onIdle(idleGeneration)
+		if s.onBecameIdle != nil {
+			s.onBecameIdle()
+		}
+	}
+	return true
 }
 
 // removeViewer drops a viewer and arms the grace timer if it was the last one.
 func (s *Session) removeViewer(id int) {
 	s.mu.Lock()
 	viewer, ok := s.viewers[id]
+	wasActive := ok && !s.inactiveViewers[id]
 	if ok {
 		delete(s.viewers, id)
+		delete(s.inactiveViewers, id)
 		viewer.close()
 	}
-	last := len(s.viewers) == 0 && !s.closed
+	last := wasActive && s.activeViewerCountLocked() == 0 && !s.closed
+	warm := s.hasTransport
+	idleGeneration := s.idleGeneration
+	if last && warm {
+		s.idleSince = time.Now()
+		s.idleGeneration++
+		idleGeneration = s.idleGeneration
+	}
 	s.mu.Unlock()
 
-	if last {
-		s.onIdle()
+	if wasActive && s.onDemandChange != nil {
+		s.onDemandChange()
 	}
+	if last {
+		if !warm {
+			// A process that never produced transport is not a warm channel. Retaining it would
+			// keep its conservative admission cost through the grace window and can block the
+			// baseline retry that the waiting tuner is about to make.
+			if s.log != nil {
+				s.log.Debug("playout: stopping zero-byte session without idle grace",
+					"channel", s.ChannelID, "plan", s.Plan.String())
+			}
+			s.close()
+			return
+		}
+		s.onIdle(idleGeneration)
+		if s.onBecameIdle != nil {
+			s.onBecameIdle()
+		}
+	}
+}
+
+// closeIfIdle closes only if the same idle interval selected by admission is still current. A
+// viewer can reattach between candidate selection and this method; in that case the foreground tune
+// must lose the race rather than disconnect the active viewer.
+func (s *Session) closeIfIdle(expectedGeneration uint64) bool {
+	s.mu.Lock()
+	if s.closed || s.activeViewerCountLocked() != 0 || s.idleSince.IsZero() || s.idleGeneration != expectedGeneration {
+		s.mu.Unlock()
+		return false
+	}
+	s.closed = true
+	for id, viewer := range s.viewers {
+		delete(s.viewers, id)
+		delete(s.inactiveViewers, id)
+		viewer.close()
+	}
+	cancel := s.cancel
+	s.mu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if s.onClosed != nil {
+		s.onClosed()
+	}
+	return true
 }
 
 // onIdle is called when the last viewer leaves. It does NOT tear down immediately — see
@@ -637,37 +958,22 @@ func (s *Session) removeViewer(id int) {
 //	t=2s  a viewer attaches       → the session is live again, 1 viewer
 //	t=30s the timer fires         → closes a session that someone is watching
 //
-// The fix is to make FIRING CONDITIONAL rather than to cancel the timer. Cancelling looks
-// tidier but is harder to be sure of: `timer.Stop()` returning false means the callback may
-// already be running, so a re-attach would still need this same idle check to be safe — the
-// cancellation would be an optimization layered on top of the real guard, not a replacement
-// for it. A stray wakeup every grace period on an idle channel costs nothing measurable, so
-// the simpler correct thing wins.
-//
-// Re-checking `len(s.viewers) == 0` at fire time also solves the ABA case for free: several
-// join/leave cycles arm several timers, and an early one firing while a LATER viewer is
-// watching sees a non-empty map and does nothing. No generation counter needed — the viewer
-// map is already the authoritative answer to "is anyone watching?", and a second source of
-// truth could only disagree with it.
-func (s *Session) onIdle() {
+// The fix is to make firing conditional on BOTH zero viewers and the idle generation this timer
+// belongs to. The viewer check protects an active reattach; the generation protects a later idle
+// interval after an attach/detach ABA cycle. Cancelling a timer is only an optimization because
+// `timer.Stop()` may race a callback already running, so the state check remains authoritative.
+func (s *Session) onIdle(idleGeneration uint64) {
 	time.AfterFunc(s.grace, func() {
-		// Read the state under the lock, then act OUTSIDE it: s.close() takes s.mu itself,
-		// and Go mutexes are not reentrant, so closing while holding it would deadlock the
-		// timer goroutine — and with it the channel's teardown, permanently.
-		s.mu.Lock()
-		idle := len(s.viewers) == 0 && !s.closed
-		s.mu.Unlock()
-
-		if !idle {
+		if !s.closeIfIdle(idleGeneration) {
 			// Someone is watching (or pump already tore the session down when the encoder
-			// died). Either way this timer has nothing to do.
+			// died), or this callback belongs to an older idle generation. Either way this
+			// timer has nothing to do.
 			return
 		}
 		if s.log != nil {
 			s.log.Debug("playout: stopping idle channel",
 				"channel", s.ChannelID, "grace", s.grace)
 		}
-		s.close()
 	})
 }
 
@@ -675,7 +981,7 @@ func (s *Session) onIdle() {
 func (s *Session) ViewerCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return len(s.viewers)
+	return s.activeViewerCountLocked()
 }
 
 // close tears the session down and disconnects every remaining viewer.
@@ -692,6 +998,7 @@ func (s *Session) close() {
 	s.closed = true
 	for id, viewer := range s.viewers {
 		delete(s.viewers, id)
+		delete(s.inactiveViewers, id)
 		viewer.close()
 	}
 	cancel := s.cancel
@@ -753,14 +1060,15 @@ func (m *Manager) Stop() {
 
 // forget removes a session from the map and releases its admission cost (§9.1 V49), then notifies.
 // Called from a session's onClosed, which close() fires exactly once — so the cost is subtracted
-// exactly once even if Stop races the grace timer. Idempotent against a key already gone (a manual
-// Stop that ran the map-delete first): only a still-present, identical session is subtracted.
-func (m *Manager) forget(key sessionKey) {
+// exactly once even if Stop races the grace timer. Identity is part of the guard: a foreground
+// attach can replace a closed session at the same key before its callback arrives, and that stale
+// callback must not delete the replacement or subtract its admission cost.
+func (m *Manager) forget(key sessionKey, closing *Session) {
 	m.mu.Lock()
 	removed := false
-	if s := m.sessions[key]; s != nil {
-		m.committedCost -= s.cost
-		s.cost = 0
+	if m.sessions[key] == closing {
+		m.committedCost -= closing.cost
+		closing.cost = 0
 		delete(m.sessions, key)
 		removed = true
 	}
@@ -801,23 +1109,28 @@ func (m *Manager) Capacity() int {
 // unsorted map walk would reshuffle the rows on every read, which reads as flicker rather
 // than as data changing.
 //
-// Takes the manager lock, then each session's, in that order — the same order Attach uses,
-// so the two cannot deadlock against each other.
+// Snapshots session pointers and their manager-owned admission cost under the manager lock, then
+// reads each session after releasing it. Teardown callbacks need the manager lock, so holding it
+// while taking every session lock would turn an observational endpoint into a lock-order hazard.
 func (m *Manager) Stats(now time.Time) []SessionStat {
+	type candidate struct {
+		session       *Session
+		transcodeCost int
+	}
 	m.mu.Lock()
-	sessions := make([]*Session, 0, len(m.sessions))
+	sessions := make([]candidate, 0, len(m.sessions))
 	for _, s := range m.sessions {
-		sessions = append(sessions, s)
+		sessions = append(sessions, candidate{session: s, transcodeCost: s.cost})
 	}
 	m.mu.Unlock()
 
 	out := make([]SessionStat, 0, len(sessions))
-	for _, s := range sessions {
+	for _, candidate := range sessions {
 		// ⚠ Skip CLOSED sessions. Teardown is lazy: close() marks the session and disconnects
 		// its viewers, but the map entry survives until the next Attach on that channel
 		// deletes it. An unfiltered snapshot would keep reporting a dead encoder as live —
 		// indefinitely, on a channel nobody tunes again.
-		if st, ok := s.statIfLive(now); ok {
+		if st, ok := candidate.session.statIfLive(now, candidate.transcodeCost); ok {
 			out = append(out, st)
 		}
 	}
@@ -837,7 +1150,7 @@ func (m *Manager) Stats(now time.Time) []SessionStat {
 // Liveness is read under the SAME lock as the rest of the snapshot: checking `closed`
 // separately would leave a window where a session closes between the check and the read, and
 // the row would describe an encoder that no longer exists.
-func (s *Session) statIfLive(now time.Time) (SessionStat, bool) {
+func (s *Session) statIfLive(now time.Time, transcodeCost int) (SessionStat, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -853,15 +1166,16 @@ func (s *Session) statIfLive(now time.Time) (SessionStat, bool) {
 	buffered := s.last.OutTimeMS - uptime.Milliseconds()
 
 	return SessionStat{
-		ChannelID:   s.ChannelID,
-		Target:      s.Plan.String(),
-		Viewers:     len(s.viewers),
-		Encoder:     string(s.encoder),
-		Hardware:    s.encoder != "" && s.encoder != EncoderSoftware,
-		Speed:       s.last.Speed,
-		BufferedMS:  buffered,
-		UptimeMS:    uptime.Milliseconds(),
-		ColdStartMS: s.coldStartMs,
+		ChannelID:     s.ChannelID,
+		Target:        s.Plan.String(),
+		Viewers:       s.activeViewerCountLocked(),
+		Encoder:       string(s.encoder),
+		Hardware:      s.encoder != "" && s.encoder != EncoderSoftware,
+		Speed:         s.last.Speed,
+		BufferedMS:    buffered,
+		UptimeMS:      uptime.Milliseconds(),
+		ColdStartMS:   s.coldStartMs,
+		TranscodeCost: transcodeCost,
 	}, true
 }
 
@@ -889,20 +1203,56 @@ func (m *Manager) ReportProgram(channelID string, plan EncodePlan, enc Encoder, 
 	s.encoder = enc
 	s.last = p
 	s.mu.Unlock()
+	// startChild admitted this real cost before spawning. Calling the same transition here keeps
+	// legacy/report-only callers correct and is idempotent for the production progress path.
+	_ = m.AdmitProgram(channelID, plan, transcoding)
+}
 
-	// Correct the session's admission cost to REALITY (§9.1 V49). At attach we ESTIMATED cost from the
-	// plan (every plan reserves one); now the program has actually resolved its copy plan, so we know
-	// the truth: cost 1 iff it transcodes video. Any session correctly frees its slot once it proves
-	// it only copies. Adjust committedCost by the
-	// DELTA under m.mu, keyed to this live session so a report racing teardown cannot corrupt the sum.
-	realCost := 0
+// AdmitProgram atomically transitions an existing session between copy and video-transcode cost.
+// A prepared session starts at zero, but a later prepared miss must earn capacity before its live
+// child starts; otherwise many cheap sessions could all cross an Airing boundary and oversubscribe
+// the measured encoder budget together.
+func (m *Manager) AdmitProgram(channelID string, plan EncodePlan, transcoding bool) bool {
+	key := sessionKey{channel: channelID, plan: plan}
+	desiredCost := 0
 	if transcoding {
-		realCost = 1
+		desiredCost = 1
 	}
-	m.mu.Lock()
-	if m.sessions[sessionKey{channel: channelID, plan: plan}] == s && s.cost != realCost {
-		m.committedCost += realCost - s.cost
-		s.cost = realCost
+	for {
+		m.mu.Lock()
+		s := m.sessions[key]
+		if s == nil {
+			m.mu.Unlock()
+			return false
+		}
+		if s.cost == desiredCost {
+			m.mu.Unlock()
+			return true
+		}
+		if desiredCost == 0 {
+			m.committedCost -= s.cost
+			s.cost = 0
+			m.mu.Unlock()
+			m.notifyChange()
+			return true
+		}
+		incoming := desiredCost - s.cost
+		if Admit(m.budget(), m.committedCost, incoming) {
+			m.committedCost += incoming
+			s.cost = desiredCost
+			m.mu.Unlock()
+			m.notifyChange()
+			return true
+		}
+		candidates := make([]idleCandidate, 0, len(m.sessions))
+		for candidateKey, candidateSession := range m.sessions {
+			if candidateKey != key && candidateSession.cost > 0 {
+				candidates = append(candidates, idleCandidate{key: candidateKey, session: candidateSession})
+			}
+		}
+		m.mu.Unlock()
+		if !reclaimOldestIdle(candidates) {
+			return false
+		}
 	}
-	m.mu.Unlock()
 }

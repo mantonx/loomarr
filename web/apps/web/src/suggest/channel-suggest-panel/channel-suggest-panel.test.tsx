@@ -226,6 +226,28 @@ describe("ChannelSuggestPanel", () => {
     expect(await screen.findByText("Ferris Bueller's Day Off")).toBeInTheDocument();
   });
 
+  it("explains an auto-approved result without offering the misleading Start over action", async () => {
+    const user = userEvent.setup();
+    const { approvals } = stubSuggest({ proposals: [{ ...PROPOSAL, status: "approved" }] });
+    const onCreated = vi.fn();
+    renderPanel(onCreated);
+
+    await user.type(await screen.findByLabelText("Channel intent"), "80s teen comedies");
+    await user.click(screen.getByRole("button", { name: /suggest a lineup/i }));
+
+    expect(await screen.findByText("Ferris Bueller's Day Off")).toBeInTheDocument();
+    expect(screen.getByText(/automatically approved/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /start over/i })).not.toBeInTheDocument();
+    expect(approvals).toEqual([]);
+    expect(onCreated).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /create another/i }));
+
+    expect(await screen.findByLabelText("Channel intent")).toHaveValue("");
+    expect(approvals).toEqual([]);
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
   it("approving hands the new channel id to onCreated (the list navigates to it)", async () => {
     const user = userEvent.setup();
     stubSuggest({

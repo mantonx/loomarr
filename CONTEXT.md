@@ -19,7 +19,7 @@ place to look up a term without loading the much larger behavior specification.
 **Title**:
 A unit of content the app wants — one movie or one series. Identity is always an external
 provider id, never a name string (§3).
-_Avoid_: media, item, content (all three are the media server's words, not ours)
+_Avoid_: item, content. A Media Item is the distinct inventory node below, not a synonym for Title.
 
 **Key**:
 The stable identity string derived from a Title, identical whether it came from a suggestion
@@ -37,9 +37,44 @@ Where a Record sits on its way into the library: `wanted` → `requested` → `d
 _Avoid_: status (reserved for Proposals and Jobs), download state
 
 **Library**:
-The operator's media server (Emby or Jellyfin) — the authority on what content actually
-exists. Loomarr reads it and never writes to it.
+The operator's media server (Emby or Jellyfin) — the upstream authority on what is currently
+available and the first importer into Loomarr's Media Inventory. Loomarr reads it and never writes
+to it; the Library is not the database of record for Loomarr's accumulated metadata.
 _Avoid_: media server (acceptable in prose, but `library` is the term in code), Emby, Jellyfin
+
+**Media Inventory**:
+Loomarr's durable, provider-neutral knowledge of Media Items, Media Sources, Origins, and current
+Observations. It retains broad safe metadata for future consumers; it is not an audio cache and its
+presence never authorizes scheduling or playout.
+_Avoid_: metadata cache, Library cache
+
+**Media Item**:
+One canonical metadata-bearing inventory node. It may be structural (series, season, collection),
+playable (movie, episode, extra), or a future kind. Playability comes from having a usable Media
+Source, not from the item kind. A Title may link to a Media Item but is not replaced by it.
+_Avoid_: Title, programme
+
+**Media Source**:
+One concrete playable representation of a Media Item, such as a Library-served original, mapped
+local file, or future scanner-discovered file. An item may have zero or many sources.
+_Avoid_: stream URL, Path
+
+**Origin**:
+The exact authority and stable external identity from which Loomarr learned an inventory item or
+source. Cross-Origin merging requires grounded provider identifiers or an explicit link; a name or
+filename is never identity.
+_Avoid_: provider id (one fact an Origin may carry)
+
+**Observation**:
+A versioned, time-stamped, provenance-bearing set of facts imported or measured for an exact item or
+source revision. Missing means unknown and remains distinct from an explicitly observed empty value.
+_Avoid_: metadata blob, cache entry
+
+**Source Access**:
+The transient adapter that opens a resolved Media Source as a local or authenticated HTTP input.
+Inventory persists only a protected locator; credentials and authenticated URLs never enter an
+Observation, readiness index, publication metadata, or diagnostics.
+_Avoid_: source URL, persisted input
 
 **Acquisition**:
 A pick that is not in the Library yet and must be requested through Seerr → Sonarr/Radarr.
@@ -100,8 +135,8 @@ has no drift guard, so churning it is real risk for no glossary gain. The banned
 for the artifact; `internal/suggest` remains the package that produces one.
 
 **Grounding**:
-The rule that the model may only pick from candidates a tool call actually returned this run.
-An id the catalog never surfaced cannot enter a Proposal (§8).
+The rule that the model may only pick from candidates a Catalog operation actually returned this
+run. An id the catalog never surfaced cannot enter a Proposal (§8).
 _Avoid_: validation, filtering
 
 **The approval gate**:

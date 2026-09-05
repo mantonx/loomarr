@@ -160,8 +160,12 @@ func startProcess(
 	}
 	p.proc = supervised
 	if manager != nil {
-		spec.Executable = bin
-		spec.Args = args
+		if spec.Executable == "" {
+			spec.Executable = bin
+		}
+		if len(spec.Args) == 0 {
+			spec.Args = args
+		}
 		p.run = manager.Begin(spec)
 	}
 	if progress.afterStart != nil {

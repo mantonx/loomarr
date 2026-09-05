@@ -25,12 +25,6 @@ for (const [name, expected] of Object.entries(lock.derivatives)) {
   else if (sha256(path) !== expected) failures.push(`${name} drifted from the generated asset`);
 }
 
-const launcherPath = join(repoRoot, "android/app/src/main/res/mipmap-anydpi/ic_launcher.xml");
-const launcher = readFileSync(launcherPath, "utf8");
-if (!launcher.startsWith('<?xml version="1.0" encoding="utf-8"?>\n<vector xmlns:android=')) {
-  failures.push("Android legacy launcher is not a namespaced vector document");
-}
-
 if (failures.length > 0) {
   console.error(`brand asset drift:\n- ${failures.join("\n- ")}\nrun: make brand-assets`);
   process.exit(1);

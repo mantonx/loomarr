@@ -1,6 +1,6 @@
 //go:build ffmpeg
 
-package playout
+package playout_test
 
 import (
 	"context"
@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/loomarr/loomarr/internal/playout"
 	"github.com/loomarr/loomarr/internal/prepared"
+	"github.com/loomarr/loomarr/internal/testkit"
 )
 
 // This is the tagged proof that the shared live-encoder policy also produces a complete prepared
@@ -27,8 +29,8 @@ func TestLivePreparedPackagerUsesDetectedHardware(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
 
-	capability := DetectObserved(ctx, bin, DefaultProfile(), "", nil)
-	if capability.Chosen == EncoderSoftware {
+	capability := playout.DetectObserved(ctx, bin, playout.DefaultProfile(), "", nil)
+	if capability.Chosen == playout.EncoderSoftware {
 		t.Skip("no working hardware encoder")
 	}
 	source := filepath.Join(t.TempDir(), "source.mp4")
@@ -46,21 +48,21 @@ func TestLivePreparedPackagerUsesDetectedHardware(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rendition := CanonicalPreparedRendition(TierEfficient)
+	rendition := playout.CanonicalPreparedRendition(playout.TierEfficient)
 	rendition.Width, rendition.Height = 320, 180
 	rendition.VideoBitrateKbps = 500
 	packager := prepared.NewFFmpegPackager(bin, func(r prepared.RenditionContract) (prepared.VideoPlan, error) {
-		return PreparedVideoArgs(capability.Chosen, r)
+		return playout.PreparedVideoArgs(capability.Chosen, r)
 	})
-	readiness, err := prepared.OpenReadiness(library)
-	if err != nil {
-		t.Fatal(err)
-	}
 	preparer := prepared.NewPreparer(prepared.PreparerDependencies{
-		Library: library, Packager: packager, Readiness: readiness,
+		Library: library, Packager: packager,
+		Access: &testkit.PreparedSourceAccess{Input: prepared.LocalInput(source)},
 	})
 	publication, err := preparer.Prepare(ctx, prepared.Request{
-		Source: prepared.Source{Path: source}, Rendition: rendition,
+		Source: prepared.Source{
+			ItemID: "hardware-test-item", SourceID: "hardware-test-source", Revision: "generated-v1",
+		},
+		Rendition: rendition,
 	})
 	if err != nil {
 		t.Fatalf("prepare with %s: %v", capability.Chosen, err)

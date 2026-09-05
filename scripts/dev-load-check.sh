@@ -43,7 +43,7 @@ report "chrome/chromium" "chrome --remote-debugging|chromium --remote-debugging"
 
 printf '\n%s\n' "--- if this looks heavy ---"
 cat <<'EOF'
-  gradle daemons   ./gradlew --stop          (from android/)
+  gradle daemons   ./gradlew --stop          (from a generated native project)
   emulator         adb -s emulator-5560 emu kill
   scrcpy           pkill -f scrcpy
 Leave dev servers alone unless you started them — see the dont-thrash-on-dev-processes note.

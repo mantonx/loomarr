@@ -65,7 +65,7 @@ func newSuggestServerWithSettingsAndDecisionQuality(
 	st := openTestStore(t, t.TempDir()+"/s.db")
 	t.Cleanup(func() { _ = st.Close() })
 	fs := &fakeSuggest{}
-	search := &testkit.SearchService[api.SearchCandidate]{Results: []api.SearchCandidate{{
+	search := &testkit.SearchService[api.SearchRequest, api.SearchCandidate]{Results: []api.SearchCandidate{{
 		MediaType: "movie", TMDBID: 603, Name: "The Matrix", InLibrary: true,
 	}}}
 	log := slog.New(slog.DiscardHandler)

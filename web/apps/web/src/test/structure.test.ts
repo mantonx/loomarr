@@ -128,3 +128,18 @@ describe("folder-per-module conformance", () => {
     expect(stray, "source belongs under src/ (or tests/ for Playwright suites)").toEqual([]);
   });
 });
+
+describe("production application root", () => {
+  it("mounts the shared design-system provider without changing the dark production theme", () => {
+    const source = readFileSync(join(APP, "src", "main.tsx"), "utf8");
+    const providerStart = source.indexOf('<LoomarrProvider theme="dark">');
+    const queryProvider = source.indexOf("<QueryClientProvider", providerStart);
+    const routerProvider = source.indexOf("<RouterProvider", queryProvider);
+    const providerEnd = source.indexOf("</LoomarrProvider>", routerProvider);
+
+    expect(providerStart).toBeGreaterThan(-1);
+    expect(queryProvider).toBeGreaterThan(providerStart);
+    expect(routerProvider).toBeGreaterThan(queryProvider);
+    expect(providerEnd).toBeGreaterThan(routerProvider);
+  });
+});

@@ -117,7 +117,7 @@ func validDispositionReason(disposition, reason string) bool {
 		DispositionAlternate:         {ReasonAcquisitionCap: true},
 		DispositionNotSelected:       {ReasonNotSelected: true, ReasonNever: true, ReasonOverCeiling: true},
 		DispositionRefused:           {ReasonOverCeiling: true},
-		DispositionValidationDropped: {ReasonMalformedID: true, ReasonNotSurfaced: true, ReasonValidationDropped: true},
+		DispositionValidationDropped: {ReasonMalformedID: true, ReasonNotSurfaced: true, ReasonNoRelevanceEvidence: true, ReasonValidationDropped: true},
 	}
 	return allowed[disposition][reason]
 }

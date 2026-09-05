@@ -14,6 +14,12 @@ import { defineConfig, type Plugin } from "vite";
 const BACKEND_PORT = process.env.LOOMARR_DEV_PORT ?? "8080";
 const DEV_PORT = Number(process.env.LOOMARR_FE_PORT ?? "5173");
 const API_TARGET = process.env.LOOMARR_API ?? `http://localhost:${BACKEND_PORT}`;
+const webReact = fileURLToPath(new URL("./node_modules/react", import.meta.url));
+const webReactDOM = fileURLToPath(new URL("./node_modules/react-dom", import.meta.url));
+const reactNativeWeb = fileURLToPath(new URL("./node_modules/react-native-web", import.meta.url));
+const reactNativeSvgWeb = fileURLToPath(
+  new URL("./node_modules/react-native-svg/lib/module/elements.web.js", import.meta.url),
+);
 const proxied = [
   // /v1 covers the whole versioned surface INCLUDING /v1/playout (§9.1 V47: the playout streaming
   // routes moved under /v1, so the in-app HLS player's same-origin /v1/playout/hls/... URLs are
@@ -55,9 +61,18 @@ export default defineConfig({
     tailwindcss(),
   ],
   resolve: {
-    alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url)),
-    },
+    // The production Web root now mounts the same universal design-system provider as native
+    // clients. Resolve its host primitives through the browser adapters and one React runtime;
+    // otherwise Vite reaches react-native-tvos' untranspiled Flow entrypoint.
+    alias: [
+      { find: "@", replacement: fileURLToPath(new URL("./src", import.meta.url)) },
+      { find: /^react$/, replacement: webReact },
+      { find: /^react-dom$/, replacement: webReactDOM },
+      { find: /^react-native$/, replacement: reactNativeWeb },
+      { find: /^react-native-svg$/, replacement: reactNativeSvgWeb },
+    ],
+    dedupe: ["react", "react-dom", "react-native"],
+    extensions: [".web.mjs", ".web.js", ".web.ts", ".web.tsx", ".mjs", ".js", ".ts", ".tsx", ".json"],
   },
   // This directory also contains client-platform-proof.html, whose entrypoint deliberately imports
   // React Native modules. Dev dependency discovery must stay rooted at the browser app; otherwise
@@ -83,6 +98,12 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
+    // The shared browser-player adapter loads hls.js dynamically from its owning package. Alias the
+    // transport explicitly so production-wrapper tests exercise the public adapter with a bounded
+    // MediaSource controller even when pnpm resolves the dependency from that package.
+    alias: {
+      "hls.js": fileURLToPath(new URL("./src/test/hls.mock.ts", import.meta.url)),
+    },
     css: false,
     // jsdom units only — Playwright visual specs (tests/visual/*.spec.ts) run under
     // Playwright, not vitest, and Storybook stories are exercised by the visual suite.

@@ -2,7 +2,9 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +14,12 @@ import (
 	"github.com/loomarr/loomarr/internal/metrics"
 	"github.com/loomarr/loomarr/internal/testkit/httpfixture"
 )
+
+type fixedIPLookup struct{ addrs []net.IPAddr }
+
+func (r fixedIPLookup) LookupIPAddr(context.Context, string) ([]net.IPAddr, error) {
+	return r.addrs, nil
+}
 
 type contextBody struct{ ctx context.Context }
 
@@ -145,5 +153,33 @@ func TestRedirectPolicy(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusFound || *postCalls != 1 {
 		t.Fatalf("POST redirect status=%d calls=%d, want 302 and 1", resp.StatusCode, *postCalls)
+	}
+}
+
+func TestPublicDialPinsResolvedPublicAddressAndRejectsAnyPrivateAnswer(t *testing.T) {
+	called := false
+	dial := publicDialContext(fixedIPLookup{addrs: []net.IPAddr{
+		{IP: net.ParseIP("203.0.113.10")},
+		{IP: net.ParseIP("192.168.1.20")},
+	}}, func(context.Context, string, string) (net.Conn, error) {
+		called = true
+		return nil, errors.New("unexpected dial")
+	})
+	if _, err := dial(context.Background(), "tcp", "reference.example:443"); err == nil {
+		t.Fatal("mixed public/private DNS result accepted")
+	}
+	if called {
+		t.Fatal("network dial occurred after a private DNS answer")
+	}
+
+	var address string
+	dial = publicDialContext(fixedIPLookup{addrs: []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}},
+		func(_ context.Context, _, got string) (net.Conn, error) {
+			address = got
+			return nil, errors.New("dial stopped by test")
+		})
+	_, _ = dial(context.Background(), "tcp", "reference.example:443")
+	if address != "203.0.113.10:443" {
+		t.Fatalf("dial address = %q, want pinned public IP", address)
 	}
 }

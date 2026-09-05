@@ -37,6 +37,22 @@ Key facts the adapter depends on, all confirmed:
   reads; no secrets (public metadata).
 - `movie_603.json` — a minimal exists-check 200 body.
 
+## Grounded person and network qualifiers
+
+**Re-verified:** 2026-09-04 against TMDB's official v3 reference and the public daily-export host.
+
+- `/search/person` is the authoritative name-search surface. Movie discovery accepts resolved ids
+  through `with_cast` and `with_crew`; TV discovery does not expose equivalent people filters.
+- TV discovery accepts one resolved network id through `with_networks`. TMDB exposes network details
+  by id but no network-name search endpoint.
+- `https://files.tmdb.org/p/exports/tv_network_ids_09_03_2026.json.gz` returned a 51,940-byte gzip
+  JSONL snapshot with `{id,name}` rows and no authentication requirement. Exact names are not unique
+  (`HBO` has multiple ids), so country disambiguation must verify `/network/{id}` rather than choosing
+  the first export row.
+- The shared `testkit.TMDB` double models person search, the daily network export, network details,
+  and the corresponding discover filters. It records bearer headers so tests prove the API credential
+  never rides to the public export host.
+
 ## Still deferred (non-blocking)
 
 - **Anthropic** LLM provider tool-use shape (opt-in; needs an Anthropic key). Ollama remains the

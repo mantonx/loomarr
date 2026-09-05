@@ -83,6 +83,7 @@ mkdir -p "${APP_DIR}/android/app/src/main/assets" "${APP_DIR}/android/app/src/ma
     --entry-file "${ENTRY_FILE}" \
     --bundle-output android/app/src/main/assets/index.android.bundle \
     --assets-dest android/app/src/main/res \
+    --reset-cache \
     --max-workers 1
 )
 

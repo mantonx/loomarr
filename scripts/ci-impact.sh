@@ -97,11 +97,23 @@ classify() {
       select_gate clients
       select_gate apple_tv
       select_gate expo_android_tv
+      select_gate android
       ;;
-    web/packages/design-system/*|web/packages/ui/*)
+    web/packages/lan-discovery-native/*)
+      known=true
+      select_gate clients
+      select_gate apple_tv
+      select_gate expo_android_tv
+      select_gate android
+      ;;
+    web/packages/design-system/*|web/packages/ui/*|web/packages/ui-tv/*)
       known=true
       select_gate clients
       select_all_native_clients
+      # Browser Storybook stories render these universal presentation packages
+      # directly. Their output is therefore part of the committed visual contract.
+      select_gate visual
+      select_gate android
       ;;
     web/packages/api/*|web/packages/core/*|web/packages/fixtures/*)
       known=true
@@ -112,6 +124,19 @@ classify() {
       select_gate e2e
       select_gate tuner
       select_gate image
+      select_gate android
+      ;;
+    web/packages/player/*)
+      known=true
+      select_gate web
+      select_gate clients
+      select_all_native_clients
+      # The browser and native adapters share one transport contract. Browser playback
+      # reaches the tuner matrix and production image; the native adapters reach every
+      # supported client build and Android TV bundle.
+      select_gate tuner
+      select_gate image
+      select_gate android
       ;;
     web/package.json|web/pnpm-lock.yaml|web/pnpm-workspace.yaml|web/.gitignore|web/biome.json|web/tsconfig.base.json)
       known=true
@@ -122,6 +147,7 @@ classify() {
       select_gate visual
       select_gate e2e
       select_gate tuner
+      select_gate android
       ;;
     web/.dependency-cruiser.cjs|web/turbo.json|web/.rnstorybook/*|web/apps/web/client-platform-proof.html|web/apps/web/src/client-platform-proof/*|web/apps/web/tests/client-platform-proof.*|web/apps/web/vite.client-platform.config.ts)
       known=true
@@ -138,6 +164,7 @@ classify() {
       select_gate contracts
       select_gate expo_android_mobile
       select_gate expo_android_tv
+      select_gate android
       ;;
     web/scripts/check-imports.mjs|web/scripts/check-imports.test.mjs)
       known=true
@@ -153,6 +180,7 @@ classify() {
       select_gate visual
       select_gate e2e
       select_gate tuner
+      select_gate android
       ;;
     web/*)
       known=true
@@ -232,6 +260,10 @@ classify() {
       select_gate go
       ;;
     android/*)
+      known=true
+      select_gate android
+      ;;
+    store-listing/android-tv/*)
       known=true
       select_gate android
       ;;
@@ -328,6 +360,7 @@ classify() {
     brand-assets.lock.json)
       known=true
       select_gate clients
+      select_gate android
       ;;
     scripts/*)
       known=true
@@ -336,10 +369,15 @@ classify() {
         scripts/apple-compilation-cache*) select_gate contracts; select_gate apple_mobile; select_gate apple_tv; select_gate policy ;;
         scripts/ensure-container-image.sh) select_gate contracts; select_gate postgres; select_gate visual; select_gate e2e; select_gate tuner; select_gate policy ;;
         scripts/run-playwright-container.sh) select_gate contracts; select_gate visual; select_gate e2e; select_gate tuner; select_gate policy ;;
+        # Android ancestry reuse evaluates intervening paths with this classifier. Until the
+        # produced evidence binds its identity, the authority cannot exempt its own changes.
+        scripts/ci-impact.sh) select_gate android; select_gate policy ;;
         scripts/ci-impact*|scripts/ci-dispatch-scope*|scripts/ci-run-metrics*|scripts/ci-merge-queue-policy*|scripts/testdata/ci-*) select_gate policy ;;
         scripts/dev-*) select_gate contracts; select_gate agent ;;
-        scripts/android-*.sh|scripts/build-android-beta.sh|scripts/check-android-release-env.sh|scripts/generate-android-tv-brand.sh|scripts/publish-android-beta.sh|scripts/test-android-release.sh|scripts/validate-android-release-source.sh) select_gate android ;;
-        scripts/generate-brand-assets.mjs|scripts/check-brand-assets.mjs) select_gate clients ;;
+        # The validator is the other half of that authority and likewise requires fresh evidence.
+        scripts/validate-android-release-source.sh|scripts/download-android-ci-artifact.sh|scripts/sign-android-ci-artifact.sh) select_gate android; select_gate policy ;;
+        scripts/android-*.sh|scripts/build-android-beta.sh|scripts/check-android-release-env.sh|scripts/generate-android-tv-brand.sh|scripts/publish-android-beta.sh|scripts/test-android-release.sh|scripts/test-android-release-emulator.sh) select_gate android ;;
+        scripts/generate-brand-assets.mjs|scripts/check-brand-assets.mjs) select_gate clients; select_gate android ;;
         scripts/check-fe-bundle.mjs) select_gate web; select_gate image ;;
         *) select_gate contracts ;;
       esac
@@ -402,6 +440,7 @@ classify() {
       select_gate e2e
       select_gate tuner
       select_gate image
+      select_gate android
       select_gate policy
       ;;
     mk/smoke.mk)

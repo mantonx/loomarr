@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { hlsMock as hls } from "@/test/hls.mock";
 
 // useHlsPlayer's core (bind) drives hls.js over Media Source Extensions, which jsdom cannot run. So
 // the seams tested here are the ones that are OURS and reachable without a media pipeline:
@@ -9,9 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Real playback (MANIFEST_PARSED → playing) is left to the browser, where V46 verified it live.
 
 // Hoisted so the vi.mock factory (which runs before module init) can close over them.
-const { channelPlayUrl, hls, unwrap } = vi.hoisted(() => ({
+const { channelPlayUrl, unwrap } = vi.hoisted(() => ({
   channelPlayUrl: vi.fn(),
-  hls: { supported: false, instances: [] as unknown[] },
   unwrap: vi.fn((res: unknown) => res),
 }));
 vi.mock("@loomarr/api/endpoints/channels", async (importOriginal) => {
@@ -26,48 +26,6 @@ vi.mock("@loomarr/api/mutator", () => ({
   toProblem: (e: unknown) => ({ detail: (e as Error)?.message, title: "Problem" }),
 }));
 vi.mock("@/diagnostics/client-reporter", () => ({ clientDiagnostics: { record: vi.fn() } }));
-
-// Most tests keep hls.js unsupported and exercise the native/fallthrough seams. Handoff tests opt
-// in and record constructed controllers so a Channel-param rerender can prove MediaSource reuse.
-vi.mock("hls.js", () => {
-  class MockHls {
-    static isSupported = () => hls.supported;
-    static Events = {
-      ERROR: "error",
-      FRAG_BUFFERED: "fragBuffered",
-      LEVEL_UPDATED: "levelUpdated",
-      MANIFEST_PARSED: "manifestParsed",
-    };
-    static ErrorTypes = { MEDIA_ERROR: "mediaError", NETWORK_ERROR: "networkError" };
-
-    media: HTMLMediaElement | null = null;
-    url: string | null = null;
-    config: unknown;
-    liveSyncPosition: number | null = 98;
-    playingDate: Date | null = null;
-    attachMedia = vi.fn((media: HTMLMediaElement) => {
-      this.media = media;
-    });
-    destroy = vi.fn(() => {
-      this.media = null;
-    });
-    loadSource = vi.fn((url: string) => {
-      this.url = url;
-    });
-    off = vi.fn();
-    on = vi.fn();
-    recoverMediaError = vi.fn();
-    startLoad = vi.fn();
-    stopLoad = vi.fn();
-    transferMedia = vi.fn(() => null);
-
-    constructor(config: unknown) {
-      this.config = config;
-      hls.instances.push(this);
-    }
-  }
-  return { default: MockHls };
-});
 
 import { useHlsPlayer } from "./use-hls-player";
 

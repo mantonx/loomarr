@@ -134,33 +134,88 @@ func (c Classification) categories() []category {
 
 // DecodeClassification rejects extra fields before validating membership.
 func DecodeClassification(data []byte, doc Document) (Classification, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	opening, err := decoder.Token()
+	if err != nil {
 		return Classification{}, fmt.Errorf("decode classification: %w", err)
 	}
-	if len(fields) != len(classificationFields) {
-		return Classification{}, errors.New("classification must contain exactly the required category fields")
+	if opening != json.Delim('{') {
+		return Classification{}, errors.New("classification must be an object")
 	}
-	for _, name := range classificationFields {
-		value, exists := fields[name]
-		if !exists || string(value) == "null" {
-			return Classification{}, fmt.Errorf("classification field %s must be an array", name)
+	assignments := make(map[string]string, len(doc.Changes))
+	for decoder.More() {
+		token, tokenErr := decoder.Token()
+		if tokenErr != nil {
+			return Classification{}, fmt.Errorf("decode classification key: %w", tokenErr)
+		}
+		key, ok := token.(string)
+		if !ok {
+			return Classification{}, errors.New("classification keys must be pull request numbers")
+		}
+		if _, exists := assignments[key]; exists {
+			return Classification{}, fmt.Errorf("classification contains duplicate pull request key %s", key)
+		}
+		var value string
+		if decodeErr := decoder.Decode(&value); decodeErr != nil {
+			return Classification{}, fmt.Errorf("decode classification value for pull request %s: %w", key, decodeErr)
+		}
+		assignments[key] = value
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return Classification{}, fmt.Errorf("decode classification: %w", err)
+	}
+	if closing != json.Delim('}') {
+		return Classification{}, errors.New("classification must end with an object")
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return Classification{}, errors.New("classification contains trailing JSON")
+	}
+	if len(assignments) != len(doc.Changes) {
+		return Classification{}, errors.New("classification must contain exactly one assignment for every pull request")
+	}
+
+	var classification Classification
+	for _, change := range doc.Changes {
+		key := strconv.Itoa(change.Number)
+		categoryName, exists := assignments[key]
+		if !exists {
+			return Classification{}, fmt.Errorf("classification omitted pull request #%d", change.Number)
+		}
+		delete(assignments, key)
+		if err := classification.add(categoryName, change.Number); err != nil {
+			return Classification{}, err
 		}
 	}
-	var classification Classification
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&classification); err != nil {
-		return Classification{}, fmt.Errorf("decode classification: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return Classification{}, errors.New("classification contains trailing JSON")
+	for key := range assignments {
+		return Classification{}, fmt.Errorf("classification invented pull request #%s", key)
 	}
 	if err := Validate(doc, classification); err != nil {
 		return Classification{}, err
 	}
 	return classification, nil
+}
+
+func (c *Classification) add(name string, number int) error {
+	switch name {
+	case "new_features":
+		c.NewFeatures = append(c.NewFeatures, number)
+	case "improvements":
+		c.Improvements = append(c.Improvements, number)
+	case "bug_fixes":
+		c.BugFixes = append(c.BugFixes, number)
+	case "security_fixes":
+		c.SecurityFixes = append(c.SecurityFixes, number)
+	case "documentation":
+		c.Documentation = append(c.Documentation, number)
+	case "dependencies":
+		c.Dependencies = append(c.Dependencies, number)
+	case "maintenance":
+		c.Maintenance = append(c.Maintenance, number)
+	default:
+		return fmt.Errorf("pull request #%d has invalid category %q", number, name)
+	}
+	return nil
 }
 
 // Validate requires every real PR exactly once and rejects invented PR numbers.

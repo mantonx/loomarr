@@ -51,7 +51,7 @@ type renovatePackageRule struct {
 func TestRenovateOwnsEveryDependencyEcosystem(t *testing.T) {
 	config := readRenovateConfig(t)
 	requireExactSet(t, "enabled managers", config.EnabledManagers, []string{
-		"gomod", "npm", "cargo", "gradle", "github-actions", "dockerfile", "docker-compose", "custom.regex",
+		"gomod", "npm", "cargo", "github-actions", "dockerfile", "docker-compose", "custom.regex",
 	})
 	if config.AutomergeType != "pr" || !config.PlatformAutomerge || config.IgnoreTests {
 		t.Fatalf("native checked PR automerge is required: %+v", config)

@@ -10,25 +10,35 @@ import (
 const foregroundPreemptionWait = 500 * time.Millisecond
 
 // EncodePool is the single admission boundary for hardware video encodes. Foreground playback may
-// use every measured slot. Background preparation is limited to one slot, must leave one slot idle
-// for playback, and receives a cancelled context when foreground demand needs its slot.
+// use every measured slot. Background preparation may fill measured capacity minus one, leaving a
+// live reserve; each lease receives a cancelled context when foreground demand needs its slot.
 type EncodePool struct {
 	capacityFn func() int
 
 	once     sync.Once
 	capacity int // -1 means unmeasured: foreground is unbounded, background is disabled.
 
-	mu               sync.Mutex
-	held             int
-	background       bool
-	backgroundCancel context.CancelFunc
-	changed          chan struct{}
+	mu          sync.Mutex
+	held        int
+	waiters     int
+	nextID      uint64
+	backgrounds map[uint64]*backgroundLease
+	changed     chan struct{}
+}
+
+type backgroundLease struct {
+	id         uint64
+	neededAt   time.Time
+	cancel     context.CancelFunc
+	preempting bool
 }
 
 // NewEncodePool creates a host-wide hardware encode pool. capacity is resolved once because the
 // underlying encoder probe is a property of the running process and can be expensive.
 func NewEncodePool(capacity func() int) *EncodePool {
-	return &EncodePool{capacityFn: capacity, changed: make(chan struct{})}
+	return &EncodePool{
+		capacityFn: capacity, backgrounds: make(map[uint64]*backgroundLease), changed: make(chan struct{}),
+	}
 }
 
 func (p *EncodePool) init() {
@@ -49,47 +59,68 @@ func (p *EncodePool) AcquireForeground(ctx context.Context) (release func(), ok 
 	}
 	p.init()
 
-	p.mu.Lock()
-	if p.capacity < 0 {
-		p.mu.Unlock()
-		return func() {}, true
-	}
-	if p.held < p.capacity {
-		release = p.acquireLocked(false, nil)
-		p.mu.Unlock()
-		return release, true
-	}
-	if !p.background {
-		p.mu.Unlock()
-		return nil, false
-	}
-	cancel := p.backgroundCancel
-	changed := p.changed
-	p.mu.Unlock()
-	cancel()
-
 	timer := time.NewTimer(foregroundPreemptionWait)
 	defer timer.Stop()
-	select {
-	case <-changed:
-	case <-ctx.Done():
-		return nil, false
-	case <-timer.C:
-		return nil, false
+	waiting := false
+	for {
+		p.mu.Lock()
+		if p.capacity < 0 {
+			p.mu.Unlock()
+			return func() {}, true
+		}
+		if p.held < p.capacity {
+			if waiting {
+				p.waiters--
+			}
+			release = p.acquireLocked(0, nil)
+			p.mu.Unlock()
+			return release, true
+		}
+		if len(p.backgrounds) == 0 {
+			if waiting {
+				p.waiters--
+			}
+			p.mu.Unlock()
+			return nil, false
+		}
+		if !waiting {
+			p.waiters++
+			waiting = true
+		}
+		var victim *backgroundLease
+		preempting := 0
+		for _, candidate := range p.backgrounds {
+			if candidate.preempting {
+				preempting++
+				continue
+			}
+			if victim == nil || candidate.neededAt.After(victim.neededAt) ||
+				(candidate.neededAt.Equal(victim.neededAt) && candidate.id > victim.id) {
+				victim = candidate
+			}
+		}
+		if victim != nil && p.waiters > preempting {
+			victim.preempting = true
+			victim.cancel()
+		}
+		changed := p.changed
+		p.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			p.removeWaiter()
+			return nil, false
+		case <-timer.C:
+			p.removeWaiter()
+			return nil, false
+		}
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.held >= p.capacity {
-		return nil, false
-	}
-	return p.acquireLocked(false, nil), true
 }
 
-// AcquireBackground takes the one preparation slot only when measured hardware capacity leaves a
-// separate foreground reserve. The returned context, not the caller's original context, must be
-// passed to the encoder so live playback can preempt the work.
-func (p *EncodePool) AcquireBackground(ctx context.Context) (
+// AcquireBackground takes one preparation slot only when measured hardware capacity leaves a
+// separate foreground reserve. neededAt lets foreground preempt the least urgent work. The returned
+// context, not the caller's original context, must be passed to the encoder.
+func (p *EncodePool) AcquireBackground(ctx context.Context, neededAt time.Time) (
 	workCtx context.Context, release func(), ok bool,
 ) {
 	if p == nil {
@@ -98,32 +129,41 @@ func (p *EncodePool) AcquireBackground(ctx context.Context) (
 	p.init()
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.capacity < 2 || p.background || p.held >= p.capacity-1 {
+	if p.capacity < 2 || p.held >= p.capacity-1 {
 		return nil, nil, false
 	}
 	workCtx, cancel := context.WithCancel(ctx)
-	return workCtx, p.acquireLocked(true, cancel), true
+	p.nextID++
+	id := p.nextID
+	p.backgrounds[id] = &backgroundLease{id: id, neededAt: neededAt, cancel: cancel}
+	return workCtx, p.acquireLocked(id, cancel), true
 }
 
-func (p *EncodePool) acquireLocked(background bool, cancel context.CancelFunc) func() {
+func (p *EncodePool) acquireLocked(backgroundID uint64, cancel context.CancelFunc) func() {
 	p.held++
-	if background {
-		p.background = true
-		p.backgroundCancel = cancel
-	}
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			p.mu.Lock()
 			p.held--
-			if background {
-				p.background = false
-				p.backgroundCancel = nil
+			if backgroundID != 0 {
+				delete(p.backgrounds, backgroundID)
 				cancel()
 			}
-			close(p.changed)
-			p.changed = make(chan struct{})
+			p.signalLocked()
 			p.mu.Unlock()
 		})
 	}
+}
+
+func (p *EncodePool) removeWaiter() {
+	p.mu.Lock()
+	p.waiters--
+	p.signalLocked()
+	p.mu.Unlock()
+}
+
+func (p *EncodePool) signalLocked() {
+	close(p.changed)
+	p.changed = make(chan struct{})
 }

@@ -8,7 +8,9 @@
 package httpx
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -24,6 +26,7 @@ const (
 	TimeoutArr           = 10 * time.Second // Sonarr/Radarr
 	TimeoutTunarr        = 20 * time.Second // lineup pushes are chunky
 	TimeoutNotifications = 15 * time.Second
+	TimeoutReference     = 10 * time.Second // operator-supplied public reference pages
 	// TimeoutTunarrBulk covers the ONE bulk read the programmer makes: the
 	// content-index build (GET /api/media-libraries/{id}/programs), which returns a
 	// library's ENTIRE persisted program list with no server-side paging. On a large
@@ -62,6 +65,17 @@ func NewNamedObserved(target string, timeout time.Duration, recorder *metrics.Re
 	return newNamedObservedClient(target, timeout, newTransport(), recorder)
 }
 
+// NewPublicNamedObserved builds the client for operator-supplied public URLs.
+// Its dialer resolves and pins a public address for the actual connection, so a
+// DNS change between validation and dial cannot turn a reference fetch into an
+// internal-network request.
+func NewPublicNamedObserved(target string, timeout time.Duration, recorder *metrics.Recorder) *http.Client {
+	transport := newPublicTransport(net.DefaultResolver, (&net.Dialer{Timeout: dialBudget}).DialContext)
+	client := newNamedObservedClient(target, timeout, transport, recorder)
+	client.CheckRedirect = publicGetRedirects
+	return client
+}
+
 // NewStreaming returns an *http.Client for long streaming reads — an Ollama model
 // pull runs for minutes and a multi-GB body would blow any fixed whole-request
 // budget (a Client.Timeout aborts mid-body, surfacing as "context deadline
@@ -87,6 +101,55 @@ func newTransport() http.RoundTripper {
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     90 * time.Second,
 	}
+}
+
+type ipLookup interface {
+	LookupIPAddr(context.Context, string) ([]net.IPAddr, error)
+}
+
+type dialContextFunc func(context.Context, string, string) (net.Conn, error)
+
+func newPublicTransport(resolver ipLookup, dial dialContextFunc) *http.Transport {
+	return &http.Transport{
+		DialContext:           publicDialContext(resolver, dial),
+		TLSHandshakeTimeout:   dialBudget,
+		ResponseHeaderTimeout: 30 * time.Second,
+		MaxIdleConns:          20,
+		MaxIdleConnsPerHost:   4,
+		IdleConnTimeout:       90 * time.Second,
+	}
+}
+
+func publicDialContext(resolver ipLookup, dial dialContextFunc) dialContextFunc {
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return nil, fmt.Errorf("public HTTP dial address: %w", err)
+		}
+		var addrs []net.IPAddr
+		if ip := net.ParseIP(host); ip != nil {
+			addrs = []net.IPAddr{{IP: ip}}
+		} else {
+			addrs, err = resolver.LookupIPAddr(ctx, host)
+			if err != nil {
+				return nil, fmt.Errorf("public HTTP resolve %q: %w", host, err)
+			}
+			if len(addrs) == 0 {
+				return nil, fmt.Errorf("public HTTP resolve %q returned no addresses", host)
+			}
+		}
+		for _, addr := range addrs {
+			if unsafePublicIP(addr.IP) {
+				return nil, fmt.Errorf("public HTTP refuses private address for %q", host)
+			}
+		}
+		return dial(ctx, network, net.JoinHostPort(addrs[0].IP.String(), port))
+	}
+}
+
+func unsafePublicIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()
 }
 
 func newClient(
@@ -128,6 +191,18 @@ func getOnlyRedirects(_ *http.Request, via []*http.Request) error {
 	}
 	if len(via) >= 10 {
 		return errors.New("stopped after 10 redirects")
+	}
+	return nil
+}
+
+func publicGetRedirects(req *http.Request, via []*http.Request) error {
+	if len(via) >= 3 {
+		return errors.New("stopped after 3 public redirects")
+	}
+	port := req.URL.Port()
+	standardPort := port == "" || (req.URL.Scheme == "https" && port == "443") || (req.URL.Scheme == "http" && port == "80")
+	if (req.URL.Scheme != "https" && req.URL.Scheme != "http") || req.URL.User != nil || !standardPort {
+		return errors.New("public redirect must use credential-free HTTP(S) on a standard port")
 	}
 	return nil
 }

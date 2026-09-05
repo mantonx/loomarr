@@ -5,28 +5,58 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"sync"
+	"strconv"
+	"strings"
 )
 
 var (
-	// ErrInvalidSource means preparation was asked to read something other than a regular file or
-	// was given an invalid selected-track identity.
+	// ErrInvalidSource means preparation was given an incomplete durable source identity or an
+	// invalid selected-track identity.
 	ErrInvalidSource = errors.New("prepared: invalid source")
-	// ErrSourceChanged means the source mutated while its content identity was being computed.
-	ErrSourceChanged = errors.New("prepared: source changed while fingerprinting")
-	// ErrPackagerUnavailable means preparation has no media packager wired.
+	// ErrSourceChanged means Source Access could no longer validate the selected Inventory revision.
+	ErrSourceChanged = errors.New("prepared: source revision changed")
+	// ErrPackagerUnavailable means preparation has no media packager or Source Access port wired.
 	ErrPackagerUnavailable = errors.New("prepared: packager unavailable")
+	// ErrTransientInput means code attempted to serialize an operational FFmpeg input.
+	ErrTransientInput = errors.New("prepared: transient input cannot be serialized")
 )
 
-// Source is the exact local input and selected tracks preparation reads. Track selection is source
-// identity: two airings selecting different audio tracks must never reuse the same publication.
+// Source is the durable, provider-neutral identity of the exact Inventory source and selected
+// track preparation reads. It deliberately contains no path, URL, credential, or importer type.
 type Source struct {
-	Path       string `json:"path"`
+	ItemID     string `json:"itemId"`
+	SourceID   string `json:"sourceId"`
+	Revision   string `json:"revision"`
 	AudioTrack int    `json:"audioTrack"`
+}
+
+// Input is a transient FFmpeg input opened from Source immediately before background packaging.
+// It must never be serialized or placed in logs/diagnostics without redaction.
+type Input struct {
+	url  string
+	http bool
+}
+
+// LocalInput constructs a transient local FFmpeg input. Its location remains unexported so generic
+// serializers cannot accidentally place an operational path into durable state.
+func LocalInput(path string) Input { return Input{url: path} }
+
+// HTTPInput constructs a transient authenticated FFmpeg input. Its URL remains unexported so
+// generic serializers cannot accidentally place credentials into durable state.
+func HTTPInput(url string) Input { return Input{url: url, http: true} }
+
+// IsHTTP reports which FFmpeg protocol options apply without exposing the operational input.
+func (i Input) IsHTTP() bool { return i.http }
+
+// MarshalJSON fails closed so an authenticated URL or protected path cannot enter generic durable
+// documents if Input is accidentally embedded in one later.
+func (Input) MarshalJSON() ([]byte, error) { return nil, ErrTransientInput }
+
+// SourceAccess validates a durable source revision and opens its current operational input. A
+// Library implementation may mint a fresh authenticated URL on every call; a local implementation
+// may return its protected path only after validating size and mtime.
+type SourceAccess interface {
+	OpenInput(context.Context, Source) (Input, error)
 }
 
 // Request describes one reusable prepared rendition without naming a Channel or client platform.
@@ -38,61 +68,37 @@ type Request struct {
 // Packager writes every immutable media file for a request into workspace and declares the
 // complete output. Library owns validation and the atomic commit after this returns.
 type Packager interface {
-	Package(context.Context, string, Source, RenditionContract) (Output, error)
+	Package(context.Context, string, Input, int, RenditionContract) (Output, error)
 }
 
-// Preparer is the control-plane entry point for prepared media. Prepare may hash and package;
-// Lookup performs only a stat, warmed fingerprint lookup, and immutable Library lookup, making it
-// safe for the tune path without turning a cold request into work.
+// Preparer is the control-plane entry point for prepared media. Prepare opens and packages a
+// source; Lookup derives immutable identity and checks Library only, making it safe for tune time.
 type Preparer struct {
-	library   *Library
-	packager  Packager
-	readiness *Readiness
-
-	mu    sync.Mutex
-	locks map[fileVersion]*fingerprintLock
-}
-
-type fileVersion struct {
-	path       string
-	size       int64
-	modifiedNS int64
-	audioTrack int
-}
-
-type fingerprintLock struct {
-	mu   sync.Mutex
-	refs int
+	library  *Library
+	packager Packager
+	access   SourceAccess
 }
 
 type PreparerDependencies struct {
-	Library   *Library
-	Packager  Packager
-	Readiness *Readiness
+	Library  *Library
+	Packager Packager
+	Access   SourceAccess
 }
 
 func NewPreparer(deps PreparerDependencies) *Preparer {
-	return &Preparer{
-		library: deps.Library, packager: deps.Packager, readiness: deps.Readiness,
-		locks: make(map[fileVersion]*fingerprintLock),
-	}
+	return &Preparer{library: deps.Library, packager: deps.Packager, access: deps.Access}
 }
 
-// Lookup reports a complete publication specification only when the source fingerprint has already
-// been warmed by Prepare. It never reads source bytes and never calls Packager.
+// Lookup reports a complete publication without opening the source, reading Inventory, or calling
+// Packager. Source revisions are refreshed and rebound only by the readiness control plane.
 func (p *Preparer) Lookup(request Request) (Specification, bool, error) {
-	if p == nil || p.library == nil || p.readiness == nil {
+	if p == nil || p.library == nil {
 		return Specification{}, false, nil
 	}
-	_, version, err := sourceVersion(request.Source)
+	spec, err := specificationFor(request)
 	if err != nil {
 		return Specification{}, false, err
 	}
-	fingerprint, warmed := p.readiness.fingerprint(version)
-	if !warmed {
-		return Specification{}, false, nil
-	}
-	spec := Specification{SourceFingerprint: fingerprint, Rendition: request.Rendition}
 	_, ready, err := p.library.Peek(spec)
 	if err != nil || !ready {
 		return Specification{}, false, err
@@ -100,120 +106,51 @@ func (p *Preparer) Lookup(request Request) (Specification, bool, error) {
 	return spec, true, nil
 }
 
-// Prepare computes stable content identity and publishes the requested rendition. Concurrent and
-// cross-Channel requests for the same source/rendition share the fingerprint and Library build.
+// Prepare validates and opens the selected revision only in the background, then atomically
+// publishes its rendition. Concurrent requests for the same source/rendition share Library's one
+// build; a second Source Access check prevents publishing bytes after a local revision changed.
 func (p *Preparer) Prepare(ctx context.Context, request Request) (Publication, error) {
-	if p == nil || p.library == nil || p.packager == nil || p.readiness == nil {
+	if p == nil || p.library == nil || p.packager == nil || p.access == nil {
 		return Publication{}, ErrPackagerUnavailable
 	}
-	source, version, err := sourceVersion(request.Source)
+	spec, err := specificationFor(request)
 	if err != nil {
 		return Publication{}, err
 	}
-	fingerprint, err := p.fingerprint(ctx, source, version)
-	if err != nil {
-		return Publication{}, err
-	}
-	spec := Specification{SourceFingerprint: fingerprint, Rendition: request.Rendition}
 	return p.library.Publish(ctx, spec, func(ctx context.Context, workspace string) (Output, error) {
-		output, err := p.packager.Package(ctx, workspace, source, request.Rendition)
+		input, err := p.access.OpenInput(ctx, request.Source)
 		if err != nil {
 			return Output{}, err
 		}
-		_, after, err := sourceVersion(source)
+		if strings.TrimSpace(input.url) == "" {
+			return Output{}, ErrInvalidSource
+		}
+		output, err := p.packager.Package(ctx, workspace, input, request.Source.AudioTrack, request.Rendition)
 		if err != nil {
 			return Output{}, err
 		}
-		if after != version {
-			return Output{}, ErrSourceChanged
+		if _, err := p.access.OpenInput(ctx, request.Source); err != nil {
+			return Output{}, err
 		}
 		return output, nil
 	})
 }
 
-func sourceVersion(source Source) (Source, fileVersion, error) {
-	if source.AudioTrack < 0 || source.Path == "" {
-		return Source{}, fileVersion{}, ErrInvalidSource
+func specificationFor(request Request) (Specification, error) {
+	source := request.Source
+	if strings.TrimSpace(source.ItemID) == "" || strings.TrimSpace(source.SourceID) == "" ||
+		strings.TrimSpace(source.Revision) == "" || source.AudioTrack < 0 {
+		return Specification{}, ErrInvalidSource
 	}
-	path, err := filepath.Abs(filepath.Clean(source.Path))
-	if err != nil {
-		return Source{}, fileVersion{}, fmt.Errorf("%w: resolve path: %v", ErrInvalidSource, err)
+	digest := sha256.Sum256([]byte(strings.Join([]string{
+		source.ItemID, source.SourceID, source.Revision, strconv.Itoa(source.AudioTrack),
+	}, "\x00")))
+	spec := Specification{
+		SourceFingerprint: "inventory-sha256:" + hex.EncodeToString(digest[:]),
+		Rendition:         request.Rendition,
 	}
-	info, err := os.Stat(path)
-	if err != nil || !info.Mode().IsRegular() {
-		return Source{}, fileVersion{}, fmt.Errorf("%w: stat %q", ErrInvalidSource, path)
+	if _, err := keyFor(spec); err != nil {
+		return Specification{}, err
 	}
-	source.Path = path
-	return source, fileVersion{
-		path: path, size: info.Size(), modifiedNS: info.ModTime().UnixNano(), audioTrack: source.AudioTrack,
-	}, nil
-}
-
-func (p *Preparer) fingerprint(ctx context.Context, source Source, version fileVersion) (string, error) {
-	p.mu.Lock()
-	if fingerprint, ok := p.readiness.fingerprint(version); ok {
-		p.mu.Unlock()
-		return fingerprint, nil
-	}
-	lock := p.locks[version]
-	if lock == nil {
-		lock = &fingerprintLock{}
-		p.locks[version] = lock
-	}
-	lock.refs++
-	p.mu.Unlock()
-
-	lock.mu.Lock()
-	defer func() {
-		lock.mu.Unlock()
-		p.mu.Lock()
-		lock.refs--
-		if lock.refs == 0 {
-			delete(p.locks, version)
-		}
-		p.mu.Unlock()
-	}()
-
-	fingerprint, ok := p.readiness.fingerprint(version)
-	if ok {
-		return fingerprint, nil
-	}
-
-	f, err := os.Open(source.Path)
-	if err != nil {
-		return "", fmt.Errorf("prepared: open source: %w", err)
-	}
-	hash := sha256.New()
-	_, copyErr := io.Copy(hash, contextReader{ctx: ctx, reader: f})
-	closeErr := f.Close()
-	if copyErr != nil {
-		return "", fmt.Errorf("prepared: fingerprint source: %w", copyErr)
-	}
-	if closeErr != nil {
-		return "", fmt.Errorf("prepared: close source: %w", closeErr)
-	}
-	_, after, err := sourceVersion(source)
-	if err != nil {
-		return "", err
-	}
-	if after != version {
-		return "", ErrSourceChanged
-	}
-	fingerprint = "sha256:" + hex.EncodeToString(hash.Sum(nil)) + fmt.Sprintf(":audio:%d", source.AudioTrack)
-	if err := p.readiness.rememberFingerprint(version, fingerprint); err != nil {
-		return "", err
-	}
-	return fingerprint, nil
-}
-
-type contextReader struct {
-	ctx    context.Context
-	reader io.Reader
-}
-
-func (r contextReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return r.reader.Read(p)
+	return spec, nil
 }

@@ -86,7 +86,7 @@ const firstSegmentPoll = 100 * time.Millisecond
 // plan (§9.1 V48): a baseline `<video>` gets HEVC/AC3 transcoded to h264/aac, while an HEVC-capable
 // client gets it copied — the plan the Watch handler resolved from the DeviceProfile decides which.
 type HLSAttacher interface {
-	AttachSink(ctx context.Context, channelID string, plan EncodePlan, sink sessionSink) (func(), error)
+	AttachSink(ctx context.Context, channelID string, plan EncodePlan, sink sessionSink) (sinkLease, error)
 }
 
 type hlsProcessCorrelator interface {
@@ -281,7 +281,7 @@ func (m *HLSManager) start(channelID string, plan EncodePlan) (*hlsRemux, error)
 	// this costs no extra encode there — only genuinely incompatible content pays, and only while
 	// watched. The remux ffmpeg is `-c copy` regardless of plan — it re-containers whatever the
 	// session hands it (HEVC-in-TS included; hls.js ≥1.6 transmuxes that client-side).
-	sessDetach, err := m.attacher.AttachSink(ctx, channelID, plan, relay)
+	sessLease, err := m.attacher.AttachSink(ctx, channelID, plan, relay)
 	if err != nil {
 		cancel()
 		relay.abort(err)
@@ -299,9 +299,10 @@ func (m *HLSManager) start(channelID string, plan EncodePlan) (*hlsRemux, error)
 	r := &hlsRemux{
 		channelID: channelID, dir: dir,
 		playlist: filepath.Join(dir, hlsPlaylistName),
-		cancel:   cancel, sessDetach: sessDetach,
-		relay: relay,
-		grace: m.grace, log: m.log,
+		cancel:   cancel, sessDetach: sessLease.Release,
+		setSessionActive: sessLease.SetActive,
+		relay:            relay,
+		grace:            m.grace, log: m.log,
 		onClosed: func() { m.remove(key) },
 	}
 
@@ -317,7 +318,7 @@ func (m *HLSManager) start(channelID string, plan EncodePlan) (*hlsRemux, error)
 	proc, err := m.spawn(ctx, m.ffmpeg, dir, plan, m.log)
 	if err != nil {
 		cancel()
-		sessDetach()
+		sessLease.Release()
 		relay.abort(err)
 		_ = os.RemoveAll(dir)
 		if m.log != nil {
@@ -408,16 +409,20 @@ type hlsRemux struct {
 
 	cancel     context.CancelFunc
 	sessDetach func() // release the session refcount — MUST run exactly once on teardown
-	proc       *hlsProcess
-	relay      *hlsRelay
-	log        *slog.Logger
-	grace      time.Duration
-	onClosed   func()
+	// setSessionActive distinguishes a live HLS client from a remux retained only for warmth.
+	setSessionActive func(bool) bool
+	proc             *hlsProcess
+	relay            *hlsRelay
+	log              *slog.Logger
+	grace            time.Duration
+	onClosed         func()
 
-	mu        sync.Mutex
-	viewers   int
-	closed    bool
-	graceStop *time.Timer
+	mu             sync.Mutex
+	viewers        int
+	closed         bool
+	graceStop      *time.Timer
+	idleSince      time.Time
+	idleGeneration uint64
 }
 
 // addViewer increments the refcount, returning the playlist path + a detach func. ok=false when
@@ -425,8 +430,12 @@ type hlsRemux struct {
 // corpse (same guard as Session.addViewer).
 func (r *hlsRemux) addViewer() (string, func(), bool) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed {
+		r.mu.Unlock()
+		return "", nil, false
+	}
+	if r.setSessionActive != nil && !r.setSessionActive(true) {
+		r.mu.Unlock()
 		return "", nil, false
 	}
 	// A newcomer cancels a pending grace teardown: the channel is wanted again.
@@ -435,8 +444,11 @@ func (r *hlsRemux) addViewer() (string, func(), bool) {
 		r.graceStop = nil
 	}
 	r.viewers++
+	r.idleSince = time.Time{}
+	r.idleGeneration++
 	var once sync.Once
 	detach := func() { once.Do(r.removeViewer) }
+	r.mu.Unlock()
 	return r.playlist, detach, true
 }
 
@@ -445,25 +457,25 @@ func (r *hlsRemux) addViewer() (string, func(), bool) {
 // after a stall) does not pay a fresh ffmpeg start.
 func (r *hlsRemux) removeViewer() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed || r.viewers == 0 {
+		r.mu.Unlock()
 		return
 	}
 	r.viewers--
 	if r.viewers > 0 {
+		r.mu.Unlock()
 		return
 	}
-	// ABA guard, same shape as session.stopAfterGrace: capture nothing that a re-attach could
-	// invalidate; the timer callback re-checks the count under the lock before tearing down.
+	r.idleSince = time.Now()
+	r.idleGeneration++
+	idleGeneration := r.idleGeneration
 	r.graceStop = time.AfterFunc(r.grace, func() {
-		r.mu.Lock()
-		if r.closed || r.viewers > 0 {
-			r.mu.Unlock()
-			return
-		}
-		r.mu.Unlock()
-		r.teardown()
+		r.teardownIfIdle(idleGeneration)
 	})
+	if r.setSessionActive != nil {
+		r.setSessionActive(false)
+	}
+	r.mu.Unlock()
 }
 
 // teardown stops ffmpeg, releases the session refcount, removes the segment dir, and notifies the
@@ -481,7 +493,26 @@ func (r *hlsRemux) teardown() {
 		r.graceStop = nil
 	}
 	r.mu.Unlock()
+	r.finishTeardown()
+}
 
+func (r *hlsRemux) teardownIfIdle(expectedGeneration uint64) bool {
+	r.mu.Lock()
+	if r.closed || r.viewers != 0 || r.idleSince.IsZero() || r.idleGeneration != expectedGeneration {
+		r.mu.Unlock()
+		return false
+	}
+	r.closed = true
+	if r.graceStop != nil {
+		r.graceStop.Stop()
+		r.graceStop = nil
+	}
+	r.mu.Unlock()
+	r.finishTeardown()
+	return true
+}
+
+func (r *hlsRemux) finishTeardown() {
 	r.relay.abort(context.Canceled) // wakes either side of the queue before process teardown
 	r.cancel()                      // stops the ffmpeg (context-bound, like every playout process)
 	r.sessDetach()                  // decrement the SESSION refcount — the channel's encoder can now idle out

@@ -337,14 +337,17 @@ func TestProfile_NoOverrideProbesAndFallsBackSafely(t *testing.T) {
 	}
 }
 
-// A viewer must never pay the machine-capability benchmark. Boot warms it independently; until
-// that result is ready, software is the conservative immediately-available fallback.
+// A viewer pays only the persisted-evidence fingerprint check, never an encoder trial or the full
+// machine benchmark. With no reusable evidence, software is the immediately-available fallback.
 func TestProfile_NoOverrideDoesNotWaitForProbe(t *testing.T) {
 	t.Parallel()
 	started := make(chan struct{})
 	release := make(chan struct{})
 	r := fillerResolver(t, t.TempDir(), filler.Pod{})
 	r.encoder = func() string { return "" }
+	r.loadCapabilityEvidence = func(context.Context) (playout.Capacity, bool) {
+		return playout.Capacity{}, false
+	}
 	r.ffmpegPath = func() string {
 		close(started)
 		<-release
@@ -388,13 +391,15 @@ func TestProfile_ProbesOnlyOnce(t *testing.T) {
 type recordingPlays struct {
 	calls    []string
 	channels []string
+	at       []time.Time
 	err      error
 }
 
-func (r *recordingPlays) RecordClipPlay(_ context.Context, channelID, clipHash string, _ time.Time) error {
+func (r *recordingPlays) RecordClipPlay(_ context.Context, channelID, clipHash string, at time.Time) (bool, error) {
 	r.calls = append(r.calls, clipHash)
 	r.channels = append(r.channels, channelID)
-	return r.err
+	r.at = append(r.at, at)
+	return r.err == nil, r.err
 }
 
 // V28: a clip that AIRS is counted. V41: the count identifies the clip by its HASH.
@@ -429,6 +434,34 @@ func TestAiringNow_CountsTheClipThatAirs(t *testing.T) {
 	}
 }
 
+// A finite ffmpeg child asks for the next clip after the previous child exits. That request
+// arrives slightly after the scheduled boundary (roughly 80-250ms on the live stack), never at
+// the exact nanosecond. The exposure write must identify the scheduled clip start so later
+// re-resolves can be made idempotent without requiring an impossible `into == 0` coincidence.
+func TestAiringNow_RecordsClipStartWhenResolverArrivesLate(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	pod := filler.Pod{Entries: []filler.PodEntry{
+		{Path: clipAt("1994/toys.mp4"), Hash: "hash-toys", Name: "toys", DurationMs: 8000},
+	}}
+	r := fillerResolver(t, dir, pod)
+	plays := &recordingPlays{}
+	r.clipPlays = plays
+
+	base := testPlayoutAnchor()
+	r.now = func() time.Time { return base.Add(100 * time.Millisecond) }
+
+	if _, _, err := r.AiringNow(context.Background(), "ch1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(plays.calls) != 1 {
+		t.Fatalf("recorded %d plays, want the clip that started 100ms ago recorded once", len(plays.calls))
+	}
+	if got := plays.at[0]; !got.Equal(base) {
+		t.Fatalf("recorded at %v, want scheduled clip start %v", got, base)
+	}
+}
+
 // ⚠ The bumper card has no catalog row, so it has no hash — and must not be counted. Without
 // the `e.Hash != ""` guard this records a play against the empty string, which is not merely
 // useless: it is an UPDATE with an attacker-independent but wrong key, and the swallowed error
@@ -451,16 +484,13 @@ func TestAiringNow_DoesNotCountAnEntryWithNoHash(t *testing.T) {
 	}
 }
 
-// ⚠ The overcounting guard. A mid-clip re-resolve — which happens whenever anything asks what
-// is on while a clip is already rolling — must NOT count again. Only the item's start does.
-//
-// Without the `into == 0` check this counts on every resolve, and a 30s advert re-resolved by
-// a reconnecting viewer would report several plays for one airing.
-func TestAiringNow_DoesNotCountAMidClipResolve(t *testing.T) {
+// A mid-clip re-resolve reports the SAME scheduled start. The durable recorder owns
+// idempotency, because process-local suppression would be lost on restart or another replica.
+func TestAiringNow_MidClipResolveUsesTheScheduledStart(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	pod := filler.Pod{Entries: []filler.PodEntry{
-		{Path: clipAt("1994/toys.mp4"), Name: "toys", DurationMs: 8000},
+		{Path: clipAt("1994/toys.mp4"), Hash: "hash-toys", Name: "toys", DurationMs: 8000},
 	}}
 	r := fillerResolver(t, dir, pod)
 	plays := &recordingPlays{}
@@ -473,8 +503,11 @@ func TestAiringNow_DoesNotCountAMidClipResolve(t *testing.T) {
 	if _, _, err := r.AiringNow(context.Background(), "ch1"); err != nil {
 		t.Fatal(err)
 	}
-	if len(plays.calls) != 0 {
-		t.Errorf("a mid-clip resolve counted %v — only the clip's START is an airing", plays.calls)
+	if len(plays.calls) != 1 {
+		t.Fatalf("a mid-clip resolve recorded %v calls, want one idempotent observation", plays.calls)
+	}
+	if got := plays.at[0]; !got.Equal(base) {
+		t.Errorf("mid-clip resolve recorded at %v, want scheduled start %v", got, base)
 	}
 }
 

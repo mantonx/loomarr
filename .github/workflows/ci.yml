@@ -162,14 +162,16 @@ jobs:
           else
             echo "agent=false" >> "$GITHUB_OUTPUT"
           fi
-          # The Android TV client (§11, Shield). `api/openapi.yaml` gates it because the client is
-          # GENERATED from that spec — the same reason `web/` regenerates its orval client — so a
-          # backend field rename must fail the Android build rather than reach a television.
+          # The React Native Android TV client (§11, Shield). `api/openapi.yaml` gates it because
+          # the client is generated from that spec, and every shared native input can affect the
+          # generated Play bundle.
           # ⚠ `ci\.yml$`, not the whole `.github/workflows/` tree — same reasoning as the web
           # filter below. The Android job is defined only in ci.yml and consumes no other workflow,
-          # so a release.yml / pages.yml edit cannot change the APK build and must not spend an
-          # Android runner. `api/openapi.yaml` stays because the client is GENERATED from it.
-          if echo "$changed" | grep -qE '^android/|^scripts/(android-version-code|build-android-beta|check-android-release-env|generate-android-tv-brand|publish-android-beta|test-android-release|validate-android-release-source)\.sh$|^api/openapi\.yaml$|^Makefile$|^\.github/workflows/(android-beta|ci)\.yml$'; then
+          # so a release.yml / pages.yml edit cannot change the bundle and must not spend an
+          # Android runner.
+          # The impact classifier and Android source validator are part of the evidence authority:
+          # until produced evidence binds their exact identity, either changing invalidates reuse.
+          if echo "$changed" | grep -qE '^store-listing/android-tv/|^web/(apps/tv/|packages/(api|core|design-system|fixtures|ui|ui-tv|player)/|scripts/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.gitignore$|biome\.json$|tsconfig\.base\.json$)|^scripts/(android-version-code|build-android-beta|check-android-release-env|generate-android-tv-brand|publish-android-beta|test-android-release|ci-impact|validate-android-release-source)\.sh$|^api/openapi\.yaml$|^Makefile$|^mk/android\.mk$|^\.github/workflows/(android-beta|ci-android|ci)\.yml$'; then
             echo "android=true" >> "$GITHUB_OUTPUT"
           else
             echo "android=false" >> "$GITHUB_OUTPUT"
@@ -180,7 +182,7 @@ jobs:
           # affect a web job and must not spend six runners rebuilding + re-Playwrighting the SPA.
           # The Go filter keeps the broad glob on purpose: `make ci-lint` actionlints EVERY workflow
           # and `cmd/releaseverify` reads release.yml, so those genuinely need any-workflow coverage.
-          if echo "$changed" | grep -qE '^web/(apps/web/|packages/(api|core|fixtures|tokens)/|scripts/)|^web/(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.gitignore|biome\.json|tsconfig\.base\.json|\.dependency-cruiser\.cjs)$|^Makefile$|^\.github/workflows/ci\.yml$'; then
+          if echo "$changed" | grep -qE '^web/(apps/web/|packages/(api|core|fixtures|player|tokens)/|scripts/)|^web/(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.gitignore|biome\.json|tsconfig\.base\.json|\.dependency-cruiser\.cjs)$|^Makefile$|^\.github/workflows/ci\.yml$'; then
             echo "web=true" >> "$GITHUB_OUTPUT"
           else
             echo "web=false" >> "$GITHUB_OUTPUT"
@@ -188,10 +190,10 @@ jobs:
           # The candidate Expo clients and Loomarr-owned universal packages have their own
           # gate. A native-only edit must not wake the legacy SPA, Playwright, tuner, or image
           # jobs. Both Expo apps use fixtures in their native Storybook graph; fixtures depend on
-          # core and API, so all three packages are real client inputs even before a production
+          # core, API, and player, so all four packages are real client inputs even before a production
           # screen imports a particular shared module. Workspace-root dependency and tooling inputs
           # still gate both families because they can change how either graph resolves or builds.
-          if echo "$changed" | grep -qE '^brand-assets\.lock\.json$|^scripts/(generate-brand-assets|check-brand-assets)\.mjs$|^web/(apps/(mobile|tv)/|packages/(api|core|design-system|fixtures|ui)/|turbo\.json$)|^web/(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.gitignore|biome\.json|tsconfig\.base\.json|\.dependency-cruiser\.cjs)$|^web/scripts/|^Makefile$|^\.github/workflows/ci\.yml$'; then
+          if echo "$changed" | grep -qE '^brand-assets\.lock\.json$|^scripts/(generate-brand-assets|check-brand-assets)\.mjs$|^web/(apps/(mobile|tv)/|packages/(api|core|design-system|fixtures|player|ui)/|turbo\.json$)|^web/(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.gitignore|biome\.json|tsconfig\.base\.json|\.dependency-cruiser\.cjs)$|^web/scripts/|^Makefile$|^\.github/workflows/ci\.yml$'; then
             echo "clients=true" >> "$GITHUB_OUTPUT"
           else
             echo "clients=false" >> "$GITHUB_OUTPUT"
@@ -212,7 +214,7 @@ jobs:
           # the bundle guard. Restricting this to Dockerfile/Rust changes allowed a Go,
           # frontend, or embedded-help change to reach a tag before the production image
           # containing it had ever been built.
-          if echo "$changed" | grep -qE '^Dockerfile$|^\.dockerignore$|^LICENSE$|^THIRD_PARTY_NOTICES\.md$|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^rust/|^internal/store/migrations/|\.go$|^go\.(mod|sum)$|^docs/help/|^web/(apps/web/|packages/(api|core|fixtures|tokens)/|scripts/)|^web/(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.gitignore|biome\.json|tsconfig\.base\.json|\.dependency-cruiser\.cjs)$|^api/openapi\.yaml$|^scripts/check-fe-bundle\.mjs$'; then
+          if echo "$changed" | grep -qE '^Dockerfile$|^\.dockerignore$|^LICENSE$|^THIRD_PARTY_NOTICES\.md$|^Cargo\.(toml|lock)$|^rust-toolchain\.toml$|^rust/|^internal/store/migrations/|\.go$|^go\.(mod|sum)$|^docs/help/|^web/(apps/web/|packages/(api|core|fixtures|player|tokens)/|scripts/)|^web/(package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|\.gitignore|biome\.json|tsconfig\.base\.json|\.dependency-cruiser\.cjs)$|^api/openapi\.yaml$|^scripts/check-fe-bundle\.mjs$'; then
             echo "image=true" >> "$GITHUB_OUTPUT"
           else
             echo "image=false" >> "$GITHUB_OUTPUT"
@@ -286,7 +288,7 @@ jobs:
             printf '| Image | %s | image=%s |\n' "$LEGACY_IMAGE" "$(impact_value image)"
             printf '| Docs | %s | docs=%s |\n' "$LEGACY_DOCS" "$(impact_value docs)"
             printf '| Agent | %s | agent=%s |\n' "$LEGACY_AGENT" "$(impact_value agent)"
-            printf '| Android | %s | android=%s |\n' "$LEGACY_ANDROID" "$(impact_value android)"
+            printf '| Android TV | %s | React Native bundle=%s |\n' "$LEGACY_ANDROID" "$(impact_value android)"
           } >> "$GITHUB_STEP_SUMMARY"
 
   agent-harness-macos:
@@ -418,7 +420,7 @@ jobs:
     uses: ./.github/workflows/ci-docs.yml
 
   android:
-    name: Android TV — lint + unit + assemble
+    name: Android TV — React Native Play bundle
     needs: changes
     if: needs.changes.outputs.impact_android == 'true'
     uses: ./.github/workflows/ci-android.yml

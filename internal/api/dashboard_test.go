@@ -54,7 +54,7 @@ func TestPlayoutTelemetry_ReportsSessionsAndLoad(t *testing.T) {
 	srv := newDashboardServer(t, &fakePlayoutSessions{
 		capacity: 4,
 		stats: []playout.SessionStat{
-			{ChannelID: "ch1", Viewers: 2, Encoder: "h264_nvenc", Hardware: true, Speed: 12.4, BufferedMS: 96_000},
+			{ChannelID: "ch1", Viewers: 2, Encoder: "h264_nvenc", Hardware: true, Speed: 12.4, BufferedMS: 96_000, TranscodeCost: 1},
 			{ChannelID: "ch2", Viewers: 1, Encoder: "libx264", Hardware: false, Speed: 1.4, BufferedMS: 12_000},
 		},
 	})
@@ -69,6 +69,13 @@ func TestPlayoutTelemetry_ReportsSessionsAndLoad(t *testing.T) {
 	if got.Active != 2 || got.Capacity != 4 {
 		t.Errorf("load = %d/%d, want 2/4", got.Active, got.Capacity)
 	}
+	if got.ViewerActiveSessions != 2 || got.GraceIdleSessions != 0 {
+		t.Errorf("viewer-active/grace-idle = %d/%d, want 2/0",
+			got.ViewerActiveSessions, got.GraceIdleSessions)
+	}
+	if got.TranscodeCost != 1 {
+		t.Errorf("transcode cost = %d, want 1 transcode plus one copy session", got.TranscodeCost)
+	}
 	if len(got.Sessions) != 2 {
 		t.Fatalf("got %d sessions, want 2", len(got.Sessions))
 	}
@@ -80,6 +87,28 @@ func TestPlayoutTelemetry_ReportsSessionsAndLoad(t *testing.T) {
 	}
 	if got.Sessions[1].Speed != 1.4 {
 		t.Errorf("speed = %v, want the measured 1.4", got.Sessions[1].Speed)
+	}
+}
+
+func TestPlayoutTelemetry_SeparatesViewerActiveAndGraceIdleSessions(t *testing.T) {
+	srv := newDashboardServer(t, &fakePlayoutSessions{
+		capacity: 4,
+		stats: []playout.SessionStat{
+			{ChannelID: "watched", Viewers: 1},
+			{ChannelID: "warm", Viewers: 0},
+		},
+	})
+
+	resp := do(t, srv, http.MethodGet, "/v1/playout/sessions", adminToken, "")
+	defer func() { _ = resp.Body.Close() }()
+	got := telemetry(t, resp)
+
+	if got.Active != 2 {
+		t.Fatalf("active = %d, want all 2 live sessions", got.Active)
+	}
+	if got.ViewerActiveSessions != 1 || got.GraceIdleSessions != 1 {
+		t.Fatalf("viewer-active/grace-idle = %d/%d, want 1/1",
+			got.ViewerActiveSessions, got.GraceIdleSessions)
 	}
 }
 

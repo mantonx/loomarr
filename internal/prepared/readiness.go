@@ -13,7 +13,7 @@ import (
 
 const (
 	readinessMetadata = ".readiness.json"
-	readinessVersion  = 1
+	readinessVersion  = 2
 )
 
 // BindingKey identifies one Channel's selection of one library item. Publications remain shared
@@ -24,7 +24,7 @@ type BindingKey struct {
 	LibraryItemID string `json:"libraryItemId"`
 }
 
-// Binding is the resolved local source for one active policy. Policy includes global tier,
+// Binding is the resolved Inventory source for one active policy. Policy includes global tier,
 // language, and path-map inputs; ChannelPolicy independently invalidates per-Channel audio changes.
 type Binding struct {
 	Policy        string  `json:"policy"`
@@ -33,9 +33,8 @@ type Binding struct {
 }
 
 type readinessDocument struct {
-	Version      int                 `json:"version"`
-	Bindings     []bindingRecord     `json:"bindings"`
-	Fingerprints []fingerprintRecord `json:"fingerprints"`
+	Version  int             `json:"version"`
+	Bindings []bindingRecord `json:"bindings"`
 }
 
 type bindingRecord struct {
@@ -43,32 +42,21 @@ type bindingRecord struct {
 	Binding Binding    `json:"binding"`
 }
 
-type fingerprintRecord struct {
-	Path        string `json:"path"`
-	Size        int64  `json:"size"`
-	ModifiedNS  int64  `json:"modifiedNs"`
-	AudioTrack  int    `json:"audioTrack"`
-	Fingerprint string `json:"fingerprint"`
-}
-
 // Readiness is the durable, regenerable source index. Reads never touch disk after OpenReadiness;
 // control-plane writes snapshot memory and atomically replace the versioned file.
 type Readiness struct {
 	root string
 
-	mu           sync.RWMutex
-	bindings     map[BindingKey]Binding
-	fingerprints map[fileVersion]string
-	persistMu    sync.Mutex
+	mu        sync.RWMutex
+	bindings  map[BindingKey]Binding
+	persistMu sync.Mutex
 }
 
 // OpenReadiness loads the prepared root's source index. A malformed index returns a usable empty
 // value plus an error so composition can warn and retain immediate live fallback; the next
 // successful Remember call atomically replaces the bad bytes.
 func OpenReadiness(library *Library) (*Readiness, error) {
-	index := &Readiness{
-		bindings: make(map[BindingKey]Binding), fingerprints: make(map[fileVersion]string),
-	}
+	index := &Readiness{bindings: make(map[BindingKey]Binding)}
 	if library == nil || library.root == "" {
 		return index, fmt.Errorf("prepared: open readiness index: %w", ErrInvalidSpecification)
 	}
@@ -89,7 +77,6 @@ func OpenReadiness(library *Library) (*Readiness, error) {
 	}
 	if err := index.load(document); err != nil {
 		index.bindings = make(map[BindingKey]Binding)
-		index.fingerprints = make(map[fileVersion]string)
 		return index, err
 	}
 	return index, nil
@@ -118,6 +105,13 @@ func (r *Readiness) RememberBinding(key BindingKey, binding Binding) error {
 // RememberBindings commits one planner pass with one atomic control-file replacement. Memory does
 // not expose the new bindings until the durable rename succeeds.
 func (r *Readiness) RememberBindings(updates map[BindingKey]Binding) error {
+	return r.ReconcileBindings(updates, nil)
+}
+
+// ReconcileBindings atomically removes stale selections and installs their replacements. A key
+// present in both collections is replaced because removals are applied before validated updates.
+// The planner uses this to ensure a failed source re-resolution cannot leave old bytes tuneable.
+func (r *Readiness) ReconcileBindings(updates map[BindingKey]Binding, removals []BindingKey) error {
 	if r == nil {
 		return ErrInvalidSpecification
 	}
@@ -128,54 +122,28 @@ func (r *Readiness) RememberBindings(updates map[BindingKey]Binding) error {
 		}
 		normalized[key] = binding
 	}
-	if len(normalized) == 0 {
+	for _, key := range removals {
+		if strings.TrimSpace(key.ChannelID) == "" || strings.TrimSpace(key.LibraryItemID) == "" {
+			return ErrInvalidSource
+		}
+	}
+	if len(normalized) == 0 && len(removals) == 0 {
 		return nil
 	}
 	r.persistMu.Lock()
 	defer r.persistMu.Unlock()
-	bindings, fingerprints := r.clone()
+	bindings := r.clone()
+	for _, key := range removals {
+		delete(bindings, key)
+	}
 	for key, binding := range normalized {
 		bindings[key] = binding
 	}
-	if err := r.persist(documentFrom(bindings, fingerprints)); err != nil {
+	if err := r.persist(documentFrom(bindings)); err != nil {
 		return err
 	}
 	r.mu.Lock()
 	r.bindings = bindings
-	r.fingerprints = fingerprints
-	r.mu.Unlock()
-	return nil
-}
-
-func (r *Readiness) fingerprint(version fileVersion) (string, bool) {
-	if r == nil {
-		return "", false
-	}
-	r.mu.RLock()
-	fingerprint, ok := r.fingerprints[version]
-	r.mu.RUnlock()
-	return fingerprint, ok
-}
-
-func (r *Readiness) rememberFingerprint(version fileVersion, fingerprint string) error {
-	if r == nil || !validFileVersion(version) || strings.TrimSpace(fingerprint) == "" {
-		return ErrInvalidSource
-	}
-	r.persistMu.Lock()
-	defer r.persistMu.Unlock()
-	bindings, fingerprints := r.clone()
-	for prior := range fingerprints {
-		if prior.path == version.path && prior.audioTrack == version.audioTrack && prior != version {
-			delete(fingerprints, prior)
-		}
-	}
-	fingerprints[version] = fingerprint
-	if err := r.persist(documentFrom(bindings, fingerprints)); err != nil {
-		return err
-	}
-	r.mu.Lock()
-	r.bindings = bindings
-	r.fingerprints = fingerprints
 	r.mu.Unlock()
 	return nil
 }
@@ -190,18 +158,6 @@ func (r *Readiness) load(document readinessDocument) error {
 			return fmt.Errorf("prepared: duplicate readiness binding %+v", record.Key)
 		}
 		r.bindings[record.Key] = binding
-	}
-	for _, record := range document.Fingerprints {
-		version := fileVersion{
-			path: record.Path, size: record.Size, modifiedNS: record.ModifiedNS, audioTrack: record.AudioTrack,
-		}
-		if !validFileVersion(version) || strings.TrimSpace(record.Fingerprint) == "" {
-			return ErrInvalidSource
-		}
-		if _, duplicate := r.fingerprints[version]; duplicate {
-			return fmt.Errorf("prepared: duplicate readiness fingerprint for %q", version.path)
-		}
-		r.fingerprints[version] = record.Fingerprint
 	}
 	return nil
 }
@@ -239,32 +195,20 @@ func (r *Readiness) persist(document readinessDocument) error {
 	return syncDir(r.root)
 }
 
-func (r *Readiness) clone() (map[BindingKey]Binding, map[fileVersion]string) {
+func (r *Readiness) clone() map[BindingKey]Binding {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	bindings := make(map[BindingKey]Binding, len(r.bindings))
 	for key, binding := range r.bindings {
 		bindings[key] = binding
 	}
-	fingerprints := make(map[fileVersion]string, len(r.fingerprints))
-	for version, fingerprint := range r.fingerprints {
-		fingerprints[version] = fingerprint
-	}
-	return bindings, fingerprints
+	return bindings
 }
 
-func documentFrom(
-	bindings map[BindingKey]Binding, fingerprints map[fileVersion]string,
-) readinessDocument {
+func documentFrom(bindings map[BindingKey]Binding) readinessDocument {
 	document := readinessDocument{Version: readinessVersion}
 	for key, binding := range bindings {
 		document.Bindings = append(document.Bindings, bindingRecord{Key: key, Binding: binding})
-	}
-	for version, fingerprint := range fingerprints {
-		document.Fingerprints = append(document.Fingerprints, fingerprintRecord{
-			Path: version.path, Size: version.size, ModifiedNS: version.modifiedNS,
-			AudioTrack: version.audioTrack, Fingerprint: fingerprint,
-		})
 	}
 	slices.SortFunc(document.Bindings, func(a, b bindingRecord) int {
 		if byChannel := strings.Compare(a.Key.ChannelID, b.Key.ChannelID); byChannel != 0 {
@@ -272,42 +216,17 @@ func documentFrom(
 		}
 		return strings.Compare(a.Key.LibraryItemID, b.Key.LibraryItemID)
 	})
-	slices.SortFunc(document.Fingerprints, func(a, b fingerprintRecord) int {
-		if byPath := strings.Compare(a.Path, b.Path); byPath != 0 {
-			return byPath
-		}
-		if a.AudioTrack < b.AudioTrack {
-			return -1
-		}
-		if a.AudioTrack > b.AudioTrack {
-			return 1
-		}
-		if a.ModifiedNS < b.ModifiedNS {
-			return -1
-		}
-		if a.ModifiedNS > b.ModifiedNS {
-			return 1
-		}
-		return 0
-	})
 	return document
 }
 
 func validateBinding(key BindingKey, binding *Binding) error {
 	if strings.TrimSpace(key.ChannelID) == "" || strings.TrimSpace(key.LibraryItemID) == "" ||
 		strings.TrimSpace(binding.Policy) == "" || binding.Request.Source.AudioTrack < 0 ||
-		strings.TrimSpace(binding.Request.Source.Path) == "" {
+		strings.TrimSpace(binding.Request.Source.ItemID) == "" ||
+		strings.TrimSpace(binding.Request.Source.SourceID) == "" ||
+		strings.TrimSpace(binding.Request.Source.Revision) == "" {
 		return ErrInvalidSource
 	}
-	path, err := filepath.Abs(filepath.Clean(binding.Request.Source.Path))
-	if err != nil || !filepath.IsAbs(path) {
-		return ErrInvalidSource
-	}
-	binding.Request.Source.Path = path
-	_, err = keyFor(Specification{SourceFingerprint: "readiness", Rendition: binding.Request.Rendition})
+	_, err := keyFor(Specification{SourceFingerprint: "readiness", Rendition: binding.Request.Rendition})
 	return err
-}
-
-func validFileVersion(version fileVersion) bool {
-	return filepath.IsAbs(version.path) && version.size >= 0 && version.modifiedNS != 0 && version.audioTrack >= 0
 }

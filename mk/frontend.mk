@@ -78,6 +78,16 @@ CLIENT_APP ?= mobile
 client-android-debug: fe-api-codegen ## memory-bounded arm64 debug build (CLIENT_APP=mobile|tv)
 	cd $(WEB) && ./scripts/build-android-client.sh $(CLIENT_APP)
 
+SHIELD_VERSION ?=
+.PHONY: shield-sideload
+shield-sideload: fe-api-codegen ## build and inspect a signed permanent-identity Shield APK (SHIELD_VERSION=x.y.z)
+	@test -n "$(SHIELD_VERSION)" || { echo 'SHIELD_VERSION is required' >&2; exit 2; }
+	cd $(WEB) && ./scripts/build-shield-sideload.sh "$(SHIELD_VERSION)"
+
+.PHONY: shield-sideload-test
+shield-sideload-test: fe-api-codegen ## build with an ephemeral key, then clean-install and launch on the TV emulator
+	cd $(WEB) && ./scripts/test-shield-sideload.sh "$(if $(SHIELD_VERSION),$(SHIELD_VERSION),0.1.0-beta.1)"
+
 .PHONY: client-apple-simulator
 client-apple-simulator: fe-api-codegen ## build and launch an Apple simulator proof (CLIENT_APP=mobile|tv; macOS)
 	cd $(WEB) && ./scripts/test-apple-client.sh $(CLIENT_APP)

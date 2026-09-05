@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -33,17 +34,20 @@ type fakePlayoutSessions struct {
 	attached []attachRecord
 	err      error
 	chunks   chan []byte
+	streams  map[playout.EncodePlan]chan []byte
 	detached int
 	// V16 telemetry: what the handlers reported, and what Stats hands back.
-	stats    []playout.SessionStat
-	capacity int
-	reported []reportedProgram
-	asset    playout.Asset
-	assetOK  bool
-	opened   string
-	tunes    int
-	stopped  []string
-	admitErr error
+	stats        []playout.SessionStat
+	capacity     int
+	reported     []reportedProgram
+	asset        playout.Asset
+	assetOK      bool
+	opened       string
+	tunes        int
+	stopped      []string
+	admitErr     error
+	denyProgram  bool
+	programCosts []bool
 }
 
 // attachRecord is one Attach call — its channel and codec target.
@@ -80,6 +84,13 @@ func (f *fakePlayoutSessions) ReportProgram(channelID string, target playout.Enc
 	f.reported = append(f.reported, reportedProgram{channelID: channelID, target: target, encoder: enc, transcoding: transcoding, progress: p})
 }
 
+func (f *fakePlayoutSessions) AdmitProgram(_ string, _ playout.EncodePlan, transcoding bool) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.programCosts = append(f.programCosts, transcoding)
+	return !f.denyProgram
+}
+
 func (f *fakePlayoutSessions) Attach(_ context.Context, channelID string, target playout.EncodePlan) (<-chan []byte, func(), error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -87,6 +98,13 @@ func (f *fakePlayoutSessions) Attach(_ context.Context, channelID string, target
 		return nil, nil, f.err
 	}
 	f.attached = append(f.attached, attachRecord{channelID: channelID, target: target})
+	if chunks := f.streams[target]; chunks != nil {
+		return chunks, func() {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.detached++
+		}, nil
+	}
 	if f.chunks == nil {
 		f.chunks = make(chan []byte, 8)
 	}
@@ -95,6 +113,12 @@ func (f *fakePlayoutSessions) Attach(_ context.Context, channelID string, target
 		defer f.mu.Unlock()
 		f.detached++
 	}, nil
+}
+
+func (f *fakePlayoutSessions) attachments() []attachRecord {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]attachRecord(nil), f.attached...)
 }
 
 func (f *fakePlayoutSessions) Tune(ctx context.Context, request playout.TuneRequest) (playout.Presentation, error) {
@@ -424,6 +448,66 @@ func TestPlayoutStream_LooksLikeALiveStreamNotAFile(t *testing.T) {
 	}
 	if string(buf) != "ts-bytes" {
 		t.Errorf("got %q, want the session's chunk", buf)
+	}
+}
+
+// A session can start its parent process successfully and still close before producing transport.
+// The raw tuner route must not commit 200 until it has one real chunk, or Emby waits on a stream
+// that has already failed and the response status lies about the channel being playable.
+func TestPlayoutStream_SessionClosingBeforeFirstChunkFailsBeforeCommitting(t *testing.T) {
+	f := &fakePlayoutSessions{chunks: make(chan []byte)}
+	close(f.chunks)
+	srv, st := newPlayoutServer(t, playoutOpts{sessions: f})
+	seedChannel(t, st, "ch1", "Channel One", 1, "internal")
+
+	resp, err := srv.Client().Get(playoutTestURL + "/v1/playout/stream/ch1?token=" + playoutToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502 before a streaming 200 is committed", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); strings.Contains(ct, "video/mp2t") {
+		t.Fatalf("failed startup advertised transport Content-Type %q", ct)
+	}
+}
+
+// The full tuner plan may select a native HEVC broadcast that this machine cannot encode. A
+// zero-byte full presentation is not terminal when the known-playable H.264/AAC baseline can
+// produce transport: release the failed presentation, tune the baseline session, and commit 200
+// only after its first real chunk arrives.
+func TestPlayoutStream_FullPlanWithoutTransportFallsBackToBaseline(t *testing.T) {
+	full := make(chan []byte)
+	close(full)
+	baseline := make(chan []byte, 1)
+	baseline <- []byte("baseline-ts")
+	close(baseline)
+	f := &fakePlayoutSessions{streams: map[playout.EncodePlan]chan []byte{
+		playout.PlanFull: full, playout.PlanBaseline: baseline,
+	}}
+	srv, st := newPlayoutServer(t, playoutOpts{sessions: f})
+	seedChannel(t, st, "ch1", "Channel One", 1, "internal")
+
+	resp := getPlayout(t, srv, "/v1/playout/stream/ch1?token="+playoutToken)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want baseline transport 200", resp.StatusCode)
+	}
+	if string(body) != "baseline-ts" {
+		t.Fatalf("body = %q, want baseline transport", body)
+	}
+	if got, want := f.attachments(), []attachRecord{
+		{channelID: "ch1", target: playout.PlanFull},
+		{channelID: "ch1", target: playout.PlanBaseline},
+	}; !slices.Equal(got, want) {
+		t.Fatalf("tunes = %+v, want %+v", got, want)
+	}
+	if got := f.detachCount(); got != 2 {
+		t.Fatalf("released presentations = %d, want 2", got)
 	}
 }
 

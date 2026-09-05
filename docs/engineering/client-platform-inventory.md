@@ -1,30 +1,30 @@
 # Shared client platform inventory
 
-**Date:** 2026-08-23  
-**Status:** Phase-0 baseline  
+**Date:** 2026-09-03
+**Status:** parity baseline for #970
 **Plan:** [`plans/shared-client-platform.md`](plans/shared-client-platform.md)
 
-This inventory compares the supplied local design artifact with the current web and Android TV
-implementations. It decides what the migration should keep, adapt, redesign, or retire; it does not
-claim that the mock or current UI is already the finished visual language.
+This historical inventory compared the supplied local design artifact with the Web and former
+Kotlin/Compose Android TV implementations. For #970, each shipping presentation was authoritative:
+Web stays visually Web, and Shield's accepted React Native replacement preserves the former
+Kotlin/Compose presentation. The supplied artifact informs later refinements but did not override
+either parity target during implementation replacement.
 
 ## Evidence inspected
 
 - `/home/fictional/Downloads/Shared file archive(4).zip`, especially
   `Loomarr TV + iOS.dc.html`, rendered locally rather than inferred from the unavailable hosted
   artifact.
-- Current Android TV sources under `android/app/src/main/java/loomarr/media/{design,guide,navigation,pairing,playback}`.
-- Committed Android Roborazzi references for Watching, Surf, Guide, pairing, and their 4K-density
-  variants under `android/app/src/test/screenshots/`.
+- The former Android TV sources and committed Roborazzi references from the baseline revision,
+  before P5c retired the Kotlin application and its screenshot harness.
 - Current web Guide, Watch/player, artwork, channel-identity, token, Storybook, visual, and generated
   client modules.
 - Current product behavior in `docs/design.md`, especially auth, Guide, Watch, player, and TV
   navigation contracts.
 
-The current client surface is substantial: 213 production web TSX files, including 86 Loomarr
-product modules and 25 UI primitives; 114 web stories and 159 web component tests; and 26 Android
-production Kotlin files with 17 Kotlin test files. This is a staged migration of proven behavior,
-not a greenfield demo.
+At inventory time the client surface included 213 production web TSX files, 114 web stories, 159
+web component tests, 26 Android production Kotlin files, and 17 Kotlin test files. This was a staged
+migration of proven behavior, not a greenfield demo; P5c subsequently retired those Kotlin files.
 
 ## What the supplied artifact actually contains
 
@@ -53,7 +53,7 @@ Controls must communicate their purpose through the platform interaction and acc
 | programme identity and guide endpoints | server remains authoritative for title, episode, time, artwork, and channel | shared Guide data module |
 | TV navigation behavior in `TvNavigation.kt` | exact number matching, bounded recent history, grouped channels, explicit focus graph | shared pure TypeScript behavior with TV adapter tests |
 | web `Image` behavior and Android `RemoteArtwork` behavior | both encode valuable placeholder, geometry, failure, and remote-loading requirements | shared Artwork interface + web/native adapters |
-| release identity `loomarr.media`, Play signing, versioning, and Shield update gates | distribution is independent from presentation technology | adapted Android/Expo release pipeline |
+| release identity `loomarr.media`, versioning, launcher, and banner | identity is independent from presentation technology | sideloadable Android/Expo build |
 
 “Keep” means keep the behavior or interface. Kotlin or Tailwind implementation does not survive
 automatically.
@@ -70,9 +70,9 @@ automatically.
 | web and Android story/screenshot fixtures | consolidate the domain scenario; keep separate renderer baselines at platform dimensions |
 | existing launcher icon, TV banner, and store metadata | preserve identity requirements, then regenerate presentation assets from the adopted visual language |
 
-### Redesign rather than port
+### Defer until after parity
 
-| Current area | Evidence | Replacement direction |
+| Current area | Evidence | Later refinement direction |
 | --- | --- | --- |
 | palette and token names | `static-*`, `signal`, and Tailwind aliases expose palette and implementation history more than product intent | semantic roles for surfaces, content, action, state, artwork, focus, distance, and motion |
 | typography scale | web scale is multiplied by 1.5 in generated Kotlin; the result preserves ratios but not a designed ten-foot hierarchy | platform scales behind shared roles, verified at real viewing distance and iPhone accessibility sizes |
@@ -89,13 +89,13 @@ automatically.
 | --- | --- |
 | Tailwind theme/preset, shadcn copies, CVA styling, and Base UI presentation | final web consumer migrated with keyboard, screen-reader, find-in-page, forms, menus, slider, tooltip, and visual gates green |
 | Test Card palette/name as the design authority | semantic Tamagui token gallery approved and every legacy adapter generated from it or deleted |
-| Compose `design/`, `guide/`, and Watching/Surf presentation | Expo TV build passes physical Shield parity, Play install, process/device restart, and an in-place update |
+| Compose `design/`, `guide/`, and Watching/Surf presentation | Expo TV build passes physical Shield parity after a clean sideload and fresh pairing |
 | Kotlin client/network state that duplicates shared TypeScript | equivalent generated transport and shared state tests are green on real server behavior |
 | Roborazzi presentation baselines | replacement native visual and device gates are committed and capable of failing on a real regression |
 | legacy Android token generator | no Kotlin presentation consumer remains |
 
-Release scripts, package identity, signing credentials, and historical acceptance evidence are
-adapted, not deleted with Compose.
+Package identity and distribution-neutral brand assets survive Compose. Internal Play publication
+and protected upload signing are P5b; wider tracks and in-place update evidence are outside #970.
 
 ## First-slice module map
 
@@ -119,18 +119,16 @@ adapted, not deleted with Compose.
 - The iPhone and iPad composites are not a complete mobile application specification. Setup,
   authentication, error recovery, accessibility, portrait/landscape, and safe-area behavior come
   from the product contract and platform evidence.
-- The current Compose player uses Media3 directly. The React Native native-player adapter is not yet
-  selected; P0b must compare maintained native HLS adapters against Loomarr's signed-URL, live-edge,
-  track, lifecycle, TV-key, and store-build requirements before adding one.
-- Tamagui's compiler and TV behavior are evidence questions. Runtime-only Tamagui is the baseline;
-  compiler adoption and full migration wait for the recorded P5 gate.
+- At inventory time the Compose player used Media3 directly and the React Native native-player
+  adapter had not yet been selected. P4 resolved that seam and P5a accepted it on the Shield.
+- Tamagui's compiler is not part of parity migration. Runtime-only Tamagui is the baseline; any
+  compiler experiment is a later isolated performance change.
 
 ## Inventory conclusion
 
-The reusable asset is not the current look. It is the server contract, authorization and pairing
-model, deterministic domain scenarios, tune/Guide behavior, release identity, and the tests that
-describe those guarantees. The new design-system implementation should replace the presentation
-while concentrating those rules behind shared Loomarr interfaces. The Guide-to-Playback slice is
-large enough to test every risky seam—data, artwork, focus, navigation, playback, overlay state,
-responsive layout, and actual hardware—before the project commits to migrating 213 web view files
-and the shipping TV client.
+The reusable assets include each client's current look during #970 as well as the server contract,
+authorization and pairing model, deterministic domain scenarios, tune/Guide behavior, release
+identity, and the tests that describe those guarantees. The new design-system implementation
+reproduces those presentations while concentrating product rules behind shared Loomarr interfaces.
+Cross-client visual convergence begins only after the shipping TV client and Web legacy stack have
+been replaced.

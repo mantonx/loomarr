@@ -1,9 +1,9 @@
 import QRCodeEncoder from "qrcode";
 
-const matrixPath = (value: string) => {
-  // The protected centre mark obscures a small part of the matrix. Level H keeps the payload
-  // recoverable even with that deliberate obstruction and ordinary camera perspective loss.
-  const matrix = QRCodeEncoder.create(value, { errorCorrectionLevel: "H" }).modules;
+const matrixPath = (value: string, errorCorrectionLevel: "H" | "L" = "H") => {
+  // Branded codes need H because the protected centre mark obscures modules. Plain codes use the
+  // standard L treatment used by the original TV client, leaving a simpler matrix at viewing range.
+  const matrix = QRCodeEncoder.create(value, { errorCorrectionLevel }).modules;
   const commands: string[] = [];
 
   for (let row = 0; row < matrix.size; row += 1) {

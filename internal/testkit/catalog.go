@@ -5,34 +5,27 @@ import (
 	"sync"
 )
 
-// SearchRequest records one call through a SearchService test double.
-type SearchRequest struct {
-	Query string
-	Scope string
-	Limit int
-}
-
 // SearchService is the shared in-memory double for a typed catalog search seam.
-// The generic result keeps testkit independent of the package that owns the
-// candidate DTO while still satisfying its Search method structurally.
-type SearchService[T any] struct {
+// Generic request and result types keep testkit independent of the package that
+// owns the public search DTOs while still satisfying its Search method structurally.
+type SearchService[Q, T any] struct {
 	mu       sync.Mutex
 	Results  []T
 	Err      error
-	requests []SearchRequest
+	requests []Q
 }
 
-func (s *SearchService[T]) Search(_ context.Context, query, scope string, limit int) ([]T, error) {
+func (s *SearchService[Q, T]) Search(_ context.Context, request Q) ([]T, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.requests = append(s.requests, SearchRequest{Query: query, Scope: scope, Limit: limit})
+	s.requests = append(s.requests, request)
 	return append([]T(nil), s.Results...), s.Err
 }
 
-func (s *SearchService[T]) Requests() []SearchRequest {
+func (s *SearchService[Q, T]) Requests() []Q {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]SearchRequest(nil), s.requests...)
+	return append([]Q(nil), s.requests...)
 }
 
 // IconService is the shared in-memory double for a typed channel-icon suggestion

@@ -25,17 +25,27 @@ import (
 // probedStream is one stream from `ffprobe -show_streams`, carrying every field any consumer needs
 // (the superset). Extend this — not a parallel struct — when a new consumer needs another field.
 type probedStream struct {
-	Index         int    `json:"index"`
-	CodecType     string `json:"codec_type"`
-	CodecName     string `json:"codec_name"`
-	Width         int    `json:"width"`
-	Height        int    `json:"height"`
-	AvgFrameRate  string `json:"avg_frame_rate"` // "24000/1001" — a rational, parsed to fps
-	PixFmt        string `json:"pix_fmt"`        // "yuv420p10le" → 10-bit signal
-	ColorTransfer string `json:"color_transfer"` // "smpte2084"/"arib-std-b67" → HDR
-	Channels      int    `json:"channels"`       // audio channel count (2, 6, …)
-	SampleRate    string `json:"sample_rate"`    // audio Hz, emitted as a JSON string
-	Tags          struct {
+	Index          int             `json:"index"`
+	CodecType      string          `json:"codec_type"`
+	CodecName      string          `json:"codec_name"`
+	Profile        string          `json:"profile"`
+	Level          json.RawMessage `json:"level"`
+	Width          int             `json:"width"`
+	Height         int             `json:"height"`
+	AvgFrameRate   string          `json:"avg_frame_rate"` // "24000/1001" — a rational, parsed to fps
+	PixFmt         string          `json:"pix_fmt"`        // "yuv420p10le" → 10-bit signal
+	ColorSpace     string          `json:"color_space"`
+	ColorTransfer  string          `json:"color_transfer"` // "smpte2084"/"arib-std-b67" → HDR
+	ColorPrimaries string          `json:"color_primaries"`
+	FieldOrder     string          `json:"field_order"`
+	Channels       int             `json:"channels"` // audio channel count (2, 6, …)
+	ChannelLayout  string          `json:"channel_layout"`
+	SampleRate     string          `json:"sample_rate"` // audio Hz, emitted as a JSON string
+	Disposition    struct {
+		Default int `json:"default"`
+		Forced  int `json:"forced"`
+	} `json:"disposition"`
+	Tags struct {
 		Language string `json:"language"`
 		Title    string `json:"title"`
 	} `json:"tags"`
@@ -73,8 +83,9 @@ type probed struct {
 func runFFprobeObserved(ctx context.Context, bin, input string, inspectPackets bool,
 	manager *diagnostics.ProcessManager,
 ) (probed, error) {
-	entries := "stream=index,codec_type,codec_name,width,height,avg_frame_rate,pix_fmt,color_transfer,channels,sample_rate" +
-		":stream_tags=language,title" +
+	entries := "stream=index,codec_type,codec_name,profile,level,width,height,avg_frame_rate,pix_fmt," +
+		"color_space,color_transfer,color_primaries,field_order,channels,channel_layout,sample_rate" +
+		":stream_tags=language,title:stream_disposition=default,forced" +
 		":format=format_name,duration,bit_rate"
 	args := []string{
 		"-v", "error",
@@ -125,6 +136,114 @@ func runFFprobeObserved(ctx context.Context, bin, input string, inspectPackets b
 	return parseProbeJSON(out.Bytes())
 }
 
+// SourceObservation is the durable, provider-neutral projection of the shared ffprobe result.
+// It deliberately contains no input path or URL, so callers may persist it against a protected
+// inventory Source without serializing credentials or operational locators.
+type SourceObservation struct {
+	Container      string
+	DurationMillis int64
+	Bitrate        int64
+	UnsafePreroll  bool
+	Streams        []ObservedStream
+}
+
+type ObservedStream struct {
+	Index          int
+	Kind           string
+	Codec          string
+	Profile        string
+	Level          string
+	Language       string
+	Title          string
+	Default        bool
+	Forced         bool
+	Channels       int
+	ChannelLayout  string
+	SampleRate     int
+	Width          int
+	Height         int
+	FrameRate      string
+	PixelFormat    string
+	ColorSpace     string
+	ColorTransfer  string
+	ColorPrimaries string
+	HDR            bool
+	Interlaced     bool
+}
+
+// SourceProber returns the complete cheap ffprobe observation used by Inventory and derives audio
+// selection from that same launch. It is the persistence-capable form of AudioProber.
+type SourceProber func(context.Context, string) (SourceObservation, error)
+
+func FFprobeSourceNextTo(ffmpegPath string, observers ...*diagnostics.ProcessManager) SourceProber {
+	bin := ffprobeBesideFFmpeg(ffmpegPath)
+	var observer *diagnostics.ProcessManager
+	if len(observers) > 0 {
+		observer = observers[0]
+	}
+	return func(ctx context.Context, input string) (SourceObservation, error) {
+		result, err := runFFprobeObserved(ctx, bin, input, true, observer)
+		if err != nil {
+			return SourceObservation{}, err
+		}
+		return sourceObservationOf(result), nil
+	}
+}
+
+func sourceObservationOf(result probed) SourceObservation {
+	observation := SourceObservation{
+		Container:     result.Format.FormatName,
+		Bitrate:       parseInt(result.Format.BitRate),
+		UnsafePreroll: formatOf(result).VideoPreroll,
+	}
+	if duration := parseFloat(result.Format.Duration); duration > 0 {
+		observation.DurationMillis = int64(duration * 1000)
+	}
+	for _, stream := range result.Streams {
+		kind := strings.ToLower(strings.TrimSpace(stream.CodecType))
+		if kind != "video" && kind != "audio" && kind != "subtitle" {
+			continue
+		}
+		observation.Streams = append(observation.Streams, ObservedStream{
+			Index: stream.Index, Kind: kind, Codec: stream.CodecName, Profile: stream.Profile,
+			Level: scalarJSON(stream.Level), Language: stream.Tags.Language, Title: stream.Tags.Title,
+			Default: stream.Disposition.Default != 0, Forced: stream.Disposition.Forced != 0,
+			Channels: stream.Channels, ChannelLayout: stream.ChannelLayout, SampleRate: int(parseInt(stream.SampleRate)),
+			Width: stream.Width, Height: stream.Height, FrameRate: stream.AvgFrameRate,
+			PixelFormat: stream.PixFmt, ColorSpace: stream.ColorSpace, ColorTransfer: stream.ColorTransfer,
+			ColorPrimaries: stream.ColorPrimaries,
+			HDR:            stream.ColorTransfer == "smpte2084" || stream.ColorTransfer == "arib-std-b67",
+			Interlaced:     stream.FieldOrder != "" && stream.FieldOrder != "progressive" && stream.FieldOrder != "unknown",
+		})
+	}
+	return observation
+}
+
+func (observation SourceObservation) AudioTracks() []AudioTrack {
+	tracks := make([]AudioTrack, 0)
+	for _, stream := range observation.Streams {
+		if stream.Kind == "audio" {
+			tracks = append(tracks, AudioTrack{SourceIndex: stream.Index, Language: stream.Language})
+		}
+	}
+	return tracks
+}
+
+func scalarJSON(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return text
+	}
+	var number json.Number
+	if json.Unmarshal(raw, &number) == nil {
+		return string(number)
+	}
+	return ""
+}
+
 func probeTerminationReason(ctx context.Context) string {
 	if ctx.Err() != nil {
 		return "context cancelled"
@@ -159,17 +278,13 @@ func ffprobeBesideFFmpeg(ffmpegPath string) string {
 // FFprobeAudioNextTo returns an AudioProber built on the shared probe. The audio streams, in the
 // order ffmpeg numbers them — which is what PickAudioTrack's audio-relative index needs.
 func FFprobeAudioNextTo(ffmpegPath string, observers ...*diagnostics.ProcessManager) AudioProber {
-	bin := ffprobeBesideFFmpeg(ffmpegPath)
-	var observer *diagnostics.ProcessManager
-	if len(observers) > 0 {
-		observer = observers[0]
-	}
+	probe := FFprobeSourceNextTo(ffmpegPath, observers...)
 	return func(ctx context.Context, input string) ([]AudioTrack, error) {
-		p, err := runFFprobeObserved(ctx, bin, input, false, observer)
+		observation, err := probe(ctx, input)
 		if err != nil {
 			return nil, err
 		}
-		return audioTracksOf(p.Streams), nil
+		return observation.AudioTracks(), nil
 	}
 }
 
@@ -178,7 +293,7 @@ func audioTracksOf(streams []probedStream) []AudioTrack {
 	var out []AudioTrack
 	for _, s := range streams {
 		if s.CodecType == "audio" {
-			out = append(out, AudioTrack{Language: s.Tags.Language})
+			out = append(out, AudioTrack{SourceIndex: s.Index, Language: s.Tags.Language})
 		}
 	}
 	return out

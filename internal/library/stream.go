@@ -52,6 +52,13 @@ import (
 // play this", not as a relative URL, since an empty base would produce a request to
 // ourselves.
 func (c *Client) StreamURL(itemID string) string {
+	return c.StreamURLForSource(itemID, "")
+}
+
+// StreamURLForSource returns a fresh authenticated original-file URL for one exact Library media
+// source. MediaSourceId is omitted when the importer reported no source identity, preserving the
+// ordinary server-selected original used by StreamURL.
+func (c *Client) StreamURLForSource(itemID, sourceID string) string {
 	c, err := c.operation()
 	if err != nil {
 		return ""
@@ -62,6 +69,9 @@ func (c *Client) StreamURL(itemID string) string {
 	}
 	q := url.Values{}
 	q.Set("static", "true")
+	if sourceID = strings.TrimSpace(sourceID); sourceID != "" {
+		q.Set("MediaSourceId", sourceID)
+	}
 	if t := c.token(); t != "" {
 		// api_key is the query-string form both Emby and Jellyfin accept. The
 		// header-based form (X-Emby-Token / MediaBrowser) is unavailable here — see above.

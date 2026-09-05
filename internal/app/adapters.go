@@ -210,8 +210,31 @@ func bulkDurations(lib *library.Client) channels.DurationsResolver {
 // to the API's dependency-light shape).
 type searchAdapter struct{ cat *catalog.Catalog }
 
-func (a searchAdapter) Search(ctx context.Context, q, scope string, limit int) ([]api.SearchCandidate, error) {
-	cands, err := a.cat.Search(ctx, q, catalog.ParseScope(scope), limit)
+func (a searchAdapter) Search(ctx context.Context, request api.SearchRequest) ([]api.SearchCandidate, error) {
+	var cands []catalog.Candidate
+	var err error
+	if request.Discovery != nil {
+		discovery := request.Discovery
+		cands, err = a.cat.Discover(ctx, catalog.DiscoveryQuery{
+			MediaType: provision.MediaType(discovery.MediaType), Keywords: discovery.Keywords, Genres: discovery.Genres,
+			YearFrom: discovery.YearFrom, YearTo: discovery.YearTo,
+			OriginalLanguage: discovery.OriginalLanguage, OriginCountry: discovery.OriginCountry,
+			RuntimeMin: discovery.RuntimeMin, RuntimeMax: discovery.RuntimeMax,
+			VoteAverageMin: discovery.VoteAverageMin, VoteCountMin: discovery.VoteCountMin,
+			Network: discovery.Network, Cast: discovery.Cast, Creators: discovery.Creators,
+		}, request.Limit)
+	} else {
+		cands, err = a.cat.Search(ctx, request.Query, catalog.ParseScope(request.Scope), request.Limit)
+		if request.MediaType != "" {
+			filtered := make([]catalog.Candidate, 0, len(cands))
+			for _, candidate := range cands {
+				if candidate.MediaType == provision.MediaType(request.MediaType) {
+					filtered = append(filtered, candidate)
+				}
+			}
+			cands = filtered
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +246,8 @@ func (a searchAdapter) Search(ctx context.Context, q, scope string, limit int) (
 			Genres: c.Genres, Overview: c.Overview,
 			OriginalLanguage: c.OriginalLanguage, OriginCountries: c.OriginCountries,
 			RuntimeMinutes: c.RuntimeMinutes, VoteAverage: c.VoteAverage, VoteCount: c.VoteCount,
-			Keywords: c.Keywords, OfficialRating: c.OfficialRating,
+			Keywords: c.Keywords, Networks: c.Networks, Cast: c.Cast, Creators: c.Creators,
+			OfficialRating: c.OfficialRating,
 		})
 	}
 	return out, nil

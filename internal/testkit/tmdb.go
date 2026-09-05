@@ -1,6 +1,7 @@
 package testkit
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -37,6 +38,14 @@ type TMDB struct {
 	// seed the test didn't wire, which is the real API's behaviour for an obscure
 	// title — an unproductive seed, not an error.
 	recommends map[int][]int
+	people     map[int]string
+	networks   map[int]tmdbNetwork
+}
+
+type tmdbNetwork struct {
+	ID            int
+	Name          string
+	OriginCountry string
 }
 
 // TMDBRequest is one request observed by the shared TMDB adapter. It records
@@ -84,6 +93,9 @@ type tmdbTitle struct {
 	VoteAverage      float64
 	VoteCount        int
 	RuntimeMinutes   int
+	CastIDs          []int
+	CreatorIDs       []int
+	NetworkID        int
 	// USRating is the US content rating the /content_ratings (tv) or /release_dates
 	// (movie) endpoint reports (§389 acquisition enrichment). Empty ⇒ no US rating,
 	// which is the common sparse-coverage case a test may assert is handled.
@@ -145,6 +157,29 @@ func (m *TMDB) AddSeries(id int, name string, year int, genreIDs []int, overview
 	}
 }
 
+// AddPerson adds one authoritative identity to /search/person.
+func (m *TMDB) AddPerson(id int, name string) { m.people[id] = strings.TrimSpace(name) }
+
+// SetMoviePeople binds exact cast and creator identities to a grounded movie.
+func (m *TMDB) SetMoviePeople(movieID int, castIDs, creatorIDs []int) {
+	title := m.movies[movieID]
+	title.CastIDs = append([]int(nil), castIDs...)
+	title.CreatorIDs = append([]int(nil), creatorIDs...)
+	m.movies[movieID] = title
+}
+
+// AddNetwork adds one authoritative TV-network identity to the daily export and details endpoint.
+func (m *TMDB) AddNetwork(id int, name, originCountry string) {
+	m.networks[id] = tmdbNetwork{ID: id, Name: strings.TrimSpace(name), OriginCountry: strings.ToUpper(strings.TrimSpace(originCountry))}
+}
+
+// SetSeriesNetwork binds a series to the network identity used by TV discovery.
+func (m *TMDB) SetSeriesNetwork(seriesID, networkID int) {
+	title := m.series[seriesID]
+	title.NetworkID = networkID
+	m.series[seriesID] = title
+}
+
 // AddKeywordMovie adds a movie whose thematic match lives in TMDB's keyword
 // metadata rather than its title. It is the realistic boundary fixture for
 // holiday/motif requests such as "Christmas" finding "Snowbound Reunion".
@@ -190,6 +225,8 @@ func NewTMDB(t testing.TB) *TMDB {
 		series: map[int]tmdbTitle{
 			1396: {ID: 1396, Name: "Breaking Bad", Year: 2008, Date: "2008-01-20", GenreIDs: []int{18, 80}, Overview: "A chemistry teacher turns to making meth."},
 		},
+		people:   map[int]string{},
+		networks: map[int]tmdbNetwork{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /search/multi", func(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +261,43 @@ func NewTMDB(t testing.TB) *TMDB {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"page": 1, "total_pages": 1, "results": results})
 	})
+	mux.HandleFunc("GET /search/person", func(w http.ResponseWriter, r *http.Request) {
+		q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("query")))
+		ids := make([]int, 0, len(m.people))
+		for id := range m.people {
+			ids = append(ids, id)
+		}
+		sort.Ints(ids)
+		results := make([]map[string]any, 0)
+		for _, id := range ids {
+			if strings.Contains(strings.ToLower(m.people[id]), q) {
+				results = append(results, map[string]any{"id": id, "name": m.people[id]})
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"page": 1, "total_pages": 1, "results": results})
+	})
+	mux.HandleFunc("GET /p/exports/{file}", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		zipped := gzip.NewWriter(w)
+		ids := make([]int, 0, len(m.networks))
+		for id := range m.networks {
+			ids = append(ids, id)
+		}
+		sort.Ints(ids)
+		for _, id := range ids {
+			network := m.networks[id]
+			_ = json.NewEncoder(zipped).Encode(map[string]any{"id": network.ID, "name": network.Name})
+		}
+		_ = zipped.Close()
+	})
+	mux.HandleFunc("GET /network/{id}", func(w http.ResponseWriter, r *http.Request) {
+		network, ok := m.networks[atoiPath(r.PathValue("id"))]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": network.ID, "name": network.Name, "origin_country": network.OriginCountry})
+	})
 	// /discover/{movie,tv}: filter the catalog by with_genres (§8 discovery path).
 	// A comma/pipe-separated with_genres matches any listed genre id; empty = all.
 	mux.HandleFunc("GET /discover/movie", func(w http.ResponseWriter, r *http.Request) {
@@ -231,7 +305,10 @@ func NewTMDB(t testing.TB) *TMDB {
 		wantKeywords := parseGenreParam(r.URL.Query().Get("with_keywords"))
 		var results []map[string]any
 		for _, mv := range sortedTitles(m.movies) {
-			if allIDsMatch(mv.GenreIDs, want) && anyIDMatches(mv.KeywordIDs, wantKeywords) && matchesDiscoveryQualifiers(mv, r.URL.Query()) {
+			if allIDsMatch(mv.GenreIDs, want) && anyIDMatches(mv.KeywordIDs, wantKeywords) &&
+				allIDsMatch(mv.CastIDs, parseGenreParam(r.URL.Query().Get("with_cast"))) &&
+				allIDsMatch(mv.CreatorIDs, parseGenreParam(r.URL.Query().Get("with_crew"))) &&
+				matchesDiscoveryQualifiers(mv, r.URL.Query()) {
 				results = append(results, movieRow(mv))
 			}
 		}
@@ -243,7 +320,9 @@ func NewTMDB(t testing.TB) *TMDB {
 		wantKeywords := parseGenreParam(r.URL.Query().Get("with_keywords"))
 		var results []map[string]any
 		for _, s := range sortedTitles(m.series) {
-			if allIDsMatch(s.GenreIDs, want) && anyIDMatches(s.KeywordIDs, wantKeywords) && matchesDiscoveryQualifiers(s, r.URL.Query()) {
+			if allIDsMatch(s.GenreIDs, want) && anyIDMatches(s.KeywordIDs, wantKeywords) &&
+				matchesNetwork(s.NetworkID, parseGenreParam(r.URL.Query().Get("with_networks"))) &&
+				matchesDiscoveryQualifiers(s, r.URL.Query()) {
 				results = append(results, tvRow(s))
 			}
 		}
@@ -448,6 +527,10 @@ func anyIDMatches(have, want []int) bool {
 		}
 	}
 	return false
+}
+
+func matchesNetwork(have int, want []int) bool {
+	return len(want) == 0 || len(want) == 1 && have == want[0]
 }
 
 // recommendHandler serves the §8.3 adjacency graph for one seed. An unwired seed returns

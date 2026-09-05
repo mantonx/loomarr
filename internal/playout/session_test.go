@@ -3,6 +3,7 @@ package playout
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -133,6 +134,29 @@ func TestManagerPublishesSessionLifecycleToGenerationMetrics(t *testing.T) {
 
 	manager.Stop()
 	assertMetricsContain(t, recorder, `loomarr_playout_sessions_active 0`)
+}
+
+func TestManagerPublishesViewerDemandChanges(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	m := testManager(t, spawn, 4, time.Minute)
+	changes := make(chan struct{}, 8)
+	m.OnChange(func() { changes <- struct{}{} })
+
+	viewer, detach, err := m.Attach(t.Context(), "ch1", PlanFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warmSession(t, viewer, encoder("ch1"))
+	for len(changes) > 0 {
+		<-changes
+	}
+
+	detach()
+	select {
+	case <-changes:
+	case <-time.After(time.Second):
+		t.Fatal("last-viewer release did not publish the grace-idle telemetry transition")
+	}
 }
 
 func TestManagerPublishesParentProcessFailure(t *testing.T) {
@@ -461,10 +485,12 @@ func TestBroadcast_SlowViewerIsDroppedNotBlocking(t *testing.T) {
 	}
 }
 
-// And the stalled viewer is actually dropped, rather than left accumulating memory.
-func TestBroadcast_StalledViewerIsClosed(t *testing.T) {
+// And the stalled viewer is actually dropped, rather than left accumulating memory. When it was
+// the last viewer, the session must enter ordinary warm grace instead of leaking forever with an
+// empty viewer map.
+func TestBroadcast_StalledLastViewerIsClosedAndSessionEntersGrace(t *testing.T) {
 	spawn, encoder := newFakeSpawner(t)
-	m := testManager(t, spawn, 4, time.Minute)
+	m := testManager(t, spawn, 4, 50*time.Millisecond)
 
 	stalled, _, err := m.Attach(context.Background(), "ch1", PlanFull)
 	if err != nil {
@@ -488,11 +514,18 @@ func TestBroadcast_StalledViewerIsClosed(t *testing.T) {
 		select {
 		case _, ok := <-stalled:
 			if !ok {
-				return // closed, as intended
+				goto viewerClosed
 			}
 		case <-deadline:
 			t.Fatal("a viewer that stopped reading was never dropped")
 		}
+	}
+
+viewerClosed:
+	select {
+	case <-encoder("ch1").stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("session with only a dropped viewer never stopped after warm grace")
 	}
 }
 
@@ -503,11 +536,11 @@ func TestAttachSink_PreservesWarmStartupBurst(t *testing.T) {
 	spawn, encoder := newFakeSpawner(t)
 	m := testManager(t, spawn, 4, time.Minute)
 	relay := newHLSRelay()
-	detach, err := m.AttachSink(context.Background(), "ch1", PlanFull, relay)
+	lease, err := m.AttachSink(context.Background(), "ch1", PlanFull, relay)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer detach()
+	defer lease.Release()
 
 	const writes = viewerBuffer * 4
 	payload := make([]byte, 64*1024)
@@ -555,9 +588,9 @@ func TestAttachSink_PreservesWarmStartupBurst(t *testing.T) {
 	}
 }
 
-// The admission bound (§9.1 V49 — COST-AWARE). viewra EVICTED an existing session to make room
-// (prior-art viewra §1); for playout that means one person tuning in kills someone else's channel.
-// We refuse the newcomer instead and keep faith with whoever is already watching. ⚠ The bound counts
+// The admission bound (§9.1 V49 — COST-AWARE). viewra EVICTED an existing watched session to make
+// room (prior-art viewra §1); for playout that means one person tuning in kills someone else's
+// channel. We refuse the newcomer when every costly session has active demand. ⚠ The bound counts
 // concurrent TRANSCODES. Cold sessions reserve conservatively and copy sessions release below.
 func TestAttach_AtCapacityRefusesRatherThanEvicting(t *testing.T) {
 	spawn, _ := newFakeSpawner(t)
@@ -599,6 +632,88 @@ func TestAttach_AtCapacityRefusesRatherThanEvicting(t *testing.T) {
 	}
 }
 
+func TestAttach_PreparedCostEstimatorAdmitsCopySessionsBeyondTranscodeBudget(t *testing.T) {
+	spawn, _ := newFakeSpawner(t)
+	m := testManager(t, spawn, 1, time.Minute).WithCostEstimator(
+		func(context.Context, string, EncodePlan) int { return 0 },
+	)
+
+	for _, channel := range []string{"ch1", "ch2", "ch3"} {
+		if _, _, err := m.Attach(t.Context(), channel, PlanFull); err != nil {
+			t.Fatalf("prepared copy session %s was refused by transcode budget: %v", channel, err)
+		}
+	}
+	if got := m.ActiveCount(); got != 3 {
+		t.Fatalf("active prepared sessions = %d, want 3", got)
+	}
+}
+
+func TestAdmitProgram_BoundsPreparedSessionsThatFallBackToTranscoding(t *testing.T) {
+	spawn, _ := newFakeSpawner(t)
+	m := testManager(t, spawn, 1, time.Minute).WithCostEstimator(
+		func(context.Context, string, EncodePlan) int { return 0 },
+	)
+	for _, channel := range []string{"ch1", "ch2"} {
+		if _, _, err := m.Attach(t.Context(), channel, PlanFull); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if !m.AdmitProgram("ch1", PlanFull, true) {
+		t.Fatal("first prepared-to-live transcode was refused with an empty budget")
+	}
+	if m.AdmitProgram("ch2", PlanFull, true) {
+		t.Fatal("second prepared-to-live transcode oversubscribed the one-slot budget")
+	}
+	if !m.AdmitProgram("ch1", PlanFull, false) {
+		t.Fatal("returning to a prepared copy block did not release capacity")
+	}
+	if !m.AdmitProgram("ch2", PlanFull, true) {
+		t.Fatal("released transcode capacity was not reusable by the waiting session")
+	}
+}
+
+// A grace-idle session is retained only to make a likely return tune cheap. It must not reserve
+// the final transcode slot against a foreground tune: when the budget is full, reclaim the oldest
+// zero-viewer session and preserve the newer warm candidate. Sessions with viewers remain protected
+// by TestAttach_AtCapacityRefusesRatherThanEvicting above.
+func TestAttach_AtCapacityReclaimsOldestIdleSession(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	m := testManager(t, spawn, 2, time.Minute)
+
+	first, detachFirst, err := m.Attach(context.Background(), "ch1", PlanFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warmSession(t, first, encoder("ch1"))
+	detachFirst()
+
+	second, detachSecond, err := m.Attach(context.Background(), "ch2", PlanFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warmSession(t, second, encoder("ch2"))
+	detachSecond()
+
+	if _, _, err := m.Attach(context.Background(), "ch3", PlanFull); err != nil {
+		t.Fatalf("foreground tune was refused while reclaimable idle work held the budget: %v", err)
+	}
+
+	select {
+	case <-encoder("ch1").stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("oldest grace-idle encoder was not reclaimed")
+	}
+	select {
+	case <-encoder("ch2").stopped:
+		t.Fatal("newer grace-idle encoder was reclaimed before the oldest")
+	default:
+	}
+	if n := m.ActiveCount(); n != 2 {
+		t.Fatalf("ActiveCount = %d, want the newer idle session plus foreground session", n)
+	}
+}
+
 // A copy session releases its conservative cold reservation as soon as the first block proves copy.
 // This preserves cost-aware capacity without optimistically over-admitting an HEVC/full session
 // whose first source may still require format conformance.
@@ -617,6 +732,291 @@ func TestAttach_CopySessionsDoNotConsumeBudget(t *testing.T) {
 	}
 	if _, _, err := m.Attach(context.Background(), "ch3", PlanFull); err != ErrAtCapacity {
 		t.Fatalf("third cold session err = %v, want ErrAtCapacity", err)
+	}
+}
+
+// The transcode budget and the warm-session footprint are different limits. Fifty copy-compatible
+// Channels cost no transcode slots after their first program reports, but retaining all fifty would
+// still retain fifty parent processes and (for Watch) fifty HLS remuxes. The Manager keeps only the
+// two most recently viewed idle sessions beside the current viewer-active Channel.
+func TestWarmIdleHotSetBoundsFiftyChannelSurf(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	m := testManager(t, spawn, 0, time.Minute)
+
+	var previousDetach func()
+	for i := range 50 {
+		channelID := fmt.Sprintf("ch-%02d", i)
+		viewer, detach, err := m.Attach(t.Context(), channelID, PlanFull)
+		if err != nil {
+			t.Fatalf("attach %s: %v", channelID, err)
+		}
+		warmSession(t, viewer, encoder(channelID))
+		m.ReportProgram(channelID, PlanFull, EncoderSoftware, false, Progress{})
+		if previousDetach != nil {
+			previousDetach()
+		}
+		previousDetach = detach
+	}
+
+	stats := m.Stats(time.Now())
+	active, idle := 0, 0
+	for _, stat := range stats {
+		if stat.Viewers > 0 {
+			active++
+		} else {
+			idle++
+		}
+	}
+	if active != 1 || idle != 2 || len(stats) != 3 {
+		t.Fatalf("sessions = %d active / %d idle / %d total, want 1 / 2 / 3", active, idle, len(stats))
+	}
+	for i := range 47 {
+		channelID := fmt.Sprintf("ch-%02d", i)
+		select {
+		case <-encoder(channelID).stopped:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("displaced idle session %s was not stopped", channelID)
+		}
+	}
+	for _, channelID := range []string{"ch-47", "ch-48", "ch-49"} {
+		select {
+		case <-encoder(channelID).stopped:
+			t.Fatalf("retained hot-set session %s was stopped", channelID)
+		default:
+		}
+	}
+}
+
+// A configured Channel is catalog state, not viewer demand. The session Manager deliberately has
+// no inventory-loading API: even diagnostics may inspect every configured Channel without lazily
+// starting its parent media process. This pins the 50+ Channel idle-host contract at the process
+// ownership seam instead of relying on a composition test that could only count session rows.
+func TestManagerConfiguredChannelsWithoutViewersStartNoMediaProcesses(t *testing.T) {
+	spawn, started := countingSpawner(t)
+	m := testManager(t, spawn, 0, time.Minute)
+
+	for i := range 64 {
+		channelID := fmt.Sprintf("configured-%02d", i)
+		if runID := m.ProcessRunID(channelID, PlanFull); runID != "" {
+			t.Fatalf("configured Channel %s unexpectedly has process %q", channelID, runID)
+		}
+	}
+
+	if got := started(); got != 0 {
+		t.Fatalf("64 configured Channels with no viewer demand started %d media processes, want 0", got)
+	}
+	if stats := m.Stats(time.Now()); len(stats) != 0 {
+		t.Fatalf("64 configured Channels with no viewer demand created %d live sessions, want 0", len(stats))
+	}
+}
+
+func TestWarmIdleHotSetIncludesCopyAndTranscodeSessions(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	m := testManager(t, spawn, 0, time.Minute)
+
+	for i, transcoding := range []bool{false, true, false} {
+		channelID := fmt.Sprintf("ch-%d", i)
+		viewer, detach, err := m.Attach(t.Context(), channelID, PlanFull)
+		if err != nil {
+			t.Fatal(err)
+		}
+		warmSession(t, viewer, encoder(channelID))
+		m.ReportProgram(channelID, PlanFull, EncoderSoftware, transcoding, Progress{})
+		detach()
+		time.Sleep(time.Millisecond)
+	}
+
+	if got := m.ActiveCount(); got != 2 {
+		t.Fatalf("live sessions = %d, want two idle sessions", got)
+	}
+	select {
+	case <-encoder("ch-0").stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("oldest copy session was exempted from the aggregate idle bound")
+	}
+}
+
+func TestWarmIdleHotSetUsesMostRecentViewNotOriginalStart(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	m := testManager(t, spawn, 0, time.Minute)
+
+	for _, channelID := range []string{"ch1", "ch2"} {
+		viewer, detach, err := m.Attach(t.Context(), channelID, PlanFull)
+		if err != nil {
+			t.Fatal(err)
+		}
+		warmSession(t, viewer, encoder(channelID))
+		m.ReportProgram(channelID, PlanFull, EncoderSoftware, false, Progress{})
+		detach()
+		time.Sleep(time.Millisecond)
+	}
+
+	// Rejoining ch1 makes it the most recently viewed idle session without spawning again.
+	original := encoder("ch1")
+	_, detach, err := m.Attach(t.Context(), "ch1", PlanFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if encoder("ch1") != original {
+		t.Fatal("reattaching a retained session spawned a new encoder")
+	}
+	detach()
+	time.Sleep(time.Millisecond)
+
+	viewer3, detach3, err := m.Attach(t.Context(), "ch3", PlanFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warmSession(t, viewer3, encoder("ch3"))
+	m.ReportProgram("ch3", PlanFull, EncoderSoftware, false, Progress{})
+	detach3()
+
+	select {
+	case <-encoder("ch2").stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("least-recently-viewed idle session was not stopped")
+	}
+	select {
+	case <-encoder("ch1").stopped:
+		t.Fatal("recently reattached session was stopped before an older idle session")
+	default:
+	}
+}
+
+func TestWarmIdleHotSetStaleCloseCallbackCannotForgetReplacement(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	m := testManager(t, spawn, 1, time.Minute)
+
+	viewer, detach, err := m.Attach(t.Context(), "ch1", PlanFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warmSession(t, viewer, encoder("ch1"))
+	detach()
+
+	old := m.session("ch1", PlanFull)
+	old.mu.Lock()
+	idleGeneration := old.idleGeneration
+	originalOnClosed := old.onClosed
+	closeEntered := make(chan struct{})
+	allowCallback := make(chan struct{})
+	old.onClosed = func() {
+		close(closeEntered)
+		<-allowCallback
+		originalOnClosed()
+	}
+	old.mu.Unlock()
+
+	closed := make(chan bool, 1)
+	go func() { closed <- old.closeIfIdle(idleGeneration) }()
+	<-closeEntered
+
+	// Attach observes the old session as closed, removes that exact pointer, and installs a
+	// replacement before the old close callback resumes.
+	replacementViewer, replacementDetach, err := m.Attach(t.Context(), "ch1", PlanFull)
+	if err != nil {
+		close(allowCallback)
+		t.Fatal(err)
+	}
+	defer replacementDetach()
+	replacement := m.session("ch1", PlanFull)
+	if replacement == nil || replacement == old {
+		close(allowCallback)
+		t.Fatal("foreground attach did not install a replacement session")
+	}
+	warmSession(t, replacementViewer, encoder("ch1"))
+
+	close(allowCallback)
+	if ok := <-closed; !ok {
+		t.Fatal("selected exact idle generation was not closed")
+	}
+	if got := m.session("ch1", PlanFull); got != replacement {
+		t.Fatal("stale close callback forgot the replacement session")
+	}
+	if got := m.ActiveCount(); got != 1 {
+		t.Fatalf("live sessions = %d after stale callback, want replacement only", got)
+	}
+}
+
+func TestWarmIdleHotSetConcurrentDetachesRemainBounded(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	m := testManager(t, spawn, 0, time.Minute)
+
+	detaches := make([]func(), 0, 50)
+	for i := range 50 {
+		channelID := fmt.Sprintf("ch-%02d", i)
+		viewer, detach, err := m.Attach(t.Context(), channelID, PlanFull)
+		if err != nil {
+			t.Fatal(err)
+		}
+		warmSession(t, viewer, encoder(channelID))
+		m.ReportProgram(channelID, PlanFull, EncoderSoftware, false, Progress{})
+		detaches = append(detaches, detach)
+	}
+
+	var wg sync.WaitGroup
+	for _, detach := range detaches {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			detach()
+		}()
+	}
+	wg.Wait()
+
+	if got := m.ActiveCount(); got != 2 {
+		t.Fatalf("live sessions after concurrent detaches = %d, want 2", got)
+	}
+	for _, stat := range m.Stats(time.Now()) {
+		if stat.Viewers != 0 {
+			t.Fatalf("session %s retained %d viewers after every detach", stat.ChannelID, stat.Viewers)
+		}
+	}
+}
+
+func TestWarmIdleHotSetNeverEvictsActiveViewers(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	m := testManager(t, spawn, 0, time.Minute)
+
+	for i := range 4 {
+		channelID := fmt.Sprintf("active-%d", i)
+		viewer, _, err := m.Attach(t.Context(), channelID, PlanFull)
+		if err != nil {
+			t.Fatal(err)
+		}
+		warmSession(t, viewer, encoder(channelID))
+		m.ReportProgram(channelID, PlanFull, EncoderSoftware, false, Progress{})
+	}
+	for i := range 3 {
+		channelID := fmt.Sprintf("idle-%d", i)
+		viewer, detach, err := m.Attach(t.Context(), channelID, PlanFull)
+		if err != nil {
+			t.Fatal(err)
+		}
+		warmSession(t, viewer, encoder(channelID))
+		m.ReportProgram(channelID, PlanFull, EncoderSoftware, false, Progress{})
+		detach()
+	}
+
+	stats := m.Stats(time.Now())
+	active, idle := 0, 0
+	for _, stat := range stats {
+		if stat.Viewers > 0 {
+			active++
+		} else {
+			idle++
+		}
+	}
+	if active != 4 || idle != 2 {
+		t.Fatalf("sessions = %d active / %d idle, want 4 / 2", active, idle)
+	}
+	for i := range 4 {
+		channelID := fmt.Sprintf("active-%d", i)
+		select {
+		case <-encoder(channelID).stopped:
+			t.Fatalf("viewer-active session %s was evicted", channelID)
+		default:
+		}
 	}
 }
 
@@ -709,16 +1109,55 @@ func TestManagerStop_TearsDownEveryEncoder(t *testing.T) {
 //
 // These four cover the behaviour onIdle owes. They fail until it is implemented.
 
+func warmSession(t *testing.T, viewer <-chan []byte, encoder *fakeEncoder) {
+	t.Helper()
+	if _, err := encoder.w.Write([]byte("warm")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case chunk, ok := <-viewer:
+		if !ok || string(chunk) != "warm" {
+			t.Fatalf("warming chunk = %q, open=%v", chunk, ok)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session produced no warming transport")
+	}
+}
+
+// Grace retains a WARM channel, not a parent that has never emitted transport. Keeping a zero-byte
+// full session alive after the waiting tuner gives up would retain its conservative cost and make
+// the baseline recovery fail at capacity on a one-channel machine.
+func TestOnIdle_ZeroByteSessionStopsImmediatelyAndReleasesCapacity(t *testing.T) {
+	spawn, encoder := newFakeSpawnerByKey(t)
+	m := testManager(t, spawn, 1, time.Minute)
+
+	_, detach, err := m.Attach(context.Background(), "ch1", PlanFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detach()
+
+	select {
+	case <-encoder("ch1", PlanFull).stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("zero-byte full session remained in grace and retained its capacity slot")
+	}
+	if _, _, err := m.Attach(context.Background(), "ch1", PlanBaseline); err != nil {
+		t.Fatalf("baseline recovery after failed full session: %v", err)
+	}
+}
+
 // The last viewer leaving must NOT stop the encoder immediately — that is what makes
 // channel surfing cheap.
 func TestOnIdle_EncoderSurvivesBrieflyAfterTheLastViewerLeaves(t *testing.T) {
 	spawn, encoder := newFakeSpawner(t)
 	m := testManager(t, spawn, 4, 10*time.Second)
 
-	_, detach, err := m.Attach(context.Background(), "ch1", PlanFull)
+	v, detach, err := m.Attach(context.Background(), "ch1", PlanFull)
 	if err != nil {
 		t.Fatal(err)
 	}
+	warmSession(t, v, encoder("ch1"))
 	detach()
 
 	select {
@@ -734,10 +1173,11 @@ func TestOnIdle_EncoderStopsAfterTheGracePeriod(t *testing.T) {
 	spawn, encoder := newFakeSpawner(t)
 	m := testManager(t, spawn, 4, 50*time.Millisecond)
 
-	_, detach, err := m.Attach(context.Background(), "ch1", PlanFull)
+	v, detach, err := m.Attach(context.Background(), "ch1", PlanFull)
 	if err != nil {
 		t.Fatal(err)
 	}
+	warmSession(t, v, encoder("ch1"))
 	detach()
 
 	select {
@@ -754,10 +1194,11 @@ func TestOnIdle_ReconnectInsideGraceAbortsTeardown(t *testing.T) {
 	spawn, encoder := newFakeSpawner(t)
 	m := testManager(t, spawn, 4, 300*time.Millisecond)
 
-	_, detach, err := m.Attach(context.Background(), "ch1", PlanFull)
+	initial, detach, err := m.Attach(context.Background(), "ch1", PlanFull)
 	if err != nil {
 		t.Fatal(err)
 	}
+	warmSession(t, initial, encoder("ch1"))
 	detach()
 
 	time.Sleep(50 * time.Millisecond) // still inside the grace window
@@ -791,10 +1232,11 @@ func TestOnIdle_StaleTimerDoesNotKillALaterViewer(t *testing.T) {
 
 	// Three quick join/leave cycles, each arming a grace timer.
 	for i := 0; i < 3; i++ {
-		_, detach, err := m.Attach(context.Background(), "ch1", PlanFull)
+		viewer, detach, err := m.Attach(context.Background(), "ch1", PlanFull)
 		if err != nil {
 			t.Fatalf("cycle %d: %v", i, err)
 		}
+		warmSession(t, viewer, encoder("ch1"))
 		time.Sleep(30 * time.Millisecond)
 		detach()
 		time.Sleep(30 * time.Millisecond)
@@ -823,16 +1265,53 @@ func TestOnIdle_StaleTimerDoesNotKillALaterViewer(t *testing.T) {
 	}
 }
 
+// A stale timer must not shorten a LATER idle interval either. Checking only that the viewer map is
+// empty is insufficient: after leave → reattach → leave, the first timer sees zero viewers and can
+// close the session before the second idle interval has received its full grace period.
+func TestOnIdle_StaleTimerDoesNotShortenLaterIdleGrace(t *testing.T) {
+	spawn, encoder := newFakeSpawner(t)
+	m := testManager(t, spawn, 4, 400*time.Millisecond)
+
+	initial, detachInitial, err := m.Attach(context.Background(), "ch1", PlanFull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warmSession(t, initial, encoder("ch1"))
+	detachInitial()
+
+	time.Sleep(250 * time.Millisecond)
+	_, detachAgain, err := m.Attach(context.Background(), "ch1", PlanFull)
+	if err != nil {
+		t.Fatalf("reattach inside first grace interval: %v", err)
+	}
+	detachAgain()
+
+	// The first timer has fired, but the second idle interval still has substantial grace left.
+	time.Sleep(220 * time.Millisecond)
+	select {
+	case <-encoder("ch1").stopped:
+		t.Fatal("the first idle timer shortened the later idle interval")
+	default:
+	}
+
+	select {
+	case <-encoder("ch1").stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the current idle generation never stopped after its own grace period")
+	}
+}
+
 // A session torn down by the grace period must be removed from the manager, so the next
 // viewer starts a fresh encoder rather than attaching to a dead one and waiting forever.
 func TestOnIdle_TornDownSessionIsReplacedOnNextAttach(t *testing.T) {
 	spawn, encoder := newFakeSpawner(t)
 	m := testManager(t, spawn, 4, 50*time.Millisecond)
 
-	_, detach, err := m.Attach(context.Background(), "ch1", PlanFull)
+	initial, detach, err := m.Attach(context.Background(), "ch1", PlanFull)
 	if err != nil {
 		t.Fatal(err)
 	}
+	warmSession(t, initial, encoder("ch1"))
 	detach()
 	select {
 	case <-encoder("ch1").stopped:

@@ -1,7 +1,7 @@
 // Package suggest is the Suggester (design §8): it turns a channel intent into a
 // grounded proposal (a lineup from the library + an acquisition list of missing
-// titles). It owns the grounding loop — the LLM proposes candidates ONLY via the
-// catalog tool (real ids), every proposal item is re-validated before display,
+// titles). It owns the grounding loop — the LLM proposes names or candidates,
+// but only real ids returned by Catalog operations survive before display,
 // and nothing is auto-executed (§8 human-in-the-loop). Generation runs as a
 // persisted job (§8 execution model); this package is the pure suggestion logic,
 // driven by a worker (Phase 11e) and exposed via the API (Phase 11f).
@@ -15,6 +15,7 @@ package suggest
 import (
 	"github.com/loomarr/loomarr/internal/catalog"
 	"github.com/loomarr/loomarr/internal/provision"
+	"github.com/loomarr/loomarr/internal/reference"
 	"github.com/loomarr/loomarr/internal/schedule"
 )
 
@@ -30,13 +31,13 @@ type Intent struct {
 	// Refine inputs (§7 refine): a free-text change ("add more Schwarzenegger, drop the
 	// slow ones") plus the channel's CURRENT lineup as context. The prompt renders these
 	// so the model reasons from what's already on the channel and returns a revised
-	// lineup. Context only — new picks are still grounded through the catalog tool, so
+	// lineup. Context only — new picks are still grounded through Catalog operations, so
 	// refine can't invent titles. Empty on a fresh (non-refine) suggestion.
 	RefineText    string          `json:"refineText,omitempty"`
 	CurrentLineup []LineupContext `json:"currentLineup,omitempty"`
 	// Adjacent are pre-seeded candidates from the recommendation graph walked over this
 	// channel's own lineup (programming-design §8.3) — the deterministic second corpus,
-	// merged with whatever the model finds through the catalog tool.
+	// merged with whatever the model finds through the Catalog.
 	//
 	// They are OFFERED, never placed: the model still chooses, and an offered title it
 	// ignores is simply not picked. Grounding is unweakened because these are real
@@ -49,6 +50,13 @@ type Intent struct {
 	// Empty on a fresh suggestion (no lineup to walk from) and on any install without a
 	// TMDB corpus wired.
 	Adjacent []AdjacentContext `json:"adjacent,omitempty"`
+	// ReferenceTitles are bounded, source-resolved title anchors for this one
+	// Suggest execution. They never enter the API or persisted Intent JSON.
+	ReferenceTitles     []string `json:"-"`
+	ReferenceResolved   bool     `json:"-"`
+	referenceEvidence   reference.Evidence
+	referenceKeys       map[provision.Key]bool
+	referenceCandidates []catalog.Candidate
 	// DiscoveryScopeID is internal execution context for channel-specific explicit
 	// feedback during re-curation. It never enters the API or persisted intent JSON.
 	DiscoveryScopeID string `json:"-"`
@@ -127,6 +135,9 @@ type ProposalItem struct {
 	VoteAverage      float64  `json:"voteAverage,omitempty"`
 	VoteCount        int      `json:"voteCount,omitempty"`
 	Keywords         []string `json:"keywords,omitempty"`
+	Networks         []string `json:"networks,omitempty"`
+	Cast             []string `json:"cast,omitempty"`
+	Creators         []string `json:"creators,omitempty"`
 	// OfficialRating carries from the grounded Candidate for ChannelPolicy audience
 	// enforcement (programming-design §4): it's stamped onto the channel's lineup
 	// entry at create time so enforcement filters without a library hit. Display/
@@ -157,6 +168,9 @@ func fromCandidate(c catalog.Candidate, rationale string, confidence float64) Pr
 		VoteAverage:      c.VoteAverage,
 		VoteCount:        c.VoteCount,
 		Keywords:         append([]string(nil), c.Keywords...),
+		Networks:         append([]string(nil), c.Networks...),
+		Cast:             append([]string(nil), c.Cast...),
+		Creators:         append([]string(nil), c.Creators...),
 	}
 }
 

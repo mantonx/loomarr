@@ -119,6 +119,7 @@ func workflowRunAuthorityEntries() map[string]workflowAuthority {
 			permissions: map[string]string{"actions": "read", "contents": "read"},
 			jobs: map[string]workflowJobAuthority{
 				"release": {
+					condition: "github.ref == 'refs/heads/main'",
 					environment: map[string]string{
 						"ANDROID_RELEASE_OUTPUT_DIR":         "${{ github.workspace }}/.artifacts/android-release",
 						"LOOMARR_ANDROID_KEYSTORE_PASSWORD":  "${{ secrets.ANDROID_UPLOAD_KEYSTORE_PASSWORD }}",
@@ -126,7 +127,6 @@ func workflowRunAuthorityEntries() map[string]workflowAuthority {
 						"LOOMARR_ANDROID_KEY_PASSWORD":       "${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}",
 						"LOOMARR_ANDROID_UPLOAD_CERT_SHA256": "${{ vars.ANDROID_UPLOAD_CERT_SHA256 }}",
 					},
-					steps: map[string]workflowStepAuthority{},
 				},
 			},
 		},
@@ -180,8 +180,15 @@ func workflowRunAuthorityEntries() map[string]workflowAuthority {
 			"make agent-harness-test": exactWorkflowStep(2, "Worktree isolation, claims, leases, and process ownership", workflowStepAuthority{targets: []string{"agent-harness-test"}}),
 		}),
 		"ci-android.yml": standardRunWorkflow(map[string]workflowStepAuthority{
-			"make android":              exactWorkflowStep(4, "", workflowStepAuthority{targets: []string{"android"}}),
-			"make android-release-test": exactWorkflowStep(5, "", workflowStepAuthority{targets: []string{"android-release-test"}}),
+			"make fe-install": exactWorkflowStep(5, "", workflowStepAuthority{targets: []string{"fe-install"}, allowsAcquisition: true}),
+			"make fe-codegen": exactWorkflowStep(6, "", workflowStepAuthority{targets: []string{"fe-codegen"}}),
+			"echo \"gradle-cache-primary-key=android-tv-react-native-v1-${{ runner.os }}-temurin-21-node-${{ env.NODE_VERSION }}-${{ hashFiles('web/apps/tv/**', 'web/packages/**', 'web/pnpm-lock.yaml', 'web/scripts/**') }}-${{ github.sha }}-${{ github.run_id }}\"\necho \"gradle-cache-hit=${{ steps.gradle-cache.outputs.cache-hit == 'true' }}\"\necho \"gradle-cache-source-sha=${GITHUB_SHA}\"\n": exactWorkflowStep(8, "Record Gradle cache provenance", workflowStepAuthority{}),
+			"make android": exactWorkflowStep(9, "", workflowStepAuthority{
+				targets: []string{"android"},
+				environment: map[string]string{
+					"ANDROID_CI_OUTPUT_DIR": "${{ github.workspace }}/.artifacts/android-ci",
+				},
+			}),
 		}),
 		"ci-apple-mobile.yml": standardRunWorkflow(map[string]workflowStepAuthority{
 			"make fe-install":                exactWorkflowStep(3, "", workflowStepAuthority{targets: []string{"fe-install"}}),

@@ -55,6 +55,33 @@ func TestAudioTracksOf_InOrder(t *testing.T) {
 	}
 }
 
+func TestSourceObservationOf_PreservesSharedProbeSuperset(t *testing.T) {
+	observed := sourceObservationOf(probeFrom(t, `{
+		"streams":[
+			{"index":0,"codec_type":"video","codec_name":"hevc","profile":"Main 10","level":153,
+			 "width":3840,"height":2160,"avg_frame_rate":"24000/1001","pix_fmt":"yuv420p10le",
+			 "color_space":"bt2020nc","color_transfer":"smpte2084","color_primaries":"bt2020","field_order":"tt"},
+			{"index":2,"codec_type":"audio","codec_name":"eac3","channels":6,"channel_layout":"5.1",
+			 "sample_rate":"48000","disposition":{"default":1},"tags":{"language":"eng","title":"Surround"}}
+		],
+		"packets":[{"stream_index":0,"pts_time":"-0.5","flags":"KD_"}],
+		"format":{"format_name":"matroska,webm","duration":"90.25","bit_rate":"4000000"}
+	}`))
+	if observed.Container != "matroska,webm" || observed.DurationMillis != 90_250 || observed.Bitrate != 4_000_000 ||
+		!observed.UnsafePreroll || len(observed.Streams) != 2 {
+		t.Fatalf("source observation = %+v", observed)
+	}
+	video, audio := observed.Streams[0], observed.Streams[1]
+	if video.Profile != "Main 10" || video.Level != "153" || !video.HDR || !video.Interlaced ||
+		video.ColorSpace != "bt2020nc" || video.ColorPrimaries != "bt2020" {
+		t.Fatalf("video observation lost technical facts: %+v", video)
+	}
+	if audio.Language != "eng" || audio.Title != "Surround" || !audio.Default || audio.Channels != 6 ||
+		audio.ChannelLayout != "5.1" || audio.SampleRate != 48_000 {
+		t.Fatalf("audio observation lost technical facts: %+v", audio)
+	}
+}
+
 func TestFormatOf_FullFormat(t *testing.T) {
 	f := formatOf(probeFrom(t, probeFixture))
 	if f.VideoCodec != "h264" || f.Width != 1920 || f.Height != 1080 {

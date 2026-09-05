@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -54,12 +55,13 @@ func TestValidationFailsClosed(t *testing.T) {
 		name  string
 		value string
 	}{
-		{name: "missing", value: `{"new_features":[12],"improvements":[],"bug_fixes":[14],"security_fixes":[],"documentation":[],"dependencies":[],"maintenance":[]}`},
-		{name: "invented", value: `{"new_features":[12],"improvements":[],"bug_fixes":[14],"security_fixes":[],"documentation":[],"dependencies":[15,99],"maintenance":[]}`},
-		{name: "duplicate", value: `{"new_features":[12],"improvements":[12],"bug_fixes":[14],"security_fixes":[],"documentation":[],"dependencies":[15],"maintenance":[]}`},
-		{name: "extra field", value: `{"new_features":[12],"improvements":[],"bug_fixes":[14],"security_fixes":[],"documentation":[],"dependencies":[15],"maintenance":[],"summary":"invented"}`},
-		{name: "missing empty field", value: `{"new_features":[12],"bug_fixes":[14],"security_fixes":[],"documentation":[],"dependencies":[15],"maintenance":[]}`},
-		{name: "null field", value: `{"new_features":[12],"improvements":null,"bug_fixes":[14],"security_fixes":[],"documentation":[],"dependencies":[15],"maintenance":[]}`},
+		{name: "missing", value: `{"12":"new_features","14":"bug_fixes"}`},
+		{name: "invented", value: `{"12":"new_features","14":"bug_fixes","99":"dependencies"}`},
+		{name: "duplicate key", value: `{"12":"new_features","12":"improvements","14":"bug_fixes","15":"dependencies"}`},
+		{name: "extra field", value: `{"12":"new_features","14":"bug_fixes","15":"dependencies","summary":"maintenance"}`},
+		{name: "invalid category", value: `{"12":"new_features","14":"bug_fixes","15":"surprise"}`},
+		{name: "null value", value: `{"12":"new_features","14":"bug_fixes","15":null}`},
+		{name: "trailing JSON", value: `{"12":"new_features","14":"bug_fixes","15":"dependencies"} {}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,6 +69,39 @@ func TestValidationFailsClosed(t *testing.T) {
 				t.Fatal("unsafe classification was accepted")
 			}
 		})
+	}
+}
+
+func TestClassificationSchemaRequiresOneCategoryPerPullRequest(t *testing.T) {
+	doc := Document{Changes: make([]Change, 118)}
+	for index := range doc.Changes {
+		doc.Changes[index] = Change{Number: index + 1, Title: "Change " + strconv.Itoa(index+1)}
+	}
+
+	schema := classificationSchema(doc)
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("properties = %#v", schema["properties"])
+	}
+	if len(properties) != len(doc.Changes) {
+		t.Fatalf("property count = %d, want %d exact PR assignments", len(properties), len(doc.Changes))
+	}
+	required, ok := schema["required"].([]string)
+	if !ok || len(required) != len(doc.Changes) {
+		t.Fatalf("required = %#v, want every PR number", schema["required"])
+	}
+	for _, change := range doc.Changes {
+		property, ok := properties[strconv.Itoa(change.Number)].(map[string]any)
+		if !ok {
+			t.Fatalf("missing schema property for PR #%d", change.Number)
+		}
+		if property["type"] != "string" {
+			t.Fatalf("PR #%d type = %#v", change.Number, property["type"])
+		}
+		categories, ok := property["enum"].([]string)
+		if !ok || len(categories) != len(classificationFields) {
+			t.Fatalf("PR #%d categories = %#v", change.Number, property["enum"])
+		}
 	}
 }
 
@@ -89,7 +124,7 @@ func TestOpenRouterUsesStructuredOutputAndValidatesResponse(t *testing.T) {
 				t.Errorf("request missing %s: %s", want, request)
 			}
 		}
-		response := `{"choices":[{"message":{"content":"{\"new_features\":[12],\"improvements\":[],\"bug_fixes\":[14],\"security_fixes\":[],\"documentation\":[],\"dependencies\":[15],\"maintenance\":[]}"}}]}`
+		response := `{"choices":[{"message":{"content":"{\"12\":\"new_features\",\"14\":\"bug_fixes\",\"15\":\"dependencies\"}"}}]}`
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(response)), Header: make(http.Header)}, nil
 	})}
 	classification, err := (OpenRouter{APIKey: "secret", Client: client}).Classify(context.Background(), doc)

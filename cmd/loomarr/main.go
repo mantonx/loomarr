@@ -23,6 +23,7 @@ import (
 	"github.com/loomarr/loomarr/internal/buildinfo"
 	"github.com/loomarr/loomarr/internal/config"
 	"github.com/loomarr/loomarr/internal/diagnostics"
+	"github.com/loomarr/loomarr/internal/landiscovery"
 	"github.com/loomarr/loomarr/internal/store"
 )
 
@@ -271,6 +272,25 @@ func runOnce(log *slog.Logger, generation int, databaseMigration *databaseMigrat
 		"listener is accepting connections", "", "")
 	printStartupReport(os.Stdout, startup.Snapshot(), stdoutInteractive(), terminalWidth(), os.Getenv("NO_COLOR") == "")
 	defer func() { _ = listener.Close() }()
+	hostname, hostnameErr := os.Hostname()
+	if hostnameErr != nil {
+		log.Warn("LAN discovery: host name unavailable", "err", hostnameErr)
+		hostname = ""
+	}
+	if advertisement, advertiseErr := landiscovery.Start(listener.Addr(), hostname); advertiseErr != nil {
+		// Discovery failure cannot make the HTTP service unready. The TV reports the missing
+		// automatic path and retains manual address recovery when multicast is unavailable.
+		log.Warn("LAN discovery: advertisement unavailable", "err", advertiseErr)
+	} else {
+		defer advertisement.Shutdown()
+		log.Info("LAN discovery: advertising Loomarr", "service", landiscovery.ServiceType)
+	}
+	if responder, respondErr := landiscovery.StartBroadcast(hostname, application.ServerPublicURL); respondErr != nil {
+		log.Warn("LAN discovery: container-safe responder unavailable", "err", respondErr)
+	} else {
+		defer responder.Shutdown()
+		log.Info("LAN discovery: listening for container-safe requests", "udp_port", landiscovery.BroadcastPort)
+	}
 	// A fully built generation with an acquired listener is the cutover's final commit.
 	// Future, unrelated runtime failures must not roll back a live PostgreSQL install.
 	databaseMigration.fallbackSQLiteURL = ""

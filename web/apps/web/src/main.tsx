@@ -1,3 +1,4 @@
+import { LoomarrProvider } from "@loomarr/design-system";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
@@ -53,9 +54,11 @@ createRoot(document.getElementById("root")!, {
     clientDiagnostics.record({ event: "client.unhandled_error", surface: "root", errorClass: "react_error" }),
 }).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
-      <Toaster theme="dark" position="bottom-right" richColors />
-    </QueryClientProvider>
+    <LoomarrProvider theme="dark">
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+        <Toaster theme="dark" position="top-right" richColors />
+      </QueryClientProvider>
+    </LoomarrProvider>
   </StrictMode>,
 );

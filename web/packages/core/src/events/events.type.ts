@@ -56,11 +56,25 @@ interface EventHandlers {
   onHealth?: (e: HealthEvent) => void;
 }
 
+interface EventStreamMessage {
+  data: string;
+}
+
+interface EventStreamPort {
+  addEventListener: (type: string, listener: (event: EventStreamMessage) => void) => void;
+  close: () => void;
+}
+
+type EventStreamFactory = (url: string) => EventStreamPort;
+
 export type {
   ActivityEvent,
   ChannelEvent,
   DatabaseEvent,
   EventHandlers,
+  EventStreamFactory,
+  EventStreamMessage,
+  EventStreamPort,
   FillerClipEvent,
   FillerIngestEvent,
   FillerSplitEvent,

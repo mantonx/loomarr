@@ -1,7 +1,7 @@
 # Shared client design-system completeness ledger
 
-**Status:** P3.5 shared-interface publication evidence complete on PR #581; production adoption
-remains owned by P4/P6/P7/P8
+**Status:** P3.5 shared-interface publication evidence complete on PR #581; Shield and Web parity
+adoption authorized by #970 and owned by P4-P8
 **Owner:** shared client platform
 **Parent plan:**
 [`docs/engineering/plans/shared-client-platform.md`](plans/shared-client-platform.md)
@@ -11,7 +11,7 @@ remains owned by P4/P6/P7/P8
 ## Purpose
 
 This ledger makes “the design system and building blocks are complete” a reviewable claim. It covers
-the known embedded-web, mobile, and TV clients, including the viewer surfaces planned for P4/P6 and
+the known embedded-web, mobile, and TV clients, including the viewer surfaces planned for P4/P7 and
 the foundational controls required by the administrative web migration in P7. It does not require
 inventing modules for hypothetical future features. A new product capability amends this ledger when
 it introduces a genuinely new interaction or presentation contract.
@@ -67,13 +67,18 @@ P3.5 certifies the reusable visual language, root interfaces, adapters that alre
 implementations, and their executable workshop contracts. It deliberately does **not** certify that
 every production route uses them. The delivery sequence keeps that evidence staged:
 
-- **P4** owns the first production Guide-to-playback slice, player transport/chrome, and its real
-  touch/TV behavior;
-- **P5** and [#727](https://github.com/loomarr/loomarr/issues/727) own the explicit `adopt`,
-  `revise and repeat`, or `reject` decision;
-- **P6** owns remaining viewer-surface production parity;
-- **P7** owns administrative-web migration and browser form/accessibility parity; and
-- **P8** owns retirement of Tailwind/shadcn/Base UI and the Compose presentation after parity.
+- **P4** owns shared player interfaces and complete React Native Shield parity;
+- **P5a** owns the accepted physical Shield clean-sideload journey;
+- **P5b** owns the React Native Play Internal artifact and publication path;
+- **P5c** owns Compose retirement after those React Native proofs;
+- **P6** owns Web parity fixtures and browser-adapter foundations;
+- **P7** owns route-by-route Web migration and browser form/accessibility parity; and
+- **P8** owns retirement of Tailwind/shadcn/Base UI/CVA and transitional tokens after parity.
+
+P6/P7 may proceed while Play Internal acceptance is underway because P4 has stabilized the shared
+interfaces and P5a has passed on the maintainer's Shield. The earlier broad go/no-go evidence in
+#727 is superseded by #970's accepted single-device model. P5b includes Play Internal distribution;
+installed-pairing migration and wider Play rollout are not gates.
 
 The exclusions below resolve the former contradiction in which this ledger called its interface
 implementation complete while leaving rows `partial`, `legacy`, or `claimed`. They narrow P3.5; they
@@ -93,16 +98,16 @@ do not pre-approve P4–P8 or turn their missing evidence green.
 | Feedback and recovery | `ui` `StatePanel` | Shared loading, empty, error, offline, retry, and permission treatments have useful accessible copy, one decisive recovery action, pointer/touch/TV stories, native stories, and centered loading geometry proof | proven | Preserve state vocabulary and recovery behavior as product modules consume it |
 | Channel and programme identity | `ui` identity and metadata modules | Shared `ChannelIdentity`, `ProgrammeIdentity`, and composed `ProgrammeCard` own title, channel number/logo and initials fallback, series/season/episode, design-compliant airing label, description, badge, artwork state, and progress across pointer/touch/TV stories | proven | Preserve authoritative server metadata and deterministic missing-content fallbacks in Guide, Surf, overlays, and player chrome |
 | Pairing and device recovery | `ui` `PairingShell`; `core/pairing` | Shared generated-contract state machine and presentation; iPhone/Shield pair, disconnect, and revocation evidence | proven | Remains dark-first, touch/remote reachable, mobile-responsive, and QR plus typed-code capable |
-| Application navigation shell | `ui` `ClientNavigation` and `ClientShell` plus host Back adapters | Shared Watching/Guide/Surf destination intent, labelled selected-button navigation, icon vocabulary, keyboard reachability, TV preferred focus, and the Guide/Surf → Watching → platform-home Back rule now run in mobile and TV shells with web/native stories | excluded → P4/P6 | P4 replaces the first placeholder destinations and proves route intent/Back/focus on the vertical slice; P6 owns remaining viewer destinations and surrounding-control handoff. |
-| Guide product rules | `core/guide`; `ui` `GuideSurface` and `GuideExperience` | Shared geometry, metadata formatting, selection, and movement rules now feed one responsive Guide surface with aligned time/channel rows, readable narrow-screen panning, filter availability, focus-following programme detail, artwork fallback, episode/fact/description metadata, household-timezone labels, and centred loading/empty/error/offline orchestration across pointer/touch/TV plus light/dark stories | excluded → P4/P6 | P4 adds the production virtualization/navigation adapter and proves tune/back/focus with the real API journey; P6 owns any remaining Guide surface parity. |
+| Application navigation shell | `ui` `ClientNavigation` and `ClientShell` plus host Back adapters | Shared Watching/Guide/Surf destination intent, labelled selected-button navigation, icon vocabulary, keyboard reachability, TV preferred focus, and the Guide/Surf → Watching → platform-home Back rule now run in mobile and TV shells with web/native stories | excluded → P4/P7 | P4 replaces the Shield placeholders and proves route intent/Back/focus; P7 migrates the production Web shell and surrounding-control handoff. |
+| Guide product rules | `core/guide`; `ui` `GuideSurface` and `GuideExperience` | Shared geometry, metadata formatting, selection, and movement rules now feed one responsive Guide surface with aligned time/channel rows, readable narrow-screen panning, filter availability, focus-following programme detail, artwork fallback, episode/fact/description metadata, household-timezone labels, and centred loading/empty/error/offline orchestration across pointer/touch/TV plus light/dark stories | excluded → P4/P7 | P4 adds the Shield virtualization/navigation adapter and proves tune/back/focus with the real API journey; P7 migrates the current Web Guide without visual or behavioral drift. |
 | Guide TV mechanics | `ui-tv` Guide adapter | TV-only package now owns deterministic grid/filter D-pad movement, disabled-filter skipping, time-anchor retention, tune/filter activation intent, focus restoration after catalog change, and a bounded 100-channel row window with explicit position labels; a Storybook remote workshop proves the same controller through Arrow/Enter interaction in both themes | excluded → P4 | P4 connects native focus refs and the rendered row window, then proves remote repeat, overscan, focus restoration, and 1080p/4K behavior on emulator and Shield. |
-| Overlay and modal composition | `ui` `ModalOverlay` and `TransientOverlay`; React Native host adapters | Shared blocking and non-modal interfaces now own scrim, web portal/focus trap/return, Escape/scrim dismissal, safe content padding, reduced motion, edge-to-edge playback composition, and bounded auto-dismiss across web/native stories; production disconnect consumes the modal | excluded → P4/P6 | P4 proves native Back/dismiss and focus behavior for the first production overlays; P6 owns stacked-modal and remaining viewer-overlay acceptance. |
+| Overlay and modal composition | `ui` `ModalOverlay` and `TransientOverlay`; React Native host adapters | Shared blocking and non-modal interfaces now own scrim, web portal/focus trap/return, Escape/scrim dismissal, safe content padding, reduced motion, edge-to-edge playback composition, and bounded auto-dismiss across web/native stories; production disconnect consumes the modal | excluded → P4/P7 | P4 proves Shield Back/dismiss and focus behavior; P7 owns Web stacked-modal and remaining overlay parity. |
 | Player state and transport | `player` root interface plus web/native adapters | P4 is dependency-stacked on this branch and owns the player package; no player package is part of the P3.5 publication unit | excluded → P4 | P4 owns shared state/tune/history, hls.js/native transport adapters, real first-frame, time-shift, lifecycle, and recovery evidence. |
-| Player chrome and timeline | `ui` player presentation consuming `player` | The P3.5 vocabulary covers the underlying identity, progress, action, overlay, and responsive primitives; production player composition is intentionally absent from this publication unit | excluded → P4 | P4 owns edge-to-edge anchoring, live/time-shift states, accessible controls, auto-dismiss, and touch/keyboard/remote traversal. |
-| Surf rail | `ui` `SurfRail`; `ui-tv` Surf adapter | Shared rail now preserves the still-mounted playback composition, explicit empty Favourites/Recent/All grouping, authoritative focused now/next identity, artwork fallback, progress, tune intent, honest client/server identity, narrow viewport bounds, and pointer/touch/TV plus light/dark stories; TV logic owns ordered traversal, catalog-change restoration, activation, and valid previous-channel intent | excluded → P4/P6 | P4 connects remote/touch events and focus refs for the vertical slice and proves tune/Back/previous-channel behavior; P6 owns remaining browser/touch/TV parity. |
-| Browser application semantics | web adapters | P3.5 supplies browser adapters for the shared workshop and selection seams; the administrative app intentionally remains on its releasable legacy DOM presentation until adoption | excluded → P7 | P7 migrates routes in cohorts and proves semantic HTML, forms, keyboard, screen-reader, reduced-motion, responsive, and visual parity before retiring the legacy stack. |
-| Touch mechanics | mobile adapters | Pairing shell and destination shell run on iPhone; provider-owned safe-area values feed the shared viewport contract; the P3.5 workshop now has physical iOS 27 portrait/landscape, Dynamic Island, touch, scroll, disclosure, and keyboard evidence | excluded → P4/P6 | P4 proves production vertical-slice touch/rotation/focus; P6 owns remaining gestures and viewer journeys. |
-| TV mechanics | `ui-tv` root interfaces | P3.5 provides deterministic Guide/Surf navigation controllers, bounded row-window rules, overscan-aware viewport primitives, and remote workshop evidence | excluded → P4/P6 | P4 proves the production vertical slice on 1080p/4K hosts; P6 owns remaining TV journeys, long traversal, and platform handoff. |
+| Player chrome and timeline | `ui` player presentation consuming `player` | The P3.5 vocabulary covers the underlying identity, progress, action, overlay, and responsive primitives; production player composition is intentionally absent from this publication unit | excluded → P4/P7 | P4 owns Shield anchoring, live/time-shift states, auto-dismiss, and remote traversal; P7 migrates the current browser presentation and keyboard controls. |
+| Surf rail | `ui` `SurfRail`; `ui-tv` Surf adapter | Shared rail now preserves the still-mounted playback composition, explicit empty Favourites/Recent/All grouping, authoritative focused now/next identity, artwork fallback, progress, tune intent, honest client/server identity, narrow viewport bounds, and pointer/touch/TV plus light/dark stories; TV logic owns ordered traversal, catalog-change restoration, activation, and valid previous-channel intent | excluded → P4/P7 | P4 connects Shield remote events and focus refs and proves tune/Back/previous-channel behavior; P7 owns current Web viewer parity. |
+| Browser application semantics | web adapters | P3.5 supplies browser adapters for the shared workshop and selection seams; the administrative app intentionally remains on its releasable legacy DOM presentation during migration | excluded → P7 | P7 migrates routes in cohorts and proves semantic HTML, forms, keyboard, screen-reader, reduced-motion, responsive, and visual parity before retiring the legacy stack. |
+| Touch mechanics | mobile adapters | Pairing shell and destination shell run on iPhone; provider-owned safe-area values feed the shared viewport contract; the P3.5 workshop now has physical iOS 27 portrait/landscape, Dynamic Island, touch, scroll, disclosure, and keyboard evidence | excluded → future | Production mobile journeys are intentionally outside #970; the P3.5 workshop evidence is retained for their later migration. |
+| TV mechanics | `ui-tv` root interfaces | P3.5 provides deterministic Guide/Surf navigation controllers, bounded row-window rules, overscan-aware viewport primitives, and remote workshop evidence | excluded → P4/P5 | P4 completes the production Shield journey; P5a proves it on the physical device, P5b adds Play Internal, and P5c retires Compose. |
 
 ## Required workshop matrix
 
@@ -152,14 +157,14 @@ fixed with regression coverage and recaptured successfully. The retained local m
 accepted and diagnostic captures without recording device, signing-team, or account identifiers.
 
 This completes the P3.5 physical-device exit evidence. It does not certify production viewer
-gestures, Back, native modal focus, assistive-technology behavior, or distribution; those remain the
-explicit P4/P6 and adoption-decision gates below.
+gestures, Back, native modal focus, or assistive-technology behavior. Shield production behavior is
+owned by P4/P5; mobile and Apple TV production behavior remains future work outside #970.
 
 ### Real-iPhone workshop capture
 
 The prototype container permits both orientations so the P3.5 workshop can be inspected without
-changing the build between captures. That configuration only removes an evidence blocker: P4/P6
-still own production touch rotation and viewer journeys.
+changing the build between captures. That evidence is retained for the later mobile production
+migration; it does not add mobile scope to #970.
 
 From the repository root, with Xcode 27 selected and a supported development iPhone attached,
 trusted, and visible in `xcrun xctrace list devices`, generate from the template bundled with the
@@ -186,6 +191,6 @@ and issue #726; never commit device identifiers or other private device data.
 ## Publication gate
 
 During implementation, affected package tests and focused Storybook checks are the normal feedback
-loop. Publication requires one stable pass of `make clients`, `make fe`, `make fe-visual`,
-`make docs-lint`, and `make check`, plus the real-device evidence named above. Expensive matrices are
-not rerun after changes that cannot invalidate them; protected CI owns the final platform matrix.
+loop. Publication uses the repository's current affected-verification interface and protected CI,
+plus the phase-specific route or Shield evidence above. Expensive matrices are not rerun after
+changes that cannot invalidate them; protected CI owns the final platform matrix.

@@ -3,10 +3,11 @@ package prepared
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestReadinessPersistsBindingsAndFingerprintsAcrossRestart(t *testing.T) {
+func TestReadinessPersistsStableBindingsWithoutOperationalInputs(t *testing.T) {
 	root := t.TempDir()
 	library, err := NewLibrary(root)
 	if err != nil {
@@ -16,25 +17,13 @@ func TestReadinessPersistsBindingsAndFingerprintsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sourcePath := filepath.Join(t.TempDir(), "movie.mkv")
-	if err := os.WriteFile(sourcePath, []byte("movie"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	request := Request{Source: Source{Path: sourcePath, AudioTrack: 2}, Rendition: baselineRendition()}
+	request := Request{Source: testSource("movie", 2), Rendition: baselineRendition()}
 	key := BindingKey{ChannelID: "ch-1", LibraryItemID: "item-1"}
 	if err := index.RememberBinding(key, Binding{
 		Policy: "balanced", ChannelPolicy: "eng", Request: request,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, version, err := sourceVersion(request.Source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := index.rememberFingerprint(version, "sha256:movie:audio:2"); err != nil {
-		t.Fatal(err)
-	}
-
 	reopened, err := OpenReadiness(library)
 	if err != nil {
 		t.Fatal(err)
@@ -43,12 +32,18 @@ func TestReadinessPersistsBindingsAndFingerprintsAcrossRestart(t *testing.T) {
 	if !ok || got != request {
 		t.Fatalf("Binding after restart = (%+v, %v), want %+v", got, ok, request)
 	}
-	if fingerprint, ok := reopened.fingerprint(version); !ok || fingerprint != "sha256:movie:audio:2" {
-		t.Fatalf("fingerprint after restart = (%q, %v)", fingerprint, ok)
+	body, err := os.ReadFile(filepath.Join(root, readinessMetadata))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"/media/", "http://", "https://", "api_key", "token"} {
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("readiness persisted operational input %q:\n%s", forbidden, body)
+		}
 	}
 }
 
-func TestReadinessReplacesStalePoliciesAndFileVersions(t *testing.T) {
+func TestReadinessReplacesStalePolicies(t *testing.T) {
 	library, err := NewLibrary(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -57,12 +52,8 @@ func TestReadinessReplacesStalePoliciesAndFileVersions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "episode.mkv")
-	if err := os.WriteFile(path, []byte("one"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	key := BindingKey{ChannelID: "ch", LibraryItemID: "episode"}
-	one := Request{Source: Source{Path: path, AudioTrack: 0}, Rendition: baselineRendition()}
+	one := Request{Source: testSource("episode"), Rendition: baselineRendition()}
 	two := one
 	two.Source.AudioTrack = 1
 	if err := index.RememberBinding(key, Binding{Policy: "one", Request: one}); err != nil {
@@ -77,29 +68,34 @@ func TestReadinessReplacesStalePoliciesAndFileVersions(t *testing.T) {
 	if got, ok := index.Binding(key, "two", "jpn"); !ok || got != two {
 		t.Fatalf("replacement binding = (%+v, %v)", got, ok)
 	}
+}
 
-	_, oldVersion, err := sourceVersion(one.Source)
+func TestReadinessReconcileRemovesStaleBindingWhenReplacementIsUnavailable(t *testing.T) {
+	library, err := NewLibrary(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := index.rememberFingerprint(oldVersion, "old"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("a changed episode"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	_, newVersion, err := sourceVersion(one.Source)
+	index, err := OpenReadiness(library)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := index.rememberFingerprint(newVersion, "new"); err != nil {
+	key := BindingKey{ChannelID: "ch", LibraryItemID: "movie"}
+	request := Request{Source: testSource("movie"), Rendition: baselineRendition()}
+	if err := index.RememberBinding(key, Binding{Policy: "policy", Request: request}); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := index.fingerprint(oldVersion); ok {
-		t.Fatal("stale file version remained in the durable index")
+	if err := index.ReconcileBindings(nil, []BindingKey{key}); err != nil {
+		t.Fatal(err)
 	}
-	if got, ok := index.fingerprint(newVersion); !ok || got != "new" {
-		t.Fatalf("new fingerprint = (%q, %v)", got, ok)
+	if _, ok := index.Binding(key, "policy", ""); ok {
+		t.Fatal("stale binding remained in memory")
+	}
+	reopened, err := OpenReadiness(library)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := reopened.Binding(key, "policy", ""); ok {
+		t.Fatal("stale binding remained after restart")
 	}
 }
 
@@ -116,7 +112,7 @@ func TestReadinessCorruptionDegradesToAReplaceableEmptyIndex(t *testing.T) {
 		t.Fatalf("OpenReadiness = (%v, %v), want usable empty index plus warning", index, err)
 	}
 	key := BindingKey{ChannelID: "ch", LibraryItemID: "item"}
-	request := Request{Source: Source{Path: "/media/item.mkv", AudioTrack: 0}, Rendition: baselineRendition()}
+	request := Request{Source: testSource("item"), Rendition: baselineRendition()}
 	if err := index.RememberBinding(key, Binding{Policy: "policy", Request: request}); err != nil {
 		t.Fatal(err)
 	}

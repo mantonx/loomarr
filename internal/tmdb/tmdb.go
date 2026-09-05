@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/loomarr/loomarr/internal/catalog"
 	"github.com/loomarr/loomarr/internal/httpx"
@@ -30,9 +31,12 @@ import (
 // the api_key query param (v3) — we use the Authorization bearer form so the key
 // never lands in a URL/log (§6 anti-leak discipline, applied to TMDB too).
 type Client struct {
-	baseURL string
-	apiKey  func() string
-	http    *http.Client
+	baseURL              string
+	networkExportBaseURL string
+	apiKey               func() string
+	http                 *http.Client
+	networkMu            sync.Mutex
+	networkIdentities    []namedIdentity
 }
 
 // ErrAPIKeyRequired reports that an operation could not start because TMDB is
@@ -90,11 +94,12 @@ func newDynamicWithHTTP(baseURL string, apiKey func() string, httpClient *http.C
 	if apiKey == nil {
 		apiKey = func() string { return "" }
 	}
-	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		apiKey:  apiKey,
-		http:    httpClient,
+	baseURL = strings.TrimRight(baseURL, "/")
+	exportBaseURL := baseURL + "/p/exports"
+	if baseURL == "https://api.themoviedb.org/3" {
+		exportBaseURL = "https://files.tmdb.org/p/exports"
 	}
+	return &Client{baseURL: baseURL, networkExportBaseURL: exportBaseURL, apiKey: apiKey, http: httpClient}
 }
 
 // operation snapshots the live credential once, or reuses the snapshot when
@@ -232,6 +237,9 @@ func (c *Client) Discover(ctx context.Context, query catalog.DiscoveryQuery, lim
 	if limit <= 0 {
 		limit = 20
 	}
+	if err := validateEntityQuery(query); err != nil {
+		return nil, err
+	}
 	var keywordIDs []int
 	var keywordNames []string
 	if len(query.Keywords) > 0 {
@@ -240,22 +248,28 @@ func (c *Client) Discover(ctx context.Context, query catalog.DiscoveryQuery, lim
 			return nil, err
 		}
 	}
+	entities, err := c.resolveDiscoveryEntities(ctx, query)
+	if err != nil {
+		return nil, err
+	}
 	var movies, series []catalog.Candidate
 	if query.MediaType == "" || query.MediaType == provision.Movie {
-		rows, err := c.discover(ctx, "/discover/movie", genreIDsForMedia(query.Genres, provision.Movie), keywordIDs, query, "primary_release_date", limit)
+		rows, err := c.discover(ctx, "/discover/movie", genreIDsForMedia(query.Genres, provision.Movie), keywordIDs, entities, query, "primary_release_date", limit)
 		if err != nil {
 			return nil, err
 		}
 		movies = appendDiscover(movies, rows, provision.Movie)
 		attachKeywords(movies, keywordNames)
+		attachEntityEvidence(movies, entities)
 	}
 	if query.MediaType == "" || query.MediaType == provision.Series {
-		rows, err := c.discover(ctx, "/discover/tv", genreIDsForMedia(query.Genres, provision.Series), keywordIDs, query, "first_air_date", limit)
+		rows, err := c.discover(ctx, "/discover/tv", genreIDsForMedia(query.Genres, provision.Series), keywordIDs, entities, query, "first_air_date", limit)
 		if err != nil {
 			return nil, err
 		}
 		series = appendDiscover(series, rows, provision.Series)
 		attachKeywords(series, keywordNames)
+		attachEntityEvidence(series, entities)
 	}
 	return blendMediaTypes(movies, series, limit), nil
 }
@@ -372,6 +386,7 @@ func (c *Client) discover(
 	path string,
 	genreIDs []int,
 	keywordIDs []int,
+	entities resolvedDiscoveryEntities,
 	query catalog.DiscoveryQuery,
 	dateField string,
 	limit int,
@@ -392,6 +407,15 @@ func (c *Client) discover(
 			parts[i] = strconv.Itoa(id)
 		}
 		q.Set("with_keywords", strings.Join(parts, "|")) // pipe = OR
+	}
+	if entities.networkID > 0 {
+		q.Set("with_networks", strconv.Itoa(entities.networkID))
+	}
+	if len(entities.castIDs) > 0 {
+		q.Set("with_cast", joinIDs(entities.castIDs))
+	}
+	if len(entities.creatorIDs) > 0 {
+		q.Set("with_crew", joinIDs(entities.creatorIDs))
 	}
 	if query.YearFrom > 0 {
 		q.Set(dateField+".gte", fmt.Sprintf("%04d-01-01", query.YearFrom))

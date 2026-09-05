@@ -239,6 +239,10 @@ class PairingSession {
     }
     await this.begin(serverUrl);
   }
+  chooseServer() {
+    this.stop();
+    this.emit({ status: "needs-server" });
+  }
   async revoked() {
     const current = this.state;
     await this.options.store.clear();

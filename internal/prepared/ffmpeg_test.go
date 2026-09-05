@@ -19,7 +19,7 @@ func baselineRendition() RenditionContract {
 func TestFFmpegPackageArgsPinTheReusableRendition(t *testing.T) {
 	t.Parallel()
 	workspace := t.TempDir()
-	args, err := ffmpegPackageArgs(workspace, Source{Path: "/media/movie.mkv", AudioTrack: 2}, baselineRendition())
+	args, err := ffmpegPackageArgs(workspace, LocalInput("/media/movie.mkv"), 2, baselineRendition())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestFFmpegPackageArgsEncodeHEVCForCompatibleRendition(t *testing.T) {
 	r.VideoCodec = "hevc"
 	r.VideoProfile = "main10"
 	r.PixelFormat = "yuv420p10le"
-	args, err := ffmpegPackageArgs(t.TempDir(), Source{Path: "/media/movie.mkv"}, r)
+	args, err := ffmpegPackageArgs(t.TempDir(), LocalInput("/media/movie.mkv"), 0, r)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestFFmpegPackagerUsesInjectedHardwareVideoArgs(t *testing.T) {
 		}, nil
 	}
 	args, err := ffmpegPackageArgsWith(
-		t.TempDir(), Source{Path: "/media/movie.mkv"}, baselineRendition(), videoArgs,
+		t.TempDir(), LocalInput("/media/movie.mkv"), 0, baselineRendition(), videoArgs,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestFFmpegPackagerUsesInjectedHardwareVideoArgs(t *testing.T) {
 	if !strings.Contains(joined, "-c:v h264_nvenc -preset p7") || strings.Contains(joined, "-c:v libx264") {
 		t.Fatalf("injected hardware encoder not used: %s", joined)
 	}
-	if !strings.Contains(joined, "-hwaccel cuda -i /media/movie.mkv") {
+	if !strings.Contains(joined, "-hwaccel cuda -probesize 256k -analyzeduration 500000 -i /media/movie.mkv") {
 		t.Fatalf("hardware input args are not before -i: %s", joined)
 	}
 }
@@ -97,10 +97,47 @@ func TestFFmpegPackageArgsRejectUnidentifiedOutputProperties(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := baselineRendition()
 			mutate(&r)
-			if _, err := ffmpegPackageArgs(t.TempDir(), Source{Path: "/media/movie.mkv"}, r); err == nil {
+			if _, err := ffmpegPackageArgs(t.TempDir(), LocalInput("/media/movie.mkv"), 0, r); err == nil {
 				t.Fatal("ffmpegPackageArgs accepted an unsupported or incomplete rendition")
 			}
 		})
+	}
+}
+
+func TestFFmpegPackageArgsBoundAndReconnectOnlyHTTPInputs(t *testing.T) {
+	t.Parallel()
+	remote, err := ffmpegPackageArgs(t.TempDir(), HTTPInput("http://media/original"), 0, baselineRendition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteArgs := strings.Join(remote, " ")
+	for _, want := range []string{
+		"-reconnect 1", "-reconnect_on_network_error 1", "-reconnect_streamed 1",
+		"-multiple_requests 1", "-probesize 256k", "-analyzeduration 500000",
+	} {
+		if !strings.Contains(remoteArgs, want) {
+			t.Errorf("HTTP packaging args missing %q: %s", want, remoteArgs)
+		}
+	}
+	local, err := ffmpegPackageArgs(t.TempDir(), LocalInput("/media/original.mkv"), 0, baselineRendition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(local, " "), "-reconnect") {
+		t.Fatal("local prepared input received HTTP-only reconnect options")
+	}
+}
+
+func TestPreparedDiagnosticArgsNeverContainTheAuthenticatedInput(t *testing.T) {
+	t.Parallel()
+	input := "http://media/Videos/1/stream?api_key=secret"
+	args, err := ffmpegPackageArgs(t.TempDir(), HTTPInput(input), 0, baselineRendition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(diagnosticArgs(args, input), " ")
+	if strings.Contains(joined, input) || strings.Contains(joined, "secret") || !strings.Contains(joined, "[input]") {
+		t.Fatalf("diagnostic args exposed transient input: %s", joined)
 	}
 }
 

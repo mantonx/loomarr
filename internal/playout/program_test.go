@@ -319,6 +319,27 @@ func TestProgramArgs_ProgressIsStructuredAndOffStdout(t *testing.T) {
 	}
 }
 
+func TestBlockMuxArgs_BoundsPipeInputAnalysis(t *testing.T) {
+	args := BlockMuxArgs()
+	input := argIndex(args, "-i")
+	for flag, want := range map[string]string{
+		"-readrate":        "1.0",
+		"-probesize":       "256k",
+		"-analyzeduration": "500000",
+	} {
+		got, ok := argsAfter(args, flag)
+		if !ok || got != want {
+			t.Errorf("%s = %q, want %q", flag, got, want)
+		}
+		if index := argIndex(args, flag); index < 0 || index > input {
+			t.Errorf("%s must precede -i so it applies to the MPEG-TS pipe input", flag)
+		}
+	}
+	if joined := strings.Join(args, " "); !strings.Contains(joined, "-map 0:v:0 -map 0:a:0") {
+		t.Errorf("mux must select one canonical video/audio pair, args = %q", joined)
+	}
+}
+
 // Both processes write the stream to stdout, which is what Process.Stdout fans out.
 func TestArgs_OutputGoesToStdout(t *testing.T) {
 	for name, args := range map[string][]string{

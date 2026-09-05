@@ -1,13 +1,65 @@
 import { brandChroma, semanticThemes } from "@loomarr/design-system";
 import type { LiteUI } from "@storybook/react-native-ui-lite";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+
+const captureServerUrl = process.env.EXPO_PUBLIC_LOOMARR_STORYBOOK_CAPTURE_URL;
 
 const TVStorybookUI: typeof LiteUI = ({ children, setStory, story, storyHash }) => {
   const stories = Object.values(storyHash).flatMap((entry) =>
     entry.type === "story" ? [{ id: entry.id, name: entry.name, title: entry.title }] : [],
   );
   const [focusedStoryId, setFocusedStoryId] = useState(story?.id ?? stories[0]?.id);
+  const [captureStoryId, setCaptureStoryId] = useState<string>();
+  const lastCaptureStoryId = useRef<string | undefined>(undefined);
+  const openCapture = useCallback(
+    (storyId: string) => {
+      if (!storyId || storyId === lastCaptureStoryId.current) return;
+      lastCaptureStoryId.current = storyId;
+      setCaptureStoryId(storyId);
+      if (storyHash[storyId]?.type === "story") {
+        setStory(storyId);
+        console.info(`LOOMARR_NATIVE_REFERENCE_SELECTED:${storyId}`);
+      }
+    },
+    [setStory, storyHash],
+  );
+
+  useEffect(() => {
+    if (!captureServerUrl) return undefined;
+    let active = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const readCapture = async () => {
+      try {
+        const response = await fetch(captureServerUrl);
+        const payload = (await response.json()) as { storyId?: string };
+        if (active && payload.storyId) {
+          openCapture(payload.storyId);
+          return;
+        }
+      } catch {
+        // The local capture controller may start a fraction after the native app.
+      }
+      if (active) retry = setTimeout(() => void readCapture(), 100);
+    };
+    void readCapture();
+    return () => {
+      active = false;
+      if (retry) clearTimeout(retry);
+    };
+  }, [openCapture]);
+
+  if (captureStoryId) {
+    return (
+      <View accessibilityLabel={`Native reference ${captureStoryId}`} style={styles.captureCanvas}>
+        {storyHash[captureStoryId]?.type === "story" ? (
+          children
+        ) : (
+          <Text style={styles.captureError}>Unknown native reference: {captureStoryId}</Text>
+        )}
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -146,6 +198,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface.canvas,
     flex: 1,
     overflow: "hidden",
+  },
+  captureCanvas: {
+    backgroundColor: colors.surface.canvas,
+    flex: 1,
+    overflow: "hidden",
+  },
+  captureError: {
+    color: colors.state.danger,
+    fontSize: 24,
+    margin: 48,
   },
 });
 

@@ -32,9 +32,9 @@ const markDrawArgs = ({ barHeight, barWidth, left, top }) =>
     `rectangle ${left + index * barWidth},${top} ${left + (index + 1) * barWidth - 1},${top + barHeight - 1}`,
   ]);
 
-const renderMark = ({ output, size }) => {
-  const barWidth = Math.round(size * 0.075);
-  const barHeight = Math.round(size * 0.52);
+const renderMark = ({ output, size, barWidthRatio = 0.075, barHeightRatio = 0.52 }) => {
+  const barWidth = Math.round(size * barWidthRatio);
+  const barHeight = Math.round(size * barHeightRatio);
   const left = Math.round((size - barWidth * 7) / 2);
   const top = Math.round((size - barHeight) / 2);
   mkdirSync(dirname(output), { recursive: true });
@@ -98,41 +98,26 @@ ${contract.chroma.map((color, index) => `    <rect x="${2 + index * 4}" y="2" wi
 </svg>
 `;
 
-const foregroundVector = `<?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-${contract.chroma.map((color, index) => `    <path android:fillColor="${color}" android:pathData="M${27 + index * 8},30h6v48h-6z" />`).join("\n")}
-</vector>
-`;
-
-const legacyVector = foregroundVector.replace(
-  /(<vector[^>]+>\n)/,
-  `$1    <path android:fillColor="${contract.ground}" android:pathData="M0,0h108v108h-108z" />\n`,
-);
-
 write(join(repoRoot, "web/apps/web/public/favicon.svg"), favicon);
-write(join(repoRoot, "android/app/src/main/res/drawable/ic_launcher_foreground.xml"), foregroundVector);
-write(join(repoRoot, "android/app/src/main/res/mipmap-anydpi/ic_launcher.xml"), legacyVector);
 
 renderMark({ output: join(repoRoot, "web/apps/web/public/icon-192.png"), size: 192 });
 renderMark({ output: join(repoRoot, "web/apps/web/public/icon-512.png"), size: 512 });
 renderMark({ output: join(repoRoot, "web/apps/mobile/assets/icon.png"), size: 1024 });
 renderMark({ output: join(repoRoot, "web/apps/mobile/assets/adaptive-icon.png"), size: 1024 });
 renderMark({ output: join(repoRoot, "web/apps/mobile/assets/splash-icon.png"), size: 1024 });
-renderMark({ output: join(repoRoot, "web/apps/tv/assets/icon.png"), size: 1024 });
-renderMark({ output: join(repoRoot, "web/apps/tv/assets/adaptive-icon.png"), size: 1024 });
-
-renderLockup({
-  output: join(repoRoot, "android/app/src/main/res/drawable-nodpi/banner.png"),
-  width: 320,
-  height: 180,
-  barWidth: 10,
-  barHeight: 14,
-  left: 26,
-  top: 83,
-  pointSize: 28,
-  textX: 113,
-  baseline: 102,
+renderMark({
+  output: join(repoRoot, "web/apps/tv/assets/icon.png"),
+  size: 1024,
+  barWidthRatio: 0.095,
+  barHeightRatio: 0.7,
 });
+renderMark({
+  output: join(repoRoot, "web/apps/tv/assets/adaptive-icon.png"),
+  size: 1024,
+  barWidthRatio: 0.095,
+  barHeightRatio: 0.7,
+});
+
 renderLockup({
   output: join(repoRoot, "web/apps/tv/assets/tv-banner.png"),
   width: 1280,
@@ -146,7 +131,7 @@ renderLockup({
   baseline: 408,
 });
 renderLockup({
-  output: join(repoRoot, "android/store-listing/tv-banner-1280x720.png"),
+  output: join(repoRoot, "store-listing/android-tv/tv-banner-1280x720.png"),
   width: 1280,
   height: 720,
   barWidth: 40,
@@ -158,7 +143,7 @@ renderLockup({
   baseline: 408,
 });
 renderLockup({
-  output: join(repoRoot, "android/store-listing/feature-graphic-1024x500.png"),
+  output: join(repoRoot, "store-listing/android-tv/feature-graphic-1024x500.png"),
   width: 1024,
   height: 500,
   barWidth: 30,
@@ -170,7 +155,7 @@ renderLockup({
   baseline: 286,
 });
 renderLockup({
-  output: join(repoRoot, "android/store-listing/play-icon-512x512.png"),
+  output: join(repoRoot, "store-listing/android-tv/play-icon-512x512.png"),
   width: 512,
   height: 512,
   barWidth: 15,

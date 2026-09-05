@@ -16,13 +16,10 @@ if [[ ! -f "$aab" || ! -f "$manifest" || ! -f "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
 	echo 'android publish: bundle, release manifest, and service-account JSON must be files' >&2
 	exit 1
 fi
-case "$ANDROID_RELEASE_TRACK" in
-	internal | closed-beta) ;;
-	*)
-		echo 'android publish: only internal and closed-beta tracks are allowed' >&2
-		exit 1
-		;;
-esac
+if [[ "$ANDROID_RELEASE_TRACK" != internal ]]; then
+	echo 'android publish: only the internal track is allowed' >&2
+	exit 1
+fi
 
 package=$(jq -er '.package' "$manifest")
 version_name=$(jq -er '.versionName' "$manifest")

@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 6,
+  "version": "planner-certification-v6",
+  "base": {
+    "path": "testdata/planner-certification-v6-base.json",
+    "sha256": "425cda4635eb4bc38b35d57f95a3dde6f93f7ccb0c587e95a356273d7f61e99d"
+  },
+  "promptVersion": "suggester-prompt-v4",
+  "toolSchemaVersion": "catalog-search-v4",
+  "scorerVersion": "planner-scorer-v2",
+  "qualityMetrics": [
+    "correct_tool_operation",
+    "unnecessary_tool_calls",
+    "grounded_completion",
+    "policy_accuracy",
+    "proposal_quality",
+    "recovery"
+  ],
+  "thresholds": {
+    "minGroundedCompletionRate": 0.95,
+    "minCorrectToolOperationRate": 0.90,
+    "minSchemaValidityRate": 0.98,
+    "minPolicyAccuracyRate": 0.95,
+    "minProposalQualityRate": 0.90,
+    "minRecoveryRate": 0.80,
+    "maxP95ToolCalls": 3
+  },
+  "selection": {
+    "qualityMargin": 0.02,
+    "weights": {
+      "groundedCompletion": 0.20,
+      "correctToolOperation": 0.20,
+      "schemaValidity": 0.10,
+      "policyAccuracy": 0.15,
+      "proposalQuality": 0.25,
+      "recovery": 0.10
+    }
+  },
+  "proposalExpectation": "exact_fixture_candidates_or_declared_abstention",
+  "policyCeilings": {
+    "refine-tightens-audience": "TV-Y7",
+    "audience-kids": "TV-Y7",
+    "audience-family": "PG",
+    "audience-explicit-ceiling": "PG-13",
+    "schema-valid-policy": "TV-PG"
+  },
+  "recoveryCases": ["tool-error-recovery"],
+  "repairCases": ["repair-malformed-json", "repair-empty-selection"]
+}

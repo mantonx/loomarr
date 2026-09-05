@@ -70,6 +70,11 @@ func randCandidate(rng *rand.Rand) Candidate {
 	if rng.Intn(2) == 0 {
 		c.OfficialRating = randRating(rng)
 	}
+	if rng.Intn(2) == 0 {
+		c.Networks = []string{"Network " + randName(rng)}
+		c.Cast = []string{"Actor " + randName(rng)}
+		c.Creators = []string{"Creator " + randName(rng)}
+	}
 	c.Source = randScope(rng)
 	return c
 }
@@ -152,6 +157,12 @@ func mutateNonIdentity(c Candidate, field string) Candidate {
 		c.Year = c.Year + 1000
 	case "LibraryItemID":
 		c.LibraryItemID = c.LibraryItemID + "-mutated"
+	case "Networks":
+		c.Networks = append([]string{"MUTATED"}, c.Networks...)
+	case "Cast":
+		c.Cast = append([]string{"MUTATED"}, c.Cast...)
+	case "Creators":
+		c.Creators = append([]string{"MUTATED"}, c.Creators...)
 	default:
 		panic("unknown non-identity field: " + field)
 	}
@@ -165,7 +176,7 @@ func TestProp_DedupeKey_InvariantUnderNonIdentityMutation(t *testing.T) {
 	rng := rand.New(rand.NewSource(propSeed))
 	nonIdentityFields := []string{
 		"Genres", "Overview", "OfficialRating",
-		"InLibrary", "Source", "Year", "LibraryItemID",
+		"InLibrary", "Source", "Year", "LibraryItemID", "Networks", "Cast", "Creators",
 	}
 	const iters = 4000
 	for i := 0; i < iters; i++ {

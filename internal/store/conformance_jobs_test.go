@@ -650,9 +650,23 @@ func testJobCacheByHash(t *testing.T, newStore NewStoreFunc) {
 	s := newStore(t)
 	ctx := context.Background()
 	now := time.Unix(1_800_000_000, 0).UTC()
-	_ = s.CreateJob(ctx, sampleJob("cached", "hash-X", now, now))
+	cached := sampleJob("cached", "hash-X", now, now)
+	cached.Status = "done"
+	if err := s.CreateJob(ctx, cached); err != nil {
+		t.Fatal(err)
+	}
+	queued := sampleJob("queued", "hash-X", now.Add(time.Second), now.Add(time.Second))
+	if err := s.CreateJob(ctx, queued); err != nil {
+		t.Fatal(err)
+	}
+	failed := sampleJob("failed", "hash-X", now.Add(2*time.Second), now.Add(2*time.Second))
+	failed.Status = "failed"
+	if err := s.CreateJob(ctx, failed); err != nil {
+		t.Fatal(err)
+	}
 
-	// A search within TTL finds it.
+	// A search within TTL finds the most recent successful job. Newer queued or
+	// failed attempts must not shadow reusable content from that success.
 	got, err := s.FindJobByIntentHash(ctx, "hash-X", now.Add(-24*time.Hour))
 	if err != nil || got.ID != "cached" {
 		t.Fatalf("FindJobByIntentHash = %q,%v want cached", got.ID, err)

@@ -13,6 +13,7 @@ import type {
   ChannelEvent,
   DatabaseEvent,
   EventHandlers,
+  EventStreamFactory,
   FillerClipEvent,
   FillerIngestEvent,
   FillerSplitEvent,
@@ -26,16 +27,29 @@ import type {
 
 const EVENTS_URL = "/v1/events";
 
+const browserEventStreamFactory: EventStreamFactory = (url) => {
+  const source = new EventSource(url, { withCredentials: true });
+  return {
+    addEventListener: (type, listener) =>
+      source.addEventListener(type, (event) => listener(event as MessageEvent<string>)),
+    close: () => source.close(),
+  };
+};
+
 // openEventStream subscribes to the named SSE frames and returns a close fn. Same-
 // origin with cookie auth (withCredentials). Malformed frames are ignored (latency
 // bus, never load-bearing).
-const openEventStream = (handlers: EventHandlers, url: string = EVENTS_URL): (() => void) => {
-  const es = new EventSource(url, { withCredentials: true });
+const openEventStream = (
+  handlers: EventHandlers,
+  url: string = EVENTS_URL,
+  createStream: EventStreamFactory = browserEventStreamFactory,
+): (() => void) => {
+  const es = createStream(url);
   const on = <T>(type: string, cb?: (e: T) => void) => {
     if (!cb) return;
     es.addEventListener(type, (ev) => {
       try {
-        cb(JSON.parse((ev as MessageEvent).data) as T);
+        cb(JSON.parse(ev.data) as T);
       } catch {
         /* ignore malformed frame */
       }
@@ -161,4 +175,4 @@ const useLoomarrEvents = (extra?: EventHandlers): void => {
   }, [qc]);
 };
 
-export { EVENTS_URL, invalidateByPrefix, openEventStream, useLoomarrEvents };
+export { browserEventStreamFactory, EVENTS_URL, invalidateByPrefix, openEventStream, useLoomarrEvents };

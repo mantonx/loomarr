@@ -33,7 +33,7 @@ const config: StorybookConfig = {
     "./story-assets",
     { from: "../../mobile/assets", to: "/generated-brand/mobile" },
     { from: "../../tv/assets", to: "/generated-brand/tv" },
-    { from: "../../../../android/store-listing", to: "/generated-brand/store" },
+    { from: "../../../../store-listing/android-tv", to: "/generated-brand/store" },
   ],
   framework: { name: "@storybook/react-vite", options: {} },
   core: { disableTelemetry: true },

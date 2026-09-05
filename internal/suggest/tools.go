@@ -20,11 +20,18 @@ func (s *Suggester) runTool(ctx context.Context, tc llm.ToolCall, intent Intent,
 	if tc.Name != catalogToolName {
 		return fmt.Sprintf(`{"error":"unknown tool %q; only %s is available"}`, tc.Name, catalogToolName), nil, DecisionTrace{}
 	}
-	mtArg, _ := tc.Arguments["media_type"].(string)
-	discovery, discoveryMode, parseErr := parseDiscoveryQuery(tc.Arguments)
+	arguments := tc.Arguments
+	discovery, discoveryMode, parseErr := parseDiscoveryQuery(arguments)
+	if parseErr != nil {
+		if projected, ok := projectCatalogArguments(tc.Arguments); ok {
+			arguments = projected
+			discovery, discoveryMode, parseErr = parseDiscoveryQuery(arguments)
+		}
+	}
 	if parseErr != nil {
 		return fmt.Sprintf(`{"error":%q}`, parseErr.Error()), nil, DecisionTrace{}
 	}
+	mtArg, _ := arguments["media_type"].(string)
 
 	var cands []catalog.Candidate
 	var err error
@@ -35,7 +42,7 @@ func (s *Suggester) runTool(ctx context.Context, tc llm.ToolCall, intent Intent,
 		cands, err = s.catalog.Discover(ctx, discovery, catalogSearchLimit)
 	} else {
 		// KEYWORD: search both corpora by title.
-		cands, err = s.catalog.Search(ctx, stringArg(tc.Arguments["query"]), catalog.ScopeAll, catalogSearchLimit)
+		cands, err = s.catalog.Search(ctx, stringArg(arguments["query"]), catalog.ScopeAll, catalogSearchLimit)
 	}
 	if err != nil {
 		return fmt.Sprintf(`{"error":%q}`, err.Error()), nil, DecisionTrace{Version: DecisionTraceVersion, Terminal: TerminalRetrievalFailure}
@@ -52,22 +59,74 @@ func (s *Suggester) runTool(ctx context.Context, tc llm.ToolCall, intent Intent,
 const (
 	maxDiscoveryRuntimeMinutes = 24 * 60
 	maxDiscoveryVoteCount      = 100_000_000
+	maxDiscoveryEntityTerms    = 4
+	maxDiscoveryEntityRunes    = 100
 )
 
 func parseDiscoveryQuery(args map[string]any) (catalog.DiscoveryQuery, bool, error) {
+	titleQuery := ""
+	if raw, exists := args["query"]; exists {
+		value, ok := raw.(string)
+		if !ok {
+			return catalog.DiscoveryQuery{}, false, fmt.Errorf("query must be a string")
+		}
+		if value != "" {
+			titleQuery = strings.TrimSpace(value)
+			if titleQuery == "" {
+				return catalog.DiscoveryQuery{}, false, fmt.Errorf("query must be empty or contain non-whitespace text")
+			}
+		}
+	}
+	keywords, err := optionalStringTerms(args, "keywords")
+	if err != nil {
+		return catalog.DiscoveryQuery{}, false, err
+	}
+	genres, err := optionalStringTerms(args, "genres")
+	if err != nil {
+		return catalog.DiscoveryQuery{}, false, err
+	}
 	query := catalog.DiscoveryQuery{
 		MediaType: mediaTypeArg(stringArg(args["media_type"])),
-		Keywords:  stringSlice(args["keywords"]),
-		Genres:    stringSlice(args["genres"]),
+		Keywords:  keywords,
+		Genres:    genres,
 	}
-	rawEra := strings.TrimSpace(stringArg(args["era"]))
+	if raw, exists := args["network"]; exists && raw != "" {
+		value, ok := raw.(string)
+		query.Network = strings.TrimSpace(value)
+		if !ok || query.Network == "" || len([]rune(query.Network)) > maxDiscoveryEntityRunes {
+			return catalog.DiscoveryQuery{}, false, fmt.Errorf("network must be a non-empty string of at most %d characters", maxDiscoveryEntityRunes)
+		}
+	}
+	if query.Cast, err = boundedEntityTerms(args, "cast"); err != nil {
+		return catalog.DiscoveryQuery{}, false, err
+	}
+	if query.Creators, err = boundedEntityTerms(args, "creators"); err != nil {
+		return catalog.DiscoveryQuery{}, false, err
+	}
+	hasPeople := len(query.Cast) > 0 || len(query.Creators) > 0
+	if query.Network != "" && hasPeople {
+		return catalog.DiscoveryQuery{}, false, fmt.Errorf("network and person constraints cannot be combined")
+	}
+	if query.Network != "" && query.MediaType != provision.Series {
+		return catalog.DiscoveryQuery{}, false, fmt.Errorf("network requires media_type series")
+	}
+	if hasPeople && query.MediaType != provision.Movie {
+		return catalog.DiscoveryQuery{}, false, fmt.Errorf("cast and creators require media_type movie")
+	}
+	rawEra := ""
+	if raw, exists := args["era"]; exists && raw != "" {
+		value, ok := raw.(string)
+		rawEra = strings.TrimSpace(value)
+		if !ok || rawEra == "" {
+			return catalog.DiscoveryQuery{}, false, fmt.Errorf("era must be a year, decade, or year range")
+		}
+	}
 	query.YearFrom, query.YearTo = parseEra(rawEra)
 	if rawEra != "" && query.YearFrom == 0 {
 		return catalog.DiscoveryQuery{}, false, fmt.Errorf("era must be a year, decade, or year range")
 	}
 
-	var err error
-	if rawValue, ok := args["original_language"]; ok {
+	if rawValue, ok := args["original_language"]; ok && rawValue != "" {
 		raw, stringOK := rawValue.(string)
 		if !stringOK || strings.TrimSpace(raw) == "" {
 			return catalog.DiscoveryQuery{}, false, fmt.Errorf("original_language: must be a two-letter code")
@@ -77,7 +136,7 @@ func parseDiscoveryQuery(args map[string]any) (catalog.DiscoveryQuery, bool, err
 			return catalog.DiscoveryQuery{}, false, fmt.Errorf("original_language: %w", err)
 		}
 	}
-	if rawValue, ok := args["origin_country"]; ok {
+	if rawValue, ok := args["origin_country"]; ok && rawValue != "" {
 		raw, stringOK := rawValue.(string)
 		if !stringOK || strings.TrimSpace(raw) == "" {
 			return catalog.DiscoveryQuery{}, false, fmt.Errorf("origin_country: must be a two-letter code")
@@ -109,14 +168,120 @@ func parseDiscoveryQuery(args map[string]any) (catalog.DiscoveryQuery, bool, err
 
 	discoveryMode := len(query.Keywords) > 0 || len(query.Genres) > 0 || rawEra != "" ||
 		query.OriginalLanguage != "" || query.OriginCountry != "" || query.RuntimeMin > 0 ||
-		query.RuntimeMax > 0 || voteAverageSet || query.VoteCountMin > 0
-	if discoveryMode && strings.TrimSpace(stringArg(args["query"])) != "" {
+		query.RuntimeMax > 0 || voteAverageSet || query.VoteCountMin > 0 || query.Network != "" || hasPeople
+	if discoveryMode && titleQuery != "" {
 		return catalog.DiscoveryQuery{}, false, fmt.Errorf("query cannot be combined with discovery qualifiers")
 	}
-	if !discoveryMode && strings.TrimSpace(stringArg(args["query"])) == "" {
+	if !discoveryMode && titleQuery == "" {
 		return catalog.DiscoveryQuery{}, false, fmt.Errorf("provide query or a discovery qualifier")
 	}
 	return query, discoveryMode, nil
+}
+
+func optionalStringTerms(args map[string]any, key string) ([]string, error) {
+	raw, exists := args[key]
+	if !exists || raw == "" {
+		return nil, nil
+	}
+	values, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array of strings", key)
+	}
+	out := make([]string, 0, len(values))
+	for _, rawValue := range values {
+		value, ok := rawValue.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s must be an array of strings", key)
+		}
+		if value == "" {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("%s must be an array of non-empty strings", key)
+		}
+		out = append(out, value)
+	}
+	return out, nil
+}
+
+func boundedEntityTerms(args map[string]any, key string) ([]string, error) {
+	raw, exists := args[key]
+	if !exists {
+		return nil, nil
+	}
+	values, ok := raw.([]any)
+	if ok && (len(values) == 0 || allExactEmptyStrings(values)) {
+		return nil, nil
+	}
+	if !ok || len(values) > maxDiscoveryEntityTerms {
+		return nil, fmt.Errorf("%s must be an array of 1 to %d names", key, maxDiscoveryEntityTerms)
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, rawValue := range values {
+		value, ok := rawValue.(string)
+		value = strings.TrimSpace(value)
+		if !ok || value == "" || len([]rune(value)) > maxDiscoveryEntityRunes {
+			return nil, fmt.Errorf("%s must be an array of non-empty names of at most %d characters", key, maxDiscoveryEntityRunes)
+		}
+		normalized := strings.ToLower(value)
+		if seen[normalized] {
+			return nil, fmt.Errorf("%s contains duplicate name %q", key, value)
+		}
+		seen[normalized] = true
+		out = append(out, value)
+	}
+	return out, nil
+}
+
+func allExactEmptyStrings(values []any) bool {
+	for _, value := range values {
+		if value != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// projectCatalogArguments recovers the one compatibility route proven by
+// #1021: a series request with a valid defining network. Providers sometimes
+// fill the mutually exclusive title/person properties too. Those fields may be
+// discarded only when their values are individually well-formed; every valid
+// scalar discovery qualifier remains authoritative, and every malformed value
+// still fails the strict parser rather than broadening the search.
+func projectCatalogArguments(args map[string]any) (map[string]any, bool) {
+	mediaType := strings.TrimSpace(stringArg(args["media_type"]))
+	network := strings.TrimSpace(stringArg(args["network"]))
+	if mediaType != string(provision.Series) || network == "" {
+		return nil, false
+	}
+	if raw, exists := args["query"]; exists {
+		value, ok := raw.(string)
+		if !ok || value != "" && strings.TrimSpace(value) == "" {
+			return nil, false
+		}
+	}
+	if _, err := boundedEntityTerms(args, "cast"); err != nil {
+		return nil, false
+	}
+	if _, err := boundedEntityTerms(args, "creators"); err != nil {
+		return nil, false
+	}
+	return projectArgumentKeys(args,
+		"media_type", "genres", "keywords", "era", "original_language", "origin_country",
+		"runtime_min", "runtime_max", "vote_average_min", "vote_count_min", "network",
+	), true
+}
+
+func projectArgumentKeys(args map[string]any, keys ...string) map[string]any {
+	projected := make(map[string]any, len(keys))
+	for _, key := range keys {
+		if value, exists := args[key]; exists {
+			projected[key] = value
+		}
+	}
+	return projected
 }
 
 func discoveryCode(value string, upper bool) (string, error) {
@@ -231,22 +396,8 @@ func mediaTypeArg(mt string) provision.MediaType {
 	}
 }
 
-// stringArg / stringSlice safely read tool-call arguments (untyped JSON).
+// stringArg safely reads a tool-call argument (untyped JSON).
 func stringArg(v any) string { s, _ := v.(string); return s }
-
-func stringSlice(v any) []string {
-	arr, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(arr))
-	for _, e := range arr {
-		if s, ok := e.(string); ok && s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
-}
 
 // filterByMediaType keeps only candidates matching the requested type ("movie" or
 // "series"); an unrecognized value is ignored (returns all — never hides content
@@ -268,16 +419,17 @@ func filterByMediaType(cands []catalog.Candidate, mt string) []catalog.Candidate
 // catalogTool is the provider-neutral tool schema the model may call (§8). It does
 // three modes: `query` runs title search; `genres` (+ optional `era`) discovers
 // genre themes; `keywords` discovers holidays, motifs, franchises, and topics
-// whose terms need not occur in the title. Every mode returns real ids + genres +
-// overview + source-backed discovery evidence + an inLibrary flag; it is the
-// ONLY way to find titles. Omitted evidence is unknown, never a mismatch.
+// whose terms need not occur in the title. Structured discovery may add scalar,
+// movie-person, or TV-network qualifiers. Every mode returns real ids + genres +
+// overview + source-backed discovery evidence + an inLibrary flag; it is the ONLY
+// way to find titles. Omitted evidence is unknown, never a mismatch.
 func catalogTool() llm.ToolSchema {
 	return llm.ToolSchema{
 		Name: catalogToolName,
 		Description: "Find real titles from the library + TMDB. Provide `query` to search by title, `genres` " +
 			"to discover genre/era matches, or `keywords` to discover holidays, motifs, franchises, and topics. " +
-			"Discovery may also use explicitly requested country, original-language, runtime, and vote filters. " +
-			"Returns real external ids, genres, a short overview, available language/country/runtime/vote/keyword evidence, " +
+			"Discovery may also use explicitly requested country, original-language, runtime, vote, movie cast/creator, and TV network filters. " +
+			"Returns real external ids, genres, a short overview, available language/country/runtime/vote/keyword/network/person evidence, " +
 			"and an inLibrary flag. Missing fields mean unknown. This is the ONLY way to find titles.",
 		Parameters: map[string]any{
 			"type": "object",
@@ -293,6 +445,9 @@ func catalogTool() llm.ToolSchema {
 				"runtime_max":       map[string]any{"type": "integer", "minimum": 1, "maximum": maxDiscoveryRuntimeMinutes},
 				"vote_average_min":  map[string]any{"type": "number", "exclusiveMinimum": 0, "maximum": 10},
 				"vote_count_min":    map[string]any{"type": "integer", "minimum": 1, "maximum": maxDiscoveryVoteCount},
+				"network":           map[string]any{"type": "string", "maxLength": maxDiscoveryEntityRunes, "description": "exact TV network name; requires media_type=series"},
+				"cast":              map[string]any{"type": "array", "minItems": 1, "maxItems": maxDiscoveryEntityTerms, "items": map[string]any{"type": "string", "maxLength": maxDiscoveryEntityRunes}, "description": "exact cast names; requires media_type=movie"},
+				"creators":          map[string]any{"type": "array", "minItems": 1, "maxItems": maxDiscoveryEntityTerms, "items": map[string]any{"type": "string", "maxLength": maxDiscoveryEntityRunes}, "description": "exact director/writer/crew names; requires media_type=movie"},
 			},
 		},
 	}

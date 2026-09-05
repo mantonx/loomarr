@@ -1,0 +1,8 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["react", "react-native"]
+  },
+  "include": ["index.ts", "src/**/*.ts"]
+}

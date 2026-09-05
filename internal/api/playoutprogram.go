@@ -43,7 +43,7 @@ type PlayoutResolver interface {
 	// honouring the operator's preferred language (§9.1). Best-effort: 0 (the file's first
 	// track) whenever the preference cannot be resolved, so a probe failure costs the language
 	// and never the programme.
-	AudioTrackFor(ctx context.Context, channelID, streamURL string) int
+	AudioTrackFor(ctx context.Context, channelID, libraryItemID, streamURL string) int
 	// Tracks probes the audio + subtitle tracks of the channel's CURRENTLY-AIRING program, for
 	// the Watch surface's pickers (§9.1, V46). The options a viewer sees are what the airing file
 	// actually carries — not a hardcoded list and not an app setting. Best-effort: empty tracks
@@ -235,7 +235,7 @@ func (s *Server) programHandler(w http.ResponseWriter, r *http.Request) {
 	// Which audio track, honouring the operator's language preference (§9.1). Resolved here
 	// rather than inside ProgramArgs because it needs a probe of the source, and the args
 	// builder is deliberately a pure function.
-	audioTrack := s.playoutResolver.AudioTrackFor(r.Context(), channelID, streamURL)
+	audioTrack := s.playoutResolver.AudioTrackFor(r.Context(), channelID, airing.LibraryItemID, streamURL)
 
 	// Loudness normalisation, FILLER ONLY (§10 V40).
 	//
@@ -365,8 +365,9 @@ func (s *Server) serveCard(
 		s.pipeChild(w, r, channelID, "offline card", c)
 		return true
 	}
-	if profile.Encoder != playout.EncoderSoftware {
-		if c := s.startChild(r.Context(), channelID, encPlan, playout.EncoderSoftware, true, card(playout.EncoderSoftware)); c != nil {
+	softwareEncoder := playout.SoftwareEncoderFor(profile.Encoder)
+	if profile.Encoder != softwareEncoder {
+		if c := s.startChild(r.Context(), channelID, encPlan, softwareEncoder, true, card(softwareEncoder)); c != nil {
 			s.pipeChild(w, r, channelID, "offline card", c)
 			return true
 		}
@@ -383,8 +384,9 @@ func (s *Server) serveCard(
 //  1. Try the spec as-is (hardware, if that is what the Profile resolved).
 //  2. Produced nothing AND this is a video transcode? Reclaim VRAM (evict the LLM) and retry the
 //     SAME encoder — the freed VRAM is often all it needed.
-//  3. Still nothing? Rebuild the spec with the software encoder (libx264) and run that — slower, but
-//     the channel PLAYS instead of going black. Software is the floor.
+//  3. Still nothing? Rebuild the spec with the codec-matching software encoder (libx264 or libx265)
+//     and run that — slower, but the channel PLAYS instead of going black. Software is the floor;
+//     the live session's pinned codec never changes.
 //
 // A `-c copy` program is NOT laddered: a copy that produces nothing is a bad source file, which no
 // encoder change fixes — so it runs once and fails through (attempt still surfaces the stderr).
@@ -396,7 +398,8 @@ func (s *Server) streamProgram(
 	w http.ResponseWriter, r *http.Request, channelID string, target playout.EncodePlan, what string, spec playout.ProgramSpec,
 ) {
 	transcoding := !spec.Plan.CopyVideo
-	wantsHardware := transcoding && spec.Profile.Encoder != playout.EncoderSoftware
+	softwareEncoder := playout.SoftwareEncoderFor(spec.Profile.Encoder)
+	wantsHardware := transcoding && !playout.IsSoftwareEncoder(spec.Profile.Encoder)
 
 	// ADMISSION, up front (§9.1 V47). A hardware transcode must hold a GPU slot; when the encoder is
 	// saturated we choose software NOW rather than piling on and stalling. A copy needs no slot (it
@@ -409,7 +412,7 @@ func (s *Server) streamProgram(
 		} else {
 			s.log.Info("playout: GPU encode slots full — using software for this program",
 				"channel", channelID, "program", what, "wanted", spec.Profile.Encoder)
-			spec.Profile.Encoder = playout.EncoderSoftware
+			spec.Profile.Encoder = softwareEncoder
 			wantsHardware = false
 		}
 	}
@@ -443,15 +446,15 @@ func (s *Server) streamProgram(
 		}
 	}
 
-	// Attempt 3: software fallback. The channel plays (slower) rather than going black. If the gate
-	// already chose software up front, attempt 1 WAS software — this simply retries it once more,
-	// which is harmless and covers a transient first-attempt failure.
-	if spec.Profile.Encoder != playout.EncoderSoftware {
+	// Attempt 3: codec-preserving software fallback. An HEVC session uses libx265 and an H.264
+	// session uses libx264; changing codec here would poison the pinned parent stream even if this
+	// individual child successfully produced bytes.
+	if spec.Profile.Encoder != softwareEncoder {
 		softSpec := spec
-		softSpec.Profile.Encoder = playout.EncoderSoftware
+		softSpec.Profile.Encoder = softwareEncoder
 		s.log.Warn("playout: falling back to software encoding for this program",
-			"channel", channelID, "program", what, "from", spec.Profile.Encoder)
-		if c := s.startChild(r.Context(), channelID, target, playout.EncoderSoftware, transcoding, playout.ProgramArgs(softSpec)); c != nil {
+			"channel", channelID, "program", what, "from", spec.Profile.Encoder, "to", softwareEncoder)
+		if c := s.startChild(r.Context(), channelID, target, softwareEncoder, transcoding, playout.ProgramArgs(softSpec)); c != nil {
 			s.pipeChild(w, r, channelID, what, c)
 			return
 		}
@@ -501,6 +504,10 @@ func (s *Server) startChild(
 	if ctx.Err() != nil {
 		return nil
 	}
+	if s.playoutObserver != nil && !s.playoutObserver.AdmitProgram(channelID, target, transcoding) {
+		s.log.Info("playout: program waiting for transcode capacity", "channel", channelID, "target", target.String())
+		return nil
+	}
 	// The child dies with the request. cancel is handed to the caller (pipeChild) which owns the
 	// stream's lifetime; on a nil return here we cancel immediately so a failed attempt leaves no
 	// orphan before the next ladder step.
@@ -514,8 +521,8 @@ func (s *Server) startChild(
 	enc2 := enc // capture for the progress closure
 	onProgress := func(p playout.Progress) {
 		if s.playoutObserver != nil {
-			// `transcoding` corrects the session's admission cost to reality (§9.1 V49): a `-c copy`
-			// program frees its transcode slot, a re-encode claims one.
+			// Admission already transitioned to this real cost before spawn. Reporting repeats that
+			// transition idempotently while recording the child encoder and progress (§9.1 V49).
 			s.playoutObserver.ReportProgram(channelID, target, enc2, transcoding, p)
 		}
 	}

@@ -54,6 +54,7 @@ release-verify: ## verify release, CI acquisition, Android, and publication poli
 	@./scripts/check-release-image-absence.sh --self-test
 	@./scripts/android-version-code.sh --self-test
 	@./scripts/apple-compilation-cache-test.sh
+	@./scripts/test-android-release-emulator-contract-test.sh
 	@./web/scripts/test-apple-client-cache-test.sh
 	@./web/scripts/validate-apple-compilation-cache-test.sh
 	@$(GO) test ./internal/releaseverify

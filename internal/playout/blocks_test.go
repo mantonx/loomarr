@@ -47,6 +47,7 @@ func TestPumpBlocksReportsOnlyAuthoritativeAiringTransitions(t *testing.T) {
 	}
 	line := logs.String()
 	for _, want := range []string{
+		"msg=\"playout: block first bytes from child\"", "child_first_byte_ms=",
 		"msg=\"playout: block transition\"", "from_kind=program", "from_content=episode",
 		"to_kind=filler", "to_content=commercial",
 	} {

@@ -283,6 +283,27 @@ func TestHardwarePlumbing_HevcMatchesItsH264Sibling(t *testing.T) {
 	}
 }
 
+func TestSoftwareEncoderForPreservesTheOutputCodec(t *testing.T) {
+	for _, tc := range []struct {
+		preferred Encoder
+		want      Encoder
+	}{
+		{EncoderVideoToolbox, EncoderSoftware},
+		{EncoderVTHEVC, EncoderSoftwareHEVC},
+		{EncoderNVENC, EncoderSoftware},
+		{EncoderNVENCHEVC, EncoderSoftwareHEVC},
+		{EncoderSoftware, EncoderSoftware},
+		{EncoderSoftwareHEVC, EncoderSoftwareHEVC},
+	} {
+		if got := SoftwareEncoderFor(tc.preferred); got != tc.want {
+			t.Errorf("SoftwareEncoderFor(%q) = %q, want %q", tc.preferred, got, tc.want)
+		}
+		if !IsSoftwareEncoder(tc.want) {
+			t.Errorf("IsSoftwareEncoder(%q) = false", tc.want)
+		}
+	}
+}
+
 // The three engines that need an explicit device must actually name one, in BOTH codecs.
 //
 // The pairwise test above would stay green if a refactor emptied both halves of a pair at once —

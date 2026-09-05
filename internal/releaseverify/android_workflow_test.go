@@ -26,12 +26,13 @@ func TestVerifyAndroidReleaseWorkflow(t *testing.T) {
 	}{
 		{name: "protected signed testing release", mutate: func(value string) string { return value }},
 		{name: "cannot run on pull requests", mutate: replaceOnce("workflow_dispatch:", "pull_request:", t), wantErr: true},
-		{name: "cannot expose production", mutate: replaceOnce("          - closed-beta", "          - closed-beta\n          - production", t), wantErr: true},
+		{name: "cannot expose production", mutate: replaceOnce("          ANDROID_RELEASE_TRACK: internal", "          ANDROID_RELEASE_TRACK: production", t), wantErr: true},
 		{name: "publication requires an explicit choice", mutate: replaceOnce("        default: false", "        default: true", t), wantErr: true},
 		{name: "protected environment is fixed", mutate: replaceOnce("    environment: android-beta", "    environment: unprotected", t), wantErr: true},
+		{name: "non-main dispatch is rejected", mutate: replaceOnce("    if: github.ref == 'refs/heads/main'", "    if: github.ref != 'refs/heads/main'", t), wantErr: true},
 		{name: "workflow permissions stay read only", mutate: replaceOnce("  contents: read", "  contents: write", t), wantErr: true},
-		{name: "source validation cannot be removed", mutate: replaceOnce("        run: ./scripts/validate-android-release-source.sh", "        run: true", t), wantErr: true},
-		{name: "signed bundle builder cannot be replaced", mutate: replaceOnce("        run: ./scripts/build-android-beta.sh", "        run: ./gradlew bundleRelease", t), wantErr: true},
+		{name: "artifact validation cannot be removed", mutate: replaceOnce(`        run: ./scripts/download-android-ci-artifact.sh "${{ inputs.ci_run_id }}" .artifacts/android-ci`, "        run: true", t), wantErr: true},
+		{name: "sign-only handoff cannot be replaced", mutate: replaceOnce("          ./scripts/sign-android-ci-artifact.sh \"$unsigned\" \"$manifest\" \"$ANDROID_RELEASE_OUTPUT_DIR\"", "          ./gradlew bundleRelease", t), wantErr: true},
 		{name: "publisher cannot be bypassed", mutate: replaceOnce("            ./scripts/publish-android-beta.sh \"$aab\" \"$manifest\"", "            curl https://example.invalid/publish", t), wantErr: true},
 		{name: "publisher cannot run unconditionally", mutate: replaceOnce("        if: inputs.publish_to_play", "        if: always()", t), wantErr: true},
 		{name: "credential cleanup cannot be conditional", mutate: replaceOnce("        if: always()", "        if: success()", t), wantErr: true},
@@ -52,6 +53,42 @@ func TestVerifyAndroidReleaseWorkflow(t *testing.T) {
 				t.Fatalf("VerifyAndroidReleaseWorkflow: %v", err)
 			}
 		})
+	}
+}
+
+func TestCIAndroidGradleCachePolicy(t *testing.T) {
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test source")
+	}
+	workflowPath := filepath.Join(filepath.Dir(source), "..", "..", ".github", "workflows", "ci-android.yml")
+	data, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(data)
+
+	for _, want := range []string{
+		"id: gradle-cache",
+		"path: |\n            ~/.gradle/caches\n            ~/.gradle/wrapper",
+		"key: android-tv-react-native-v1-${{ runner.os }}-temurin-21-node-${{ env.NODE_VERSION }}-${{ hashFiles('web/apps/tv/**', 'web/packages/**', 'web/pnpm-lock.yaml', 'web/scripts/**') }}-${{ github.sha }}-${{ github.run_id }}",
+		"restore-keys: android-tv-react-native-v1-${{ runner.os }}-temurin-21-node-${{ env.NODE_VERSION }}-${{ hashFiles('web/apps/tv/**', 'web/packages/**', 'web/pnpm-lock.yaml', 'web/scripts/**') }}-${{ github.sha }}-",
+		"- name: Record Gradle cache provenance",
+		"gradle-cache-primary-key=android-tv-react-native-v1-${{ runner.os }}-temurin-21-node-${{ env.NODE_VERSION }}-${{ hashFiles('web/apps/tv/**', 'web/packages/**', 'web/pnpm-lock.yaml', 'web/scripts/**') }}-${{ github.sha }}-${{ github.run_id }}",
+		"gradle-cache-hit=${{ steps.gradle-cache.outputs.cache-hit == 'true' }}",
+		"gradle-cache-source-sha=${GITHUB_SHA}",
+	} {
+		if !strings.Contains(workflow, want) {
+			t.Errorf("ci-android Gradle cache policy missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"steps.gradle-cache.outputs.cache-primary-key",
+		"steps.gradle-cache.outputs.cache-matched-key",
+	} {
+		if strings.Contains(workflow, forbidden) {
+			t.Errorf("ci-android Gradle cache policy claims unavailable %q output", forbidden)
+		}
 	}
 }
 

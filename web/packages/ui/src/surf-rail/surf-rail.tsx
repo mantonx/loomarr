@@ -11,8 +11,8 @@ import {
 
 import { ChannelIdentity, ProgrammeIdentity } from "../identity";
 import { StatePanel } from "../state-panel";
-
 import type { SurfChannelData, SurfGroupData, SurfRailProps, SurfSelection } from "./surf-rail.type";
+import { TvSurfRail } from "./surf-rail-tv";
 
 const surfRailWidth = (density: Density) => (density === "tv" ? 680 : density === "touch" ? "100%" : 480);
 
@@ -26,15 +26,42 @@ const findSurfChannel = (
 
 const SurfRail = ({
   clientVersion,
+  currentChannelId,
   density = "pointer",
+  focusRegistry,
   groups,
   onFocusSelection,
+  onDisconnect,
   onTune,
   renderArtwork,
   renderChannelLogo,
   selection,
+  serverName,
   serverVersion,
 }: SurfRailProps) => {
+  const viewportWidth = Reflect.get(globalThis, "innerWidth");
+  // The dedicated ten-foot rail assumes the 1280px canvas used by supported TV hosts.
+  // Storybook and browser previews can render TV density in a phone-sized viewport; retain
+  // the adaptive rail there so channel identity and programme detail remain usable.
+  if (density === "tv" && (viewportWidth === undefined || viewportWidth >= 1280)) {
+    return (
+      <TvSurfRail
+        clientVersion={clientVersion}
+        currentChannelId={currentChannelId}
+        density={density}
+        focusRegistry={focusRegistry}
+        groups={groups}
+        onFocusSelection={onFocusSelection}
+        onDisconnect={onDisconnect}
+        onTune={onTune}
+        renderArtwork={renderArtwork}
+        renderChannelLogo={renderChannelLogo}
+        selection={selection}
+        serverName={serverName}
+        serverVersion={serverVersion}
+      />
+    );
+  }
   const selectedChannel = findSurfChannel(groups, selection);
   const selectedArtwork = selectedChannel ? renderArtwork?.(selectedChannel) : undefined;
   const selectedLogo = selectedChannel ? renderChannelLogo?.(selectedChannel) : undefined;

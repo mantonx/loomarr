@@ -2,6 +2,7 @@ package prepared_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,7 +10,15 @@ import (
 	"testing"
 
 	"github.com/loomarr/loomarr/internal/prepared"
+	"github.com/loomarr/loomarr/internal/testkit"
 )
+
+func TestTransientInputDoesNotSerialize(t *testing.T) {
+	t.Parallel()
+	if _, err := json.Marshal(prepared.HTTPInput("http://media/original?api_key=secret")); !errors.Is(err, prepared.ErrTransientInput) {
+		t.Fatalf("serialized transient input error = %v, want ErrTransientInput", err)
+	}
+}
 
 type countingPackager struct {
 	mu     sync.Mutex
@@ -17,13 +26,17 @@ type countingPackager struct {
 	err    error
 }
 
-type packagerFunc func(context.Context, string, prepared.Source, prepared.RenditionContract) (prepared.Output, error)
+type packagerFunc func(context.Context, string, prepared.Input, int, prepared.RenditionContract) (prepared.Output, error)
 
-func (f packagerFunc) Package(ctx context.Context, workspace string, source prepared.Source, rendition prepared.RenditionContract) (prepared.Output, error) {
-	return f(ctx, workspace, source, rendition)
+func (f packagerFunc) Package(
+	ctx context.Context, workspace string, input prepared.Input, audioTrack int, rendition prepared.RenditionContract,
+) (prepared.Output, error) {
+	return f(ctx, workspace, input, audioTrack, rendition)
 }
 
-func (p *countingPackager) Package(_ context.Context, workspace string, _ prepared.Source, _ prepared.RenditionContract) (prepared.Output, error) {
+func (p *countingPackager) Package(
+	_ context.Context, workspace string, _ prepared.Input, _ int, _ prepared.RenditionContract,
+) (prepared.Output, error) {
 	p.mu.Lock()
 	p.builds++
 	p.mu.Unlock()
@@ -48,55 +61,47 @@ func (p *countingPackager) count() int {
 	return p.builds
 }
 
-func preparedRequest(path string) prepared.Request {
-	return prepared.Request{Source: prepared.Source{Path: path}, Rendition: baseline("unused").Rendition}
+func preparedRequest(id string) prepared.Request {
+	return prepared.Request{
+		Source:    prepared.Source{ItemID: "item-" + id, SourceID: "source-" + id, Revision: "revision-" + id},
+		Rendition: baseline("unused").Rendition,
+	}
 }
 
-func newTestPreparer(t *testing.T, library *prepared.Library, packager prepared.Packager) *prepared.Preparer {
+func newTestPreparer(
+	t *testing.T, library *prepared.Library, packager prepared.Packager, access prepared.SourceAccess,
+) *prepared.Preparer {
 	t.Helper()
-	readiness, err := prepared.OpenReadiness(library)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return prepared.NewPreparer(prepared.PreparerDependencies{
-		Library: library, Packager: packager, Readiness: readiness,
-	})
+	return prepared.NewPreparer(prepared.PreparerDependencies{Library: library, Packager: packager, Access: access})
 }
 
-func TestPreparerLookupNeverFingerprintsOrBuildsOnDemand(t *testing.T) {
+func TestPreparerLookupNeverOpensOrBuildsOnDemand(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "movie.mkv")
-	if err := os.WriteFile(path, []byte("movie bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	lib, err := prepared.NewLibrary(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	packager := &countingPackager{}
-	preparer := newTestPreparer(t, lib, packager)
+	access := &testkit.PreparedSourceAccess{Input: prepared.LocalInput("/media/movie.mkv")}
+	preparer := newTestPreparer(t, lib, packager, access)
 
-	if _, ok, err := preparer.Lookup(preparedRequest(path)); err != nil || ok {
+	if _, ok, err := preparer.Lookup(preparedRequest("movie")); err != nil || ok {
 		t.Fatalf("cold Lookup = (_, %v, %v), want fast miss", ok, err)
 	}
-	if packager.count() != 0 {
-		t.Fatal("Lookup started preparation")
+	if packager.count() != 0 || access.Calls() != 0 {
+		t.Fatal("Lookup opened the source or started preparation")
 	}
 }
 
 func TestPreparerSharesOnePublicationAcrossConcurrentRequests(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "movie.mkv")
-	if err := os.WriteFile(path, []byte("movie bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	lib, err := prepared.NewLibrary(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	packager := &countingPackager{}
-	preparer := newTestPreparer(t, lib, packager)
-	req := preparedRequest(path)
+	preparer := newTestPreparer(t, lib, packager, &testkit.PreparedSourceAccess{Input: prepared.LocalInput("/media/movie.mkv")})
+	req := preparedRequest("movie")
 
 	const callers = 8
 	publications := make(chan prepared.Publication, callers)
@@ -137,31 +142,25 @@ func TestPreparerSharesOnePublicationAcrossConcurrentRequests(t *testing.T) {
 	}
 }
 
-func TestPreparerChangedSourceMakesOldPublicationUnreachable(t *testing.T) {
+func TestPreparerChangedRevisionProducesANewPublication(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "movie.mkv")
-	if err := os.WriteFile(path, []byte("old movie"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	lib, err := prepared.NewLibrary(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	packager := &countingPackager{}
-	preparer := newTestPreparer(t, lib, packager)
-	req := preparedRequest(path)
-	old, err := preparer.Prepare(t.Context(), req)
+	preparer := newTestPreparer(t, lib, packager, &testkit.PreparedSourceAccess{Input: prepared.LocalInput("/media/movie.mkv")})
+	oldRequest := preparedRequest("movie")
+	old, err := preparer.Prepare(t.Context(), oldRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	if err := os.WriteFile(path, []byte("new movie bytes"), 0o600); err != nil {
-		t.Fatal(err)
+	freshRequest := oldRequest
+	freshRequest.Source.Revision = "revision-movie-2"
+	if _, ok, err := preparer.Lookup(freshRequest); err != nil || ok {
+		t.Fatalf("changed-revision Lookup = (_, %v, %v), want miss", ok, err)
 	}
-	if _, ok, err := preparer.Lookup(req); err != nil || ok {
-		t.Fatalf("changed-source Lookup = (_, %v, %v), want miss", ok, err)
-	}
-	fresh, err := preparer.Prepare(t.Context(), req)
+	fresh, err := preparer.Prepare(t.Context(), freshRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,20 +171,15 @@ func TestPreparerChangedSourceMakesOldPublicationUnreachable(t *testing.T) {
 
 func TestPreparerSelectedAudioTrackIsPartOfSourceIdentity(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "movie.mkv")
-	if err := os.WriteFile(path, []byte("movie bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	lib, err := prepared.NewLibrary(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	packager := &countingPackager{}
-	preparer := newTestPreparer(t, lib, packager)
-	one := preparedRequest(path)
+	preparer := newTestPreparer(t, lib, packager, &testkit.PreparedSourceAccess{Input: prepared.LocalInput("/media/movie.mkv")})
+	one := preparedRequest("movie")
 	two := one
 	two.Source.AudioTrack = 1
-
 	first, err := preparer.Prepare(t.Context(), one)
 	if err != nil {
 		t.Fatal(err)
@@ -201,17 +195,13 @@ func TestPreparerSelectedAudioTrackIsPartOfSourceIdentity(t *testing.T) {
 
 func TestPreparerFailedPackagingRemainsUnready(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "movie.mkv")
-	if err := os.WriteFile(path, []byte("movie bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	lib, err := prepared.NewLibrary(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantErr := errors.New("packager stopped")
-	preparer := newTestPreparer(t, lib, &countingPackager{err: wantErr})
-	req := preparedRequest(path)
+	preparer := newTestPreparer(t, lib, &countingPackager{err: wantErr}, &testkit.PreparedSourceAccess{Input: prepared.LocalInput("/media/movie.mkv")})
+	req := preparedRequest("movie")
 	if _, err := preparer.Prepare(t.Context(), req); !errors.Is(err, wantErr) {
 		t.Fatalf("Prepare error = %v, want %v", err, wantErr)
 	}
@@ -222,26 +212,20 @@ func TestPreparerFailedPackagingRemainsUnready(t *testing.T) {
 
 func TestPreparerRejectsSourceThatChangesWhilePackaging(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join(t.TempDir(), "movie.mkv")
-	if err := os.WriteFile(path, []byte("old movie"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	lib, err := prepared.NewLibrary(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	packager := packagerFunc(func(_ context.Context, workspace string, source prepared.Source, _ prepared.RenditionContract) (prepared.Output, error) {
-		if err := os.WriteFile(source.Path, []byte("new movie bytes"), 0o600); err != nil {
-			return prepared.Output{}, err
-		}
+	packager := packagerFunc(func(_ context.Context, workspace string, _ prepared.Input, _ int, _ prepared.RenditionContract) (prepared.Output, error) {
 		if err := os.WriteFile(filepath.Join(workspace, "media.m3u8"), []byte("#EXTM3U\n"), 0o600); err != nil {
 			return prepared.Output{}, err
 		}
 		return prepared.Output{Files: []string{"media.m3u8"}}, nil
 	})
-	preparer := newTestPreparer(t, lib, packager)
-	req := preparedRequest(path)
-
+	preparer := newTestPreparer(t, lib, packager, &testkit.PreparedSourceAccess{
+		Input: prepared.LocalInput("/media/movie.mkv"), FailOnCall: 2,
+	})
+	req := preparedRequest("movie")
 	if _, err := preparer.Prepare(t.Context(), req); !errors.Is(err, prepared.ErrSourceChanged) {
 		t.Fatalf("Prepare error = %v, want ErrSourceChanged", err)
 	}
@@ -251,21 +235,17 @@ func TestPreparerRejectsSourceThatChangesWhilePackaging(t *testing.T) {
 }
 
 func TestPreparerLookupReusesACompletePublicationAfterRestart(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "movie.mkv")
-	if err := os.WriteFile(path, []byte("movie bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	library, err := prepared.NewLibrary(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := preparedRequest(path)
-	first := newTestPreparer(t, library, &countingPackager{})
+	request := preparedRequest("movie")
+	access := &testkit.PreparedSourceAccess{Input: prepared.LocalInput("/media/movie.mkv")}
+	first := newTestPreparer(t, library, &countingPackager{}, access)
 	if _, err := first.Prepare(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
-
-	restarted := newTestPreparer(t, library, &countingPackager{err: errors.New("must not rebuild")})
+	restarted := newTestPreparer(t, library, &countingPackager{err: errors.New("must not rebuild")}, access)
 	specification, ok, err := restarted.Lookup(request)
 	if err != nil || !ok || specification.SourceFingerprint == "" {
 		t.Fatalf("Lookup after restart = (%+v, %v, %v), want existing publication", specification, ok, err)

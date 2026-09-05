@@ -27,7 +27,7 @@ import type { ChannelSuggestPanelProps } from "./channel-suggest-panel.type";
 // live phases; a landed proposal → review with Approve/Deny. A successful approve or "Start
 // another" resets back to the form.
 const ChannelSuggestPanel = ({ onCreated, initialIntent, className }: ChannelSuggestPanelProps) => {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user } = useAuth();
   const queryClient = useQueryClient();
   const run = useSuggestionRun();
   const elapsed = useElapsed(run.isRunning);
@@ -144,9 +144,22 @@ const ChannelSuggestPanel = ({ onCreated, initialIntent, className }: ChannelSug
               {toProblem(approve.error ?? deny.error).title ?? "That didn't go through. Try again."}
             </p>
           )}
-          <Button variant="outline" size="sm" className="w-fit" onClick={run.reset}>
-            Start over
-          </Button>
+          {proposal.status === "approved" ? (
+            <div className="flex flex-col items-start gap-2">
+              <p role="status" className="text-lock text-sm">
+                {user?.autoApprove
+                  ? "Automatically approved using your account setting. The channel has already been created."
+                  : "This proposal is already approved. The channel has already been created."}
+              </p>
+              <Button variant="outline" size="sm" onClick={run.reset}>
+                Create another
+              </Button>
+            </div>
+          ) : (
+            <Button variant="outline" size="sm" className="w-fit" onClick={run.reset}>
+              Start over
+            </Button>
+          )}
         </div>
       )}
     </section>

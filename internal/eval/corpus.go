@@ -71,7 +71,7 @@ type Case struct {
 	MaxToolCalls          int
 	MaxCandidatesSurfaced int
 	// ExpectedToolOperation scores the routing decision for the frozen
-	// certification fixture as title, genre, or keyword.
+	// certification fixture as title, genre, keyword, network, cast, or creator.
 	ExpectedToolOperation string
 	// ExpectGroundedCompletion contributes to the certification quality rate;
 	// explicit abstention cases leave it false.

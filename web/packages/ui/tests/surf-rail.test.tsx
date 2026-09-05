@@ -34,4 +34,30 @@ describe("SurfRail", () => {
   it("states unavailable server identity honestly", () => {
     expect(renderRail()).toContain("Loomarr TV 0.2.0 · Server unavailable");
   });
+
+  it("preserves the Shield grouped rail and expands the focused TV row", () => {
+    const output = renderToStaticMarkup(
+      <LoomarrProvider>
+        <SurfRail
+          clientVersion="prototype"
+          currentChannelId="ch-springfield"
+          density="tv"
+          groups={surfGroups}
+          onFocusSelection={vi.fn()}
+          onDisconnect={vi.fn()}
+          onTune={vi.fn()}
+          selection={{ channelId: "ch-springfield", group: "recent" }}
+          serverName="http://loomarr.test:8080"
+        />
+      </LoomarrProvider>,
+    );
+
+    expect(output).toContain("FAVOURITES · 0");
+    expect(output).toContain("RECENT · 1");
+    expect(output).toContain("ALL CHANNELS · 3");
+    expect(output).toContain("Radioactive Man");
+    expect(output).toContain("1 of 4 · ▲▼ browse");
+    expect(output).toContain("OK tune · BACK cancel");
+    expect(output).toContain("Disconnect device");
+  });
 });

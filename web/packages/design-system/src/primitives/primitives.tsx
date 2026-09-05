@@ -99,6 +99,7 @@ type TextTone =
   | "muted"
   | "primary"
   | "secondary"
+  | "signal"
   | "success"
   | "warning";
 type TextProps = Omit<
@@ -110,8 +111,8 @@ type TextProps = Omit<
   tone?: TextTone;
 };
 
-const dataRoles = new Set<TextRole>(["metadata", "time", "channelNumber"]);
-const mutedRoles = new Set<TextRole>(["label", "metadata", "time"]);
+const dataRoles = new Set<TextRole>(["metadata", "time", "data", "channelNumber", "code"]);
+const mutedRoles = new Set<TextRole>(["label", "section", "metadata", "time"]);
 const textTones = {
   danger: "$stateDanger",
   info: "$stateInfo",
@@ -120,6 +121,7 @@ const textTones = {
   muted: "$contentMuted",
   primary: "$contentPrimary",
   secondary: "$contentSecondary",
+  signal: "$actionPrimary",
   success: "$stateSuccess",
   warning: "$stateWarning",
 } as const;
@@ -132,7 +134,7 @@ const Text = ({ density = "pointer", textRole, tone, ...props }: TextProps) => {
       color={
         tone
           ? textTones[tone]
-          : textRole === "channelNumber"
+          : textRole === "channelNumber" || textRole === "code"
             ? "$actionPrimary"
             : mutedRoles.has(textRole)
               ? "$contentSecondary"
@@ -141,7 +143,9 @@ const Text = ({ density = "pointer", textRole, tone, ...props }: TextProps) => {
       fontFamily={dataRoles.has(textRole) ? "$data" : "$body"}
       fontSize={value.size}
       fontWeight={value.weight}
-      letterSpacing={textRole === "display" ? -0.8 : textRole === "title" ? -0.25 : 0}
+      letterSpacing={
+        textRole === "display" ? -0.8 : textRole === "title" ? -0.25 : textRole === "section" ? 2 : 0
+      }
       lineHeight={value.lineHeight}
     />
   );
@@ -239,10 +243,10 @@ type ProgressTrackProps = Omit<ComponentProps<typeof View>, "children"> & {
   tone?: "live" | "primary";
 };
 
-const ProgressTrack = ({ percent, tone = "primary", ...props }: ProgressTrackProps) => {
+const ProgressTrack = ({ height = 4, percent, tone = "primary", ...props }: ProgressTrackProps) => {
   const bounded = Math.max(0, Math.min(100, percent));
   return (
-    <View {...props} backgroundColor="$surfaceCanvas" borderRadius="$round" height={4} overflow="hidden">
+    <View {...props} backgroundColor="$surfaceCanvas" borderRadius="$round" height={height} overflow="hidden">
       <View
         backgroundColor={tone === "live" ? "$stateLive" : "$actionPrimary"}
         borderRadius="$round"

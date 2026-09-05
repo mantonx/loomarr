@@ -395,6 +395,22 @@ func TestLive_BaselineSessionKeepsOneFormatAcrossBlockBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	for _, codecType := range []string{"v", "a"} {
+		first, err := exec.CommandContext(ctx, probe, "-v", "error", "-select_streams", codecType+":0",
+			"-show_entries", "stream=index", "-of", "csv=p=0", joined).Output()
+		if err != nil || strings.TrimSpace(string(first)) == "" {
+			t.Fatalf("probe first %s stream: output %q, err %v", codecType, first, err)
+		}
+		extra, err := exec.CommandContext(ctx, probe, "-v", "error", "-select_streams", codecType+":1",
+			"-show_entries", "stream=index", "-of", "csv=p=0", joined).Output()
+		if err != nil {
+			t.Fatalf("probe extra %s stream: %v", codecType, err)
+		}
+		if strings.TrimSpace(string(extra)) != "" {
+			t.Fatalf("channel has an extra %s stream: %q", codecType, extra)
+		}
+	}
+
 	frames, err := exec.CommandContext(ctx, probe, "-v", "error", "-select_streams", "v:0",
 		"-show_frames", "-show_entries", "frame=width,height", "-of", "csv=p=0", joined).Output()
 	if err != nil {

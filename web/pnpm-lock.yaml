@@ -157,9 +157,18 @@ importers:
       '@loomarr/design-system':
         specifier: workspace:*
         version: link:../../packages/design-system
+      '@loomarr/lan-discovery-native':
+        specifier: workspace:*
+        version: link:../../packages/lan-discovery-native
+      '@loomarr/player':
+        specifier: workspace:*
+        version: link:../../packages/player
       '@loomarr/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@loomarr/ui-tv':
+        specifier: workspace:*
+        version: link:../../packages/ui-tv
       '@react-native-tvos/config-tv':
         specifier: 0.1.6
         version: 0.1.6(expo@58.0.0-canary-20260812-27f94d4)
@@ -172,12 +181,18 @@ importers:
       expo-secure-store:
         specifier: 58.0.0-canary-20260812-27f94d4
         version: 58.0.0-canary-20260812-27f94d4(expo@58.0.0-canary-20260812-27f94d4)
+      expo-splash-screen:
+        specifier: 58.0.0-canary-20260812-27f94d4
+        version: 58.0.0-canary-20260812-27f94d4(expo@58.0.0-canary-20260812-27f94d4)(typescript@7.0.2)
       expo-status-bar:
         specifier: 58.0.0-canary-20260812-27f94d4
         version: 58.0.0-canary-20260812-27f94d4(expo@58.0.0-canary-20260812-27f94d4)(react-native-tvos@0.86.2-0)(react@19.2.3)
       expo-system-ui:
         specifier: 58.0.0-canary-20260812-27f94d4
         version: 58.0.0-canary-20260812-27f94d4(expo@58.0.0-canary-20260812-27f94d4)(react-native-tvos@0.86.2-0)(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))
+      expo-video:
+        specifier: 58.0.0-canary-20260812-27f94d4
+        version: 58.0.0-canary-20260812-27f94d4(expo@58.0.0-canary-20260812-27f94d4)(react-native-tvos@0.86.2-0)(react@19.2.3)
       react:
         specifier: 19.2.3
         version: 19.2.3
@@ -233,6 +248,9 @@ importers:
       '@loomarr/fixtures':
         specifier: workspace:*
         version: link:../../packages/fixtures
+      '@loomarr/player':
+        specifier: workspace:*
+        version: link:../../packages/player
       '@loomarr/tokens':
         specifier: workspace:*
         version: link:../../packages/tokens
@@ -257,9 +275,6 @@ importers:
       clsx:
         specifier: 2.1.1
         version: 2.1.1
-      hls.js:
-        specifier: 1.7.1
-        version: 1.7.1
       lucide-react:
         specifier: 1.35.0
         version: 1.35.0(react@19.2.3)
@@ -497,6 +512,56 @@ importers:
         specifier: 4.1.11
         version: 4.1.11(@types/node@26.4.0)(jsdom@30.0.1)(msw@2.15.0(@types/node@26.4.0)(typescript@7.0.2))(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.12)(yaml@2.9.0))
 
+  packages/lan-discovery-native:
+    dependencies:
+      '@loomarr/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      '@types/react':
+        specifier: 19.2.18
+        version: 19.2.18
+      react-native:
+        specifier: npm:react-native-tvos@0.86.2-0
+        version: react-native-tvos@0.86.2-0(@babel/core@7.29.7)(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react-native-tvos@0.86.2-0)(react@19.2.3)
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@26.4.0)(jsdom@30.0.1)(msw@2.15.0(@types/node@26.4.0)(typescript@7.0.2))(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/player:
+    dependencies:
+      '@loomarr/api':
+        specifier: workspace:*
+        version: link:../api
+      '@loomarr/core':
+        specifier: workspace:*
+        version: link:../core
+      hls.js:
+        specifier: 1.7.1
+        version: 1.7.1
+    devDependencies:
+      expo:
+        specifier: 58.0.0-canary-20260812-27f94d4
+        version: 58.0.0-canary-20260812-27f94d4(@babel/core@7.29.7)(@expo/dom-webview@58.0.0-canary-20260812-27f94d4)(@expo/metro-runtime@58.0.0-canary-20260812-27f94d4)(expo-router@58.0.0-canary-20260812-27f94d4)(react-dom@19.2.3(react@19.2.3))(react-native-tvos@0.86.2-0)(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7)(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(react-native-tvos@0.86.2-0)(react@19.2.3))(react@19.2.3)(typescript@7.0.2)
+      expo-video:
+        specifier: 58.0.0-canary-20260812-27f94d4
+        version: 58.0.0-canary-20260812-27f94d4(expo@58.0.0-canary-20260812-27f94d4)(react-native-tvos@0.86.2-0)(react@19.2.3)
+      react:
+        specifier: 19.2.3
+        version: 19.2.3
+      react-native:
+        specifier: npm:react-native-tvos@0.86.2-0
+        version: react-native-tvos@0.86.2-0(@babel/core@7.29.7)(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react-native-tvos@0.86.2-0)(react@19.2.3)
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@26.4.0)(jsdom@30.0.1)(msw@2.15.0(@types/node@26.4.0)(typescript@7.0.2))(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.12)(yaml@2.9.0))
+
   packages/tokens:
     devDependencies:
       '@types/node':
@@ -520,6 +585,9 @@ importers:
       '@loomarr/design-system':
         specifier: workspace:*
         version: link:../design-system
+      '@loomarr/player':
+        specifier: workspace:*
+        version: link:../player
     devDependencies:
       '@loomarr/fixtures':
         specifier: workspace:*
@@ -4329,6 +4397,13 @@ packages:
     peerDependenciesMeta:
       react-native-web:
         optional: true
+
+  expo-video@58.0.0-canary-20260812-27f94d4:
+    resolution: {integrity: sha512-pxXn8QkGlbE+nv0ir0D9i7ZuR/8fmnWR9EZBY+m6P6C9MF6J8ukeNQruOuX/4TEXztYMqo0i/SawuXBiGpwIsw==}
+    peerDependencies:
+      expo: 58.0.0-canary-20260812-27f94d4
+      react: 19.2.3
+      react-native: '*'
 
   expo@58.0.0-canary-20260812-27f94d4:
     resolution: {integrity: sha512-hpGsxnklsjFtDNU6KaZDA1Ybc2zaWSKYah4EIs7KpB8eWgE8fXCgtia9kwVH8EG+LzFIXR7lreJ2pgPVCHZlrw==}
@@ -10840,6 +10915,12 @@ snapshots:
       react-native-web: 0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
     transitivePeerDependencies:
       - supports-color
+
+  expo-video@58.0.0-canary-20260812-27f94d4(expo@58.0.0-canary-20260812-27f94d4)(react-native-tvos@0.86.2-0)(react@19.2.3):
+    dependencies:
+      expo: 58.0.0-canary-20260812-27f94d4(@babel/core@7.29.7)(@expo/dom-webview@58.0.0-canary-20260812-27f94d4)(@expo/metro-runtime@58.0.0-canary-20260812-27f94d4)(expo-router@58.0.0-canary-20260812-27f94d4)(react-dom@19.2.3(react@19.2.3))(react-native-tvos@0.86.2-0)(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7)(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(react-native-tvos@0.86.2-0)(react@19.2.3))(react@19.2.3)(typescript@7.0.2)
+      react: 19.2.3
+      react-native: react-native-tvos@0.86.2-0(@babel/core@7.29.7)(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(@types/react@19.2.18)(react-native-tvos@0.86.2-0)(react@19.2.3)
 
   expo@58.0.0-canary-20260812-27f94d4(@babel/core@7.29.7)(@expo/dom-webview@58.0.0-canary-20260812-27f94d4)(@expo/metro-runtime@58.0.0-canary-20260812-27f94d4)(expo-router@58.0.0-canary-20260812-27f94d4)(react-dom@19.2.3(react@19.2.3))(react-native-tvos@0.86.2-0)(react-native-web@0.21.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-native-worklets@0.10.1(@babel/core@7.29.7)(@react-native/metro-config@0.86.2(@babel/core@7.29.7))(react-native-tvos@0.86.2-0)(react@19.2.3))(react@19.2.3)(typescript@7.0.2):
     dependencies:

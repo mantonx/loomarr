@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	scorecardSchemaVersion = 11
+	scorecardSchemaVersion = 12
 	corpusVersion          = "2026-08-27.8"
 )
 
@@ -648,6 +648,12 @@ func expectedToolOperationFailure(expected string, observation Observation) stri
 		calls = observation.GenreCalls
 	case "keyword":
 		calls = observation.KeywordCalls
+	case "network":
+		calls = observation.NetworkCalls
+	case "cast":
+		calls = observation.CastCalls
+	case "creator":
+		calls = observation.CreatorCalls
 	default:
 		return fmt.Sprintf("unknown expected tool operation %q", expected)
 	}

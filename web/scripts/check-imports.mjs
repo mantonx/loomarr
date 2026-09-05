@@ -9,8 +9,18 @@ const sourceRoots = [
   "../packages/api/src/",
   "../packages/core/src/",
   "../packages/fixtures/src/",
+  "../packages/player/src/",
   "../packages/tokens/src/",
   "../packages/ui/src/",
+].map((path) => fileURLToPath(new URL(path, import.meta.url)));
+
+// These are composition roots for the shared client platform today. The legacy Web application
+// joins this list cohort-by-cohort in P7; adding it prematurely would describe unfinished migration
+// work as an invariant instead of making the migrated roots fail closed now.
+const sharedClientAppRoots = [
+  "../apps/mobile/app/",
+  "../apps/tv/src/",
+  "../apps/web/src/client-platform-proof/",
 ].map((path) => fileURLToPath(new URL(path, import.meta.url)));
 
 // These files are useful catalogs for tests, stories, and editor tooling. A production module
@@ -127,20 +137,80 @@ const findCatalogImports = (source) => {
 const findFrameworkImports = (source) => {
   const searchable = withoutComments(source);
   const violations = [];
-  const pattern =
-    /(?:^|[;\n])\s*(?:import|export)\s+(?:type\s+)?(?:[^"'`;]*?\s+from\s+)?(["'])(@tamagui\/[^"']+|tamagui)\1/gm;
-  for (const match of searchable.matchAll(pattern)) {
-    const importPath = match[2];
-    if (!importPath) continue;
-    const offset = match.index + match[0].lastIndexOf(importPath);
-    const before = source.slice(0, offset);
-    const lineStart = before.lastIndexOf("\n") + 1;
-    violations.push({
-      importPath,
-      line: before.split("\n").length,
-      column: offset - lineStart + 1,
-      offset,
-    });
+  const patterns = [
+    /(?:^|[;\n])\s*(?:import|export)\s+(?:type\s+)?(?:[^"'`;]*?\s+from\s+)?(["'])(@tamagui\/[^"']+|tamagui)\1/gm,
+    /\bimport\s*\(\s*(["'])(@tamagui\/[^"']+|tamagui)\1\s*\)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of searchable.matchAll(pattern)) {
+      const importPath = match[2];
+      if (!importPath) continue;
+      const offset = match.index + match[0].lastIndexOf(importPath);
+      const before = source.slice(0, offset);
+      const lineStart = before.lastIndexOf("\n") + 1;
+      violations.push({
+        importPath,
+        line: before.split("\n").length,
+        column: offset - lineStart + 1,
+        offset,
+      });
+    }
+  }
+  return violations.sort((a, b) => a.offset - b.offset).map(({ offset: _, ...violation }) => violation);
+};
+
+const findSharedImplementationImports = (source) => {
+  const searchable = withoutComments(source);
+  const violations = [];
+  const patterns = [
+    /(?:^|[;\n])\s*(?:import|export)\s+(?:type\s+)?(?:[^"'`;]*?\s+from\s+)?(["'])(@loomarr\/(?:core|design-system|player|ui|ui-tv)\/(?:src|tests)\/[^"']+)\1/gm,
+    /\bimport\s*\(\s*(["'])(@loomarr\/(?:core|design-system|player|ui|ui-tv)\/(?:src|tests)\/[^"']+)\1\s*\)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of searchable.matchAll(pattern)) {
+      const importPath = match[2];
+      if (!importPath) continue;
+      const offset = match.index + match[0].lastIndexOf(importPath);
+      const before = source.slice(0, offset);
+      const lineStart = before.lastIndexOf("\n") + 1;
+      violations.push({
+        importPath,
+        line: before.split("\n").length,
+        column: offset - lineStart + 1,
+        offset,
+      });
+    }
+  }
+  return violations.sort((a, b) => a.offset - b.offset).map(({ offset: _, ...violation }) => violation);
+};
+
+const PRODUCT_AREA = /(?:player|guide|surf)/i;
+const PRODUCT_STATE_ROLE =
+  /(?:controller|state|snapshot|selection|history|groups?|journey|surface|experience|rail|data|layout|model|navigation|reducer|store)/i;
+const PRODUCT_BEHAVIOR_PREFIX = /^(?:build|create|derive|move|reduce|restore|use)/;
+
+const findProductStateDeclarations = (source) => {
+  const searchable = withoutComments(source);
+  const violations = [];
+  const declarations = [
+    /(?:^|[;\n])\s*(?:export\s+)?(?:default\s+)?(?:class|enum|interface|type)\s+([A-Za-z_$][\w$]*)/gm,
+    /(?:^|[;\n])\s*(?:export\s+)?(?:default\s+)?(?:const|function|let|var)\s+([A-Za-z_$][\w$]*)/gm,
+  ];
+  for (const [index, pattern] of declarations.entries()) {
+    for (const match of searchable.matchAll(pattern)) {
+      const name = match[1];
+      if (!name || !PRODUCT_AREA.test(name) || !PRODUCT_STATE_ROLE.test(name)) continue;
+      if (index === 1 && !PRODUCT_BEHAVIOR_PREFIX.test(name)) continue;
+      const offset = match.index + match[0].lastIndexOf(name);
+      const before = source.slice(0, offset);
+      const lineStart = before.lastIndexOf("\n") + 1;
+      violations.push({
+        name,
+        line: before.split("\n").length,
+        column: offset - lineStart + 1,
+        offset,
+      });
+    }
   }
   return violations.sort((a, b) => a.offset - b.offset).map(({ offset: _, ...violation }) => violation);
 };
@@ -159,10 +229,29 @@ const checkFrameworkImports = (roots = sourceRoots) =>
     ),
   );
 
+const checkSharedImplementationImports = (roots = sourceRoots) =>
+  roots.flatMap((root) =>
+    sourceFiles(root).flatMap((file) =>
+      findSharedImplementationImports(readFileSync(file, "utf8")).map((violation) => ({
+        file,
+        ...violation,
+      })),
+    ),
+  );
+
+const checkProductStateDeclarations = (roots = sharedClientAppRoots) =>
+  roots.flatMap((root) =>
+    sourceFiles(root).flatMap((file) =>
+      findProductStateDeclarations(readFileSync(file, "utf8")).map((violation) => ({ file, ...violation })),
+    ),
+  );
+
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
   const catalogViolations = checkImports();
   const frameworkViolations = checkFrameworkImports();
+  const implementationViolations = checkSharedImplementationImports();
+  const productStateViolations = checkProductStateDeclarations();
   if (catalogViolations.length > 0) {
     console.error("Production imports must name the nearest module instead of a catalog root:");
     for (const violation of catalogViolations) {
@@ -184,9 +273,39 @@ if (isMain) {
     }
     process.exitCode = 1;
   }
-  if (catalogViolations.length === 0 && frameworkViolations.length === 0) {
+  if (implementationViolations.length > 0) {
+    console.error("Shared package implementations are private; import a root entry point:");
+    for (const violation of implementationViolations) {
+      console.error(
+        `  ${violation.file}:${violation.line}:${violation.column} imports ${violation.importPath}`,
+      );
+    }
+    process.exitCode = 1;
+  }
+  if (productStateViolations.length > 0) {
+    console.error("Shared-client apps compose Player, Guide, and Surf state through package interfaces:");
+    for (const violation of productStateViolations) {
+      console.error(`  ${violation.file}:${violation.line}:${violation.column} declares ${violation.name}`);
+    }
+    process.exitCode = 1;
+  }
+  if (
+    catalogViolations.length === 0 &&
+    frameworkViolations.length === 0 &&
+    implementationViolations.length === 0 &&
+    productStateViolations.length === 0
+  ) {
     console.log("import-boundaries: clean");
   }
 }
 
-export { checkFrameworkImports, checkImports, findCatalogImports, findFrameworkImports };
+export {
+  checkFrameworkImports,
+  checkImports,
+  checkProductStateDeclarations,
+  checkSharedImplementationImports,
+  findCatalogImports,
+  findFrameworkImports,
+  findProductStateDeclarations,
+  findSharedImplementationImports,
+};

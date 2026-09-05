@@ -101,6 +101,7 @@ const (
 	ReasonNever                  = "never"
 	ReasonMalformedID            = "malformed_id"
 	ReasonNotSurfaced            = "not_surfaced"
+	ReasonNoRelevanceEvidence    = "no_relevance_evidence"
 	ReasonValidationDropped      = "validation_dropped"
 	ReasonAcquisitionCap         = "acquisition_cap"
 	ReasonOverCeiling            = "over_ceiling"
@@ -123,7 +124,7 @@ type RankedCandidates struct {
 }
 
 func RankGroundedCandidatesWithTrace(intent string, candidates []catalog.Candidate, signals []FeedbackSignal) RankedCandidates {
-	return rankGroundedCandidatesWithTrace(rankQuery{request: wordSet(intent)}, candidates, signals)
+	return rankGroundedCandidatesWithTrace(rankQuery{request: intentWordSet(intent)}, candidates, signals)
 }
 
 func rankGroundedCandidatesWithTrace(query rankQuery, candidates []catalog.Candidate, signals []FeedbackSignal) RankedCandidates {
@@ -216,7 +217,6 @@ func rankDetailed(query rankQuery, candidates []catalog.Candidate, signals []Fee
 			surpriseTargets[target] = true
 		}
 	}
-	allTerms := query.all()
 	result := rankedCandidates{included: make([]rankedCandidate, 0, len(candidates))}
 	for _, candidate := range candidates {
 		key, err := candidate.Key()
@@ -240,9 +240,9 @@ func rankDetailed(query rankQuery, candidates []catalog.Candidate, signals []Fee
 		if !candidate.InLibrary {
 			novelty = 1
 		}
-		candidateTerms := wordSet(candidate.Name + " " + candidate.Overview + " " + strings.Join(candidate.Genres, " "))
+		relevance, constraints := relevanceForCandidate(query, candidate)
 		item := rankedCandidate{candidate: candidate, key: key,
-			relevance: overlap(allTerms, candidateTerms), constraints: query.match(candidateTerms),
+			relevance: relevance, constraints: constraints,
 			preference: preference, novelty: novelty}
 		if effective[key] == FeedbackNever {
 			result.excluded = append(result.excluded, item)
@@ -258,6 +258,50 @@ func rankDetailed(query rankQuery, candidates []catalog.Candidate, signals []Fee
 		return cmp.Compare(string(a.key), string(b.key))
 	})
 	return result
+}
+
+func relevanceForCandidate(query rankQuery, candidate catalog.Candidate) (int, ConstraintMatches) {
+	candidateTerms := candidateWordSet(candidate)
+	return overlap(query.all(), candidateTerms), query.match(candidateTerms)
+}
+
+func candidateWordSet(candidate catalog.Candidate) map[string]bool {
+	return wordSet(strings.Join([]string{
+		candidate.Name,
+		candidate.Overview,
+		strings.Join(candidate.Genres, " "),
+		strings.Join(candidate.Keywords, " "),
+	}, " "))
+}
+
+var intentStopwords = map[string]bool{
+	"a": true, "an": true, "and": true, "article": true, "based": true,
+	"build": true, "channel": true, "create": true, "for": true, "from": true,
+	"give": true, "like": true, "make": true, "me": true, "of": true,
+	"on": true, "please": true, "reference": true, "show": true, "shows": true,
+	"the": true, "this": true, "use": true, "using": true, "with": true,
+}
+
+// intentWordSet keeps editorial terms while removing the prose and URL syntax
+// people use to communicate them. Candidate metadata uses wordSet directly: a
+// real title containing "This" must remain searchable even though "use this
+// reference" cannot count as evidence that it fits.
+func intentWordSet(text string) map[string]bool {
+	var prose []string
+	for _, field := range strings.Fields(text) {
+		lower := strings.ToLower(strings.TrimLeft(field, "([<{\"'"))
+		if strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://") {
+			continue
+		}
+		prose = append(prose, field)
+	}
+	terms := wordSet(strings.Join(prose, " "))
+	for stopword := range intentStopwords {
+		for normalized := range wordSet(stopword) {
+			delete(terms, normalized)
+		}
+	}
+	return terms
 }
 
 func sortRankedCandidates(candidates []rankedCandidate) {

@@ -1,7 +1,7 @@
 # Shared client platform migration
 
-**Status:** P0a through P3 merged; P3.5 shared-UI completeness gate is in progress
-**Date:** 2026-08-23  
+**Status:** P5a accepted; P5b React Native Play beta and Web parity migration active in #970
+**Date:** 2026-09-04
 **Decision owner:** maintainer  
 **Companion contract:** [`docs/frontend-design.md`](../../frontend-design.md)
 **Current-state inventory:** [`docs/engineering/client-platform-inventory.md`](../client-platform-inventory.md)
@@ -9,17 +9,24 @@
 
 ## Outcome
 
-Loomarr will refine and consolidate the current Test Card visual system and the separately implemented
-Tailwind/shadcn web and Compose TV presentations into a Loomarr-owned client platform built on
-**Tamagui Core**.
+Loomarr will consolidate the separately implemented Tailwind/shadcn Web and Compose TV presentations
+behind a Loomarr-owned client platform built on **Tamagui Core**.
 The target serves the embedded web app, iOS and Android touch clients, and Android TV and Apple TV
 clients without pretending that pointer, touch, and remote control are the same interaction.
 
-This is not yet authority to rewrite every screen. The first delivery is a production-quality
-Guide-to-Playback slice rendered from shared modules on the browser, an iPhone, and the physical
-Nvidia Shield. A recorded go/no-go review authorizes or rejects the full migration. Until that
-review passes, the existing web and Compose clients remain releasable and the new platform may not
-remove their code, tests, distribution, or rollback path.
+The 2026-09-03 maintainer decision in
+[#970](https://github.com/loomarr/loomarr/issues/970) authorizes the complete Shield and Web
+migration. It does **not** authorize a redesign: Web preserves the current approved Web presentation
+and behavior, while Shield preserves the current approved Kotlin/Compose presentation and behavior.
+The two clients are not made visually identical in this program. Refinements begin only after both
+legacy implementations have been retired.
+
+Shield supports both a signed sideload and a Google Play internal beta during this migration. A
+clean uninstall, reinstall, and fresh pairing are accepted for the sideload cutover. The Play build
+uses Google-managed Play App Signing plus a separately protected, durable upload key; it does not
+need update continuity with the already accepted ephemeral-key sideload. Installed credential
+migration, public/open Play rollout, cross-channel update continuity, and a long-lived Kotlin
+rollback renderer remain outside this program.
 
 ## Why the current approach is being replaced
 
@@ -32,10 +39,10 @@ implementations. That decision produced three costs that now outweigh its benefi
 3. a new mobile client would add a third implementation before the product has one design system
    worth reproducing.
 
-The current palette, chroma-bar identity, Geist typography, primitives, and screenshots are migration
-evidence and the basis of the target language. Individual component treatments may be refined when
-review evidence supports it, but the work must remain recognizably Loomarr. Existing behavior,
-accessibility, authorization, pairing, playout, and release guarantees remain requirements.
+The current palette, chroma-bar identity, Geist typography, primitives, and screenshots are parity
+evidence. Existing behavior, accessibility, authorization, pairing, and playout guarantees remain
+requirements. Visual or interaction refinements discovered during migration are recorded for later;
+they are not bundled into the implementation replacement.
 
 ## Non-negotiable product invariants
 
@@ -46,26 +53,29 @@ accessibility, authorization, pairing, playout, and release guarantees remain re
   `@loomarr/api` package. Shared UI does not invent DTOs.
 - Web remains an offline-capable static build embedded in the Go binary. Native clients connect to
   the operator-configured public Loomarr URL and never bundle a household admin token.
-- The physical Shield remains an acceptance device. An emulator or screenshot is useful evidence,
-  not a substitute for D-pad, playback, restart, and update testing on hardware.
+- The physical Shield remains the acceptance device. An emulator or screenshot is useful evidence,
+  not a substitute for D-pad, playback, background/foreground, and clean-reinstall testing on that
+  hardware.
 - TV navigation must work with five-way D-pad, OK, Back, and number keys. Menu may be a shortcut but
   never the only path to a function. Back ultimately returns to the platform home screen.
 - Layout is authored in logical units. The same composition must fill 1920x1080 and 3840x2160
   output without hard-coded pixel coordinates, clipping, or a smaller centered canvas.
-- Every migrated surface starts with a parity inventory against the shipping client and supplied
-  approved mocks. A refinement may change hierarchy or treatment, but it may not silently drop
-  content, actions, states, or recovery paths; an omission requires an explicit maintainer decision.
+- Every migrated surface starts with a parity inventory against its shipping client and committed
+  references. The migration may not change hierarchy or treatment or silently drop content, actions,
+  states, or recovery paths; any exception requires an explicit maintainer decision.
 - Loomarr starts in its dark presentation on every fresh web or native client. Light and
   system-following presentations remain supported user choices, but the host operating system does
   not silently replace the product default before the person chooses one.
-- Every migration PR leaves a shippable product and has a documented rollback. The Compose package
-  `loomarr.media` is retired only after the replacement proves install and in-place update parity.
+- Every migration PR leaves the currently selected production client shippable. The Compose source
+  for `loomarr.media` is retired after a React Native build under the same identity passes the
+  clean-sideload and fresh-pairing Shield acceptance journey and a React Native TV App Bundle passes
+  the Play beta release gate.
 
 ## Target modules and seams
 
-The existing `web/` pnpm workspace remains the workspace root during the proof so the Go embed and
+The existing `web/` pnpm workspace remains the workspace root during migration so the Go embed and
 current frontend harness do not move at the same time as the UI architecture. Renaming it is a
-separate post-adoption decision.
+separate post-parity decision.
 
 ```text
 web/
@@ -113,12 +123,16 @@ adding the compiler before representative code exists would add build complexity
 evidence. Benchmark the uncompiled slice first, then test the compiler as an isolated optimization;
 retain it only when it improves the production artifacts without changing behavior or source files.
 
-NativeWind, Gluestack, Tailwind, shadcn, Base UI, and Compose are not co-foundations. Tailwind/shadcn
-and Compose remain legacy implementations during migration; they receive fixes needed to keep the
-shipping clients healthy but no new shared design authority. They are removed only after adoption
-and parity.
+NativeWind, Gluestack, Tailwind, shadcn, Base UI, CVA, and Compose are not co-foundations.
+Tailwind/shadcn/Base UI/CVA and Compose remain legacy implementations only while their current
+production consumers are being moved. Wrapping them behind a new export does not count as migration.
+They are deleted after parity, and a permanent import/dependency gate prevents their return.
 
-## New visual direction
+## Post-parity visual direction
+
+The following direction remains a refinement backlog, not acceptance criteria for the implementation
+migration. Until #970 is complete, the Web and Shield references each remain authoritative for their
+own client.
 
 The replacement has no retro-theme name. It is simply Loomarr's product language:
 
@@ -192,12 +206,12 @@ size.target.{pointer,touch,tv}
 
 Platform scales map these roles to concrete values. Raw palette values remain private
 implementation. The token generator continues to publish machine-readable artifacts while legacy
-consumers exist; Tamagui configuration becomes the target source and generated CSS, JSON, and Kotlin
-are adapters rather than competing sources.
+Web consumers exist; Tamagui configuration becomes the target source and generated CSS and JSON are
+adapters rather than competing sources.
 
-## First vertical slice
+## Parity journey
 
-The slice is one continuous user journey, not a gallery-only proof:
+The Shield replacement is one continuous user journey, not a gallery-only proof:
 
 1. pair or authenticate without broadening authority;
 2. enter the edge-to-edge Guide and load real guide data and artwork;
@@ -211,24 +225,30 @@ The slice is one continuous user journey, not a gallery-only proof:
 The slice uses real generated client contracts and a configured Loomarr server. Storybook/MSW
 fixtures cover deterministic states, but a mock-only demo does not pass.
 
-## Acceptance evidence and adoption gate
+The Web replacement covers every current production route. Component stories supply deterministic
+states; route-level baselines prove that shell, responsive composition, and cross-component behavior
+survive the renderer change.
+
+## Acceptance evidence
 
 ### Visual and interaction
 
-- Maintainer-approved captures for desktop web, mobile web, iPhone, 1920x1080 TV, and 3840x2160 TV.
+- Existing desktop/mobile Web baselines remain accepted unless an unavoidable renderer-level change
+  is individually reviewed.
+- Shield Pairing, Watching, Guide, Surf, loading, empty, error, and focus states are reviewed against
+  the committed Kotlin references at the supported TV layouts.
 - Guide and player surfaces fill the viewport. Safe-area/overscan padding belongs inside the
   composition and never creates an outer frame.
-- TV focus survives a ten-minute traversal across rows, airings, Guide, Surf, and player controls;
-  every focusable control is reachable and focus returns to the initiating item.
+- One complete physical-Shield journey proves D-pad/OK/Back/number input, real playback,
+  background/foreground recovery, and focus return.
 - The 100-channel by four-hour Guide virtualizes without blank rows, time-axis drift, or focus loss.
-- Browser keyboard and screen-reader behavior remain valid; touch targets and safe areas pass on an
-  actual iPhone.
+- Browser keyboard and screen-reader behavior remain valid on every migrated Web surface.
 
 ### Correctness and safety
 
 - Member/admin authorization negatives remain green, disabling a user or paired device kills the
   next authenticated request, and no native client stores the break-glass API token.
-- Pairing, signed-play-URL refresh, URL redaction, and session expiry are exercised end to end.
+- Fresh pairing, signed-play-URL refresh, URL redaction, and session expiry are exercised end to end.
 - Programme identity in Guide, Surf, overlay, and playback agrees with the authoritative guide and
   now/next responses; the client never substitutes fixture or cached metadata for live identity.
 - Back, OK, D-pad, number-key, and tune behavior match the TV contract; no function depends solely on
@@ -238,12 +258,10 @@ fixtures cover deterministic states, but a mock-only demo does not pass.
 
 - Existing web budgets remain: no JavaScript chunk above 500 KiB and no entry plus module preloads
   above 1 MiB uncompressed.
-- A Shield Macrobenchmark of repeated Guide navigation records p95 frame duration no greater than
-  32 ms, p99 no greater than 50 ms, and zero frozen frames (700 ms or longer).
 - Prepared-channel first frame stays within the existing playout tune budget and repeated surfing
   does not start encoders for prepared hits.
-- The production slice is measured both with and without the Tamagui compiler. The compiler is
-  adopted only if it improves bundle or render evidence and leaves all gates green.
+- The physical Shield journey has no visible frozen navigation or stale audio after backgrounding.
+- Runtime-only Tamagui remains the accepted mode; compiler work is not part of parity migration.
 - Local and CI tasks are affected-aware: native jobs do not run for an unrelated Go-only edit, and
   web-only story changes do not build both native applications unless a shared input changed.
 
@@ -251,21 +269,22 @@ fixtures cover deterministic states, but a mock-only demo does not pass.
 
 - `design-system`, `ui`, and `player` present documented root interfaces with no consumer deep
   imports and no dependency cycles.
-- The same production source implements the shared primitives and Guide detail content on all three
-  targets; platform adapters contain navigation, focus, and player transport differences.
+- The same production source implements shared primitives and product rules for Web and Shield where
+  their behavior and information hierarchy match; platform adapters own their deliberately distinct
+  presentation, navigation, focus, and player transport mechanics.
 - A source-sharing report identifies shared, adapter-specific, and duplicated code. Duplicated
-  product rules block adoption; duplicated platform mechanics do not.
+  product rules block parity; duplicated platform mechanics do not.
 - Removing Tamagui would require replacing the design-system implementation, not editing every
   screen. This deletion test is proved by import-graph enforcement.
 
-The maintainer records **adopt**, **revise and repeat**, or **reject** against every item above in
-[#727](https://github.com/loomarr/loomarr/issues/727). Only `adopt` authorizes the remaining
-migration and retirement phases.
+The earlier adopt/revise/reject gate in #727 is superseded by the narrower 2026-09-03 decision in
+#970. Shield acceptance is now a proportionate clean-sideload journey on the maintainer's physical
+device; Web acceptance is route-by-route behavioral, accessibility, and visual parity.
 
 ## Delivery sequence
 
 One row is one PR-sized phase. Later phases may be refined after evidence, but they may not collapse
-the adoption gate.
+the parity or retirement gates.
 
 | Phase | Deliverable | Required proof |
 | --- | --- | --- |
@@ -275,22 +294,30 @@ the adoption gate.
 | P2 | shared Guide data/view modules and web integration | real API + deterministic visual/a11y gates; current web behavior retained |
 | P3 | mobile/TV shells, pairing, confirmed self-disconnect, transport, and navigation adapters; shipping-screen parity inventory and dark-first pairing with canonical lockup and protected-centre branded QR | iPhone and Shield pair/self-disconnect/remote-revocation recovery evidence plus visual parity and QR-decode review |
 | P3.5 | complete the shared design-system, product-UI, and platform-adapter interfaces required by the known web, mobile, and TV surfaces | coverage ledger has no unexplained gaps; web/native Storybooks exercise every supported theme, density, state, interaction, and motion mode; interface, visual, interaction, accessibility, drift, and import-boundary gates pass; real iPhone and 1080p/4K TV workshop evidence recorded |
-| P4 | playback, overlay, Surf, tuning, and previous-channel behavior | real-server first frame and remote/touch/browser traversal |
-| P5 | full vertical-slice evidence and go/no-go decision | every acceptance item above and the explicit outcome in #727 recorded |
-| P6 | remaining viewer surfaces | route-by-route parity; current clients still releasable |
-| P7 | administrative web surfaces | authorization, forms, accessibility, responsive and visual parity |
-| P8 | retire Tailwind/shadcn and Compose presentation; finish distribution | clean retired identifiers, Play/iOS beta builds, in-place update, complete gates |
+| P4 | shared player interfaces plus complete React Native Shield parity | interface tests, emulator journey, current Kotlin references preserved |
+| P5a | physical Shield clean-sideload acceptance | fresh pair, real playback, Watching/Guide/Surf remote traversal, background/foreground, maintainer visual acceptance |
+| P5b | React Native Google Play internal-beta artifact and publication path | four-ABI AAB, 16 KiB alignment for every 64-bit ELF, deterministic version/package identity, protected durable upload signing, TV listing/manifest checks, internal-track-only publication |
+| P5c | Compose retirement | Kotlin application/build/tests and Kotlin-only token/screenshot/release gates are absent; distribution-neutral listing assets survive; sideload and Play artifacts verify from the Kotlin-free tree |
+| P6 | Web parity fixtures and browser-adapter foundation | route baselines, browser semantics, legacy-usage ledger never grows |
+| P7 | Web production routes migrated in dependency-ordered cohorts | authorization, forms, accessibility, responsive and visual parity per cohort |
+| P8 | retire Tailwind/shadcn/Base UI/CVA and transitional tokens | zero production legacy usage, clean retired identifiers, complete client and repository gates |
 
 ## Rollback and retirement
 
-Before P5 adoption, reverting a phase removes only the new workspace applications and shared
-packages. The Go embed, current web assets, Compose app, Play identity, and paired-device records
-remain untouched.
+P5a acceptance established the former Kotlin application as historical Shield parity evidence.
+P5a may intentionally discard its installed pairing record: the accepted cutover is
+uninstall, install the React Native `loomarr.media` build, and pair again. P5b then establishes a
+separate Google Play internal-beta channel from the accepted React Native source. Because the
+accepted sideload used an ephemeral key, its installed copy may be uninstalled once before the
+first Play install; cross-channel signature continuity is not a migration requirement. P5c removes
+the Kotlin application, build, tests, and Kotlin-only release gates after the React Native sideload
+acceptance and Play artifact verification.
 
-After adoption, migration uses route/surface ownership rather than two implementations mounted for
-the same user journey. A surface switches only when its replacement passes its full contract. The
-old implementation is then deleted in the same PR or the next explicitly paired retirement PR; it
-does not linger as an unowned fallback. Retiring framework identifiers adds them to
+Web migration uses route/surface ownership rather than two implementations mounted for the same user
+journey. A surface switches only when its replacement passes its full contract. P6 and P7 may proceed
+while the maintainer performs P5a/P5b acceptance, after P4 has stabilized the shared interfaces;
+overlapping shared-package writers remain prohibited. The old implementation is deleted in the same
+PR or the next explicitly paired retirement PR. Retiring framework identifiers adds them to
 `scripts/check-retired.sh` as required by `AGENTS.md`.
 
 ## P0b scaffold evidence
@@ -302,7 +329,7 @@ config plugin does not support Expo Router. Both applications resolve the exact 
 `ClientPlatformProof` source through the Loomarr-owned `design-system` interface.
 
 The scaffold uses prototype-only bundle and package identifiers. It cannot overwrite the shipping
-Compose application or claim the permanent mobile identity before P5 adoption. Runtime Tamagui is
+Compose application or claim the permanent mobile identity before P5a adoption. Runtime Tamagui is
 proven through Android touch, iOS, Android TV, and Apple TV production JS bundles and a dedicated
 Vite browser entry. After web-adapter React deduplication, the browser proof produces one 277.41 kB JavaScript
 chunk (92.94 kB gzip) without mounting or changing a shipping route. No compiler or production
@@ -370,8 +397,8 @@ blank-but-successfully-bundled page.
 P1 replaces the provisional scaffold styling with Loomarr's original brand contract, refined as a
 cross-platform system. One checked-in JSON contract owns the seven-segment chroma order, calibrated
 colors, wordmark, and identity outline; a hash-bound deterministic generator owns the platform asset
-geometry and specifications. The generator produces 16 web,
-mobile, TV, Android launcher, and store-listing derivatives; `make brand-assets-verify` fails on a
+geometry and specifications. The generator produces web, mobile, TV, launcher, and store-listing
+derivatives; `make brand-assets-verify` fails on a
 hand-edited or stale derivative. Light and dark semantic themes, pointer/touch/TV density scales,
 reduced-motion behavior, contrast assertions, Geist wordmark treatment, Lucide-backed product icons,
 launch motion, inline activity, skeleton, progress, signal-acquisition loading, and the first shared
@@ -382,7 +409,8 @@ matrix, tokens, typography, spacing, iconography, launch sequence, loading vocab
 states. Native Storybook uses the same stories. On the physical Shield at 3840x2160, its TV-specific
 rail rendered the canonical lockup and visible focus treatment; D-pad Down moved focus between story
 cards and OK selected the focused story. This proof uses the prototype package
-`media.loomarr.tv.prototype`, leaving the shipping Compose package untouched.
+`media.loomarr.tv.prototype`, which remains distinct from the permanent `loomarr.media` release
+identity.
 
 The complete `make clients` gate passes package-boundary enforcement, native Storybook generation
 and typing, shared typechecks and tests, Expo Doctor (21/21 for both mobile and TV), production JS
@@ -428,11 +456,8 @@ operations are dormant without relying on a sleep; 20 consecutive race-enabled r
 
 ## Open evidence, not open architecture
 
-The architecture above is decided for the slice. These facts must be measured rather than guessed:
-
-- whether Tamagui's runtime-only path meets the web and Shield budgets;
-- whether the compiler improves the representative slice enough to justify its build seam; and
-- which current tokens or assets deserve migration after side-by-side visual review.
-
-Those measurements can change an adapter or reject Tamagui. They do not weaken the Loomarr-owned
-interfaces or bypass the adoption gate.
+The architecture above is decided for parity migration. Runtime-only Tamagui is the accepted path;
+the compiler previously enlarged representative bundles and is not part of #970. Current Web and
+Shield tokens and assets migrate only when the new implementation reproduces their accepted output.
+Later performance or visual refinement work may change an adapter, but it does not weaken the
+Loomarr-owned interfaces or bypass the parity gates.

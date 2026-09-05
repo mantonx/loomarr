@@ -9,6 +9,15 @@ server is already sending. Add sections freely; rename with care.
 
 Every red check in the setup wizard links to a section here.
 
+## Android TV cannot find Loomarr
+
+The TV app searches with DNS-SD and Loomarr's LAN discovery fallback. For the supported Docker
+Compose deployment, confirm that UDP port `51029` is published and allowed inbound from the trusted
+LAN. `SERVER_PUBLIC_URL` must contain the Docker host's LAN address and the HTTP port published by
+Traefik—for example, `http://192.168.1.10:8080`—because that is the address discovery returns to the
+TV. Client and server must be on the same LAN; guest Wi-Fi and access-point client isolation commonly
+block discovery traffic. Manual URL entry remains available when local network policy blocks it.
+
 ## Database secret encryption
 
 **Settings:** Security → Database secret encryption

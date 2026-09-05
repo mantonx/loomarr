@@ -37,21 +37,4 @@ const activateTvSurfSelection = (selection: SurfSelection): TvSurfActivation => 
   kind: "tune",
 });
 
-const previousSurfChannel = (
-  currentChannelId: string,
-  previousChannelId: string | undefined,
-  playableChannelIds: readonly string[],
-): string | undefined =>
-  previousChannelId &&
-  previousChannelId !== currentChannelId &&
-  playableChannelIds.includes(previousChannelId)
-    ? previousChannelId
-    : undefined;
-
-export {
-  activateTvSurfSelection,
-  moveTvSurfSelection,
-  previousSurfChannel,
-  restoreTvSurfSelection,
-  surfSelections,
-};
+export { activateTvSurfSelection, moveTvSurfSelection, restoreTvSurfSelection, surfSelections };

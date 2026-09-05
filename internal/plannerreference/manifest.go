@@ -399,15 +399,15 @@ func validateResidency(r residencyCapture, m modelCapture) error {
 }
 
 func validateScorecard(card scorecardEnvelope, c capture) error {
-	if (card.SchemaVersion != 10 && card.SchemaVersion != 11) || card.CorpusVersion == "" || card.Contract.CorpusVersion != card.CorpusVersion {
+	if (card.SchemaVersion != 10 && card.SchemaVersion != 11 && card.SchemaVersion != 12) || card.CorpusVersion == "" || card.Contract.CorpusVersion != card.CorpusVersion {
 		return errors.New("scorecard schema/corpus identity is invalid")
 	}
 	if card.Profile != c.Protocol.Profile || card.Generator.Provider != "ollama" || card.Generator.Model != c.Model.Tag {
 		return errors.New("scorecard profile or generator does not match the captured local model")
 	}
-	if card.SchemaVersion == 11 {
+	if card.SchemaVersion == 12 {
 		if card.RunSnapshot == nil {
-			return errors.New("scorecard v11 lacks its quality run snapshot")
+			return errors.New("scorecard v12 lacks its quality run snapshot")
 		}
 		snapshot := *card.RunSnapshot
 		if err := snapshot.Validate(); err != nil {

@@ -39,6 +39,7 @@ const Action = forwardRef<ComponentRef<typeof Pressable>, ActionProps>(
     const [focused, setFocused] = useState(false);
     const isDisabled = disabled === true;
     const role = props.accessibilityRole ?? "button";
+    const tv = density === "tv";
     const backgroundColor =
       tone === "danger"
         ? theme.stateDanger.val
@@ -79,14 +80,17 @@ const Action = forwardRef<ComponentRef<typeof Pressable>, ActionProps>(
             alignItems: "center",
             backgroundColor,
             borderColor,
-            borderRadius: semanticRadius.control,
+            borderRadius: tv ? 8 : semanticRadius.control,
             borderStyle: "solid",
-            borderWidth: focused ? 4 : 2,
+            borderWidth: focused ? (tv ? 3 : 4) : tv ? 1 : 2,
             justifyContent: "center",
-            minHeight: semanticTargets[density],
+            minHeight: tv ? 0 : semanticTargets[density],
             opacity: isDisabled ? 0.55 : state.pressed ? 0.82 : 1,
-            paddingHorizontal: semanticSpace.control,
-            transform: [{ scale: focused ? 1.025 : state.pressed ? 0.98 : 1 }],
+            paddingHorizontal: tv ? 24 : semanticSpace.control,
+            paddingVertical: tv ? 8 : 0,
+            transform: [
+              { scale: tv ? (state.pressed ? 0.98 : 1) : focused ? 1.025 : state.pressed ? 0.98 : 1 },
+            ],
           },
           typeof style === "function" ? style(state) : style,
         ]}
@@ -102,8 +106,8 @@ const Action = forwardRef<ComponentRef<typeof Pressable>, ActionProps>(
             <TamaguiText
               color={tone === "secondary" ? "$contentPrimary" : "$contentInverse"}
               fontFamily="$body"
-              fontSize={typography[density].label.size}
-              fontWeight="700"
+              fontSize={tv ? typography.tv.data.size : typography[density].label.size}
+              fontWeight={tv ? "400" : "700"}
             >
               {children}
             </TamaguiText>
@@ -112,8 +116,8 @@ const Action = forwardRef<ComponentRef<typeof Pressable>, ActionProps>(
           <TamaguiText
             color={tone === "secondary" ? "$contentPrimary" : "$contentInverse"}
             fontFamily="$body"
-            fontSize={typography[density].label.size}
-            fontWeight="700"
+            fontSize={tv ? typography.tv.data.size : typography[density].label.size}
+            fontWeight={tv ? "400" : "700"}
           >
             {children}
           </TamaguiText>

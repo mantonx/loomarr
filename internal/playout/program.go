@@ -53,6 +53,10 @@ type ProgramSpec struct {
 	AudioTrack    int      // the N in -map 0:a:N (PickAudioTrack); 0 = the file's first track
 	TargetLUFS    string   // filler loudness normalisation (§10 V40); "" = none (library titles)
 	Plan          CopyPlan // per-stream copy/transcode decision (PlanCopy); zero value = transcode both
+	// UnpacedInput is reserved for immutable prepared media whose downstream Channel mux is the
+	// wall-clock pacing authority. Leaving read-rate on this child would pace the authoritative
+	// intra-segment seek itself and turn that discarded distance into cold-start latency.
+	UnpacedInput bool
 
 	// Source is the PROBE the Plan was derived from — the full MediaFormat, not the two booleans
 	// it reduces to.
@@ -144,13 +148,18 @@ func ProgramArgs(spec ProgramSpec) []string {
 		)
 	}
 
-	// Realtime pacing is unconditional. The burst is only for a genuine mid-program tune-in with
-	// enough media left to absorb it. Applying it at offset zero makes every child finish ten
-	// seconds before its wall-clock boundary; applying it to that short remaining tail repeats the
-	// same mistake. Both presented live as commercials arriving and leaving about ten seconds late.
-	args = append(args, "-readrate", "1.0")
-	if offset >= tuneInBurstThreshold && limit > tuneInBurstThreshold {
-		args = append(args, "-readrate_initial_burst", strconv.Itoa(readrateInitialBurst))
+	// Ordinary live children own their input pacing. An immutable prepared child deliberately does
+	// not: its downstream Channel mux is the sole pacing authority, and pacing before -ss makes
+	// FFmpeg consume the discarded part of the current segment at 1x before emitting transport.
+	if !spec.UnpacedInput {
+		args = append(args, "-readrate", "1.0")
+		// The burst is only for a genuine mid-program tune-in with enough media left to absorb it.
+		// Applying it at offset zero makes every child finish ten seconds before its wall-clock
+		// boundary; applying it to that short remaining tail repeats the same mistake. Both presented
+		// live as commercials arriving and leaving about ten seconds late.
+		if offset >= tuneInBurstThreshold && limit > tuneInBurstThreshold {
+			args = append(args, "-readrate_initial_burst", strconv.Itoa(readrateInitialBurst))
+		}
 	}
 
 	// THE SEEK, and its placement is load-bearing. `-ss` BEFORE `-i` makes ffmpeg seek —

@@ -39,7 +39,7 @@ func buildScorecardRunSnapshot(card Scorecard, accountingAvailable bool) *qualit
 }
 
 func validateScorecardRunSnapshot(card Scorecard) error {
-	if card.SchemaVersion == 10 {
+	if card.SchemaVersion == 10 || card.SchemaVersion == 11 {
 		return nil
 	}
 	if card.SchemaVersion != scorecardSchemaVersion {
