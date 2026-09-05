@@ -42,10 +42,18 @@ supervisor workflow preserves the interactive-session and tmux details.
 Every supervised implementation or review assignment is one token-bounded checkpoint. Declare a
 limit from 100,000 through 200,000 tokens before the checkpoint starts; use 150,000 by default. Use
 the harness's native goal budget when it has one. Otherwise, when worker-scoped usage is observable,
-record the meter source and starting value and have the supervisor interrupt at the limit. If usage
-cannot be measured or attributed to the worker, permit read-only planning, research, or review only;
+record the meter source and starting value and stop early enough to preserve the limit. Reserve at
+least 15% for the final report plus headroom for delayed usage updates and in-flight work. Polling a
+counter is not proof of a hard cap. If enforcement or worker attribution cannot be established,
+permit read-only planning, research, or review only;
 do not begin or resume edits. Follow-up scope and another review pass require a fresh checkpoint and
 budget rather than an increase to the active limit.
+
+Before editing handoff, verify the exact worker session's effective permissions, model, reasoning,
+native goal identity, budget, status, and usage. A queued instruction does not change a sandbox or
+prove acknowledgement. Keep initialization and authorization waits out of active implementation
+loops. Verify cessation and the final meter before accepting a report; preserve incomplete work
+without falsely marking the goal complete. Follow the supervisor workflow's launch and stop checks.
 
 Low or Medium reasoning is the default. Use High reasoning or a frontier capability only for a
 written, measured quality need. Hitting a budget stops the checkpoint; it never authorizes weaker
@@ -171,6 +179,8 @@ Do not park a secondary worktree on `main`. Never remove a worktree containing u
 work. `make agent-gc` is the canonical cross-worktree audit; its explicit `APPLY=1` mode may remove
 only worktrees whose exact head belongs to a merged PR on current `origin/main`. Active, dependent,
 dirty, credential-bearing, divergent, open, and ambiguous worktrees fail closed.
+For retained worktrees, record an owner, reason, and next review trigger on the tracking issue.
+Preservation is not a retirement plan; closing a pane or completing a goal does not clean a worktree.
 
 Develop against the URL printed by `make dev-fe`; the backend URL serves the last embedded SPA build and
 can look stale by design. A bare `go run ./cmd/loomarr` can orphan a stale child; use `make dev-be`.
