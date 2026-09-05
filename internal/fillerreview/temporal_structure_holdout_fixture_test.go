@@ -259,6 +259,7 @@ func (fixture temporalStructureHoldoutFixture) config(output string) TemporalStr
 		ReferenceAuditPath:      fixture.referenceAudit,
 		TransitionAuthorityPath: fixture.transition,
 		ProgrammeInventoryPath:  fixture.inventory, SourceRoot: fixture.root, Seed: "holdout-seed",
+		Genesis:   true,
 		PlannedAt: fixture.plannedAt, OutputDir: output,
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 	"github.com/loomarr/loomarr/internal/filleradmission"
 	"github.com/loomarr/loomarr/internal/fillerbakeoff"
+	"github.com/loomarr/loomarr/internal/fillercorpus"
 	"github.com/loomarr/loomarr/internal/fillereval"
 )
 
@@ -110,7 +111,9 @@ func contentEvidenceKind(kind string) bool {
 }
 
 func validateDownloads(manifest fillereval.Manifest, ledger DownloadLedger) (map[string]DownloadCase, error) {
-	if ledger.SchemaVersion != 1 || !validSHA256(ledger.InventorySHA256) || ledger.GeneratedAt.IsZero() || ledger.MaxRequests <= 0 || ledger.RequestsUsed < 0 || ledger.RequestsUsed > ledger.MaxRequests || ledger.MaxItems <= 0 || ledger.MaxBytes <= 0 || ledger.Bytes < 0 || ledger.Bytes > ledger.MaxBytes || len(ledger.Cases) != len(manifest.Cases) {
+	validProfile := (ledger.SchemaVersion == fillercorpus.DownloadLedgerLegacySchemaVersion && ledger.Profile == "") ||
+		(ledger.SchemaVersion == fillercorpus.DownloadLedgerSchemaVersion && ledger.Profile == fillercorpus.RightsProfileDevelopment)
+	if !validProfile || !validSHA256(ledger.InventorySHA256) || ledger.GeneratedAt.IsZero() || ledger.MaxRequests <= 0 || ledger.RequestsUsed < 0 || ledger.RequestsUsed > ledger.MaxRequests || ledger.MaxItems <= 0 || ledger.MaxBytes <= 0 || ledger.Bytes < 0 || ledger.Bytes > ledger.MaxBytes || len(ledger.Cases) != len(manifest.Cases) {
 		return nil, fmt.Errorf("download ledger has invalid identity, ceilings, or case count")
 	}
 	manifestByID := make(map[string]fillereval.Case, len(manifest.Cases))

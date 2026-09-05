@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/md5"
 	"crypto/sha1"
@@ -26,33 +27,7 @@ import (
 	"github.com/loomarr/loomarr/internal/fillercorpus"
 )
 
-type downloadLedger struct {
-	SchemaVersion   int              `json:"schemaVersion"`
-	InventorySHA256 string           `json:"inventorySha256"`
-	GeneratedAt     time.Time        `json:"generatedAt"`
-	MaxRequests     int              `json:"maxRequests"`
-	RequestsUsed    int              `json:"requestsUsed"`
-	MaxItems        int              `json:"maxItems"`
-	MaxBytes        int64            `json:"maxBytes"`
-	Bytes           int64            `json:"bytes"`
-	Cases           []downloadedCase `json:"cases"`
-}
-
-type downloadedCase struct {
-	CaseID              string                               `json:"caseId"`
-	Authority           string                               `json:"authority"`
-	ItemID              string                               `json:"itemId"`
-	LicenseURL          string                               `json:"licenseUrl"`
-	ItemURL             string                               `json:"itemUrl"`
-	MetadataURL         string                               `json:"metadataUrl"`
-	MetadataRetrievedAt time.Time                            `json:"metadataRetrievedAt"`
-	MetadataSHA256      string                               `json:"metadataSha256"`
-	Representation      fillercorpus.InventoryRepresentation `json:"representation"`
-	LocalFile           string                               `json:"localFile"`
-	ContentSHA256       string                               `json:"contentSha256"`
-	Approval            fillercorpus.RightsDecision          `json:"approval"`
-	VerifiedAt          time.Time                            `json:"verifiedAt"`
-}
+type downloadLedger = fillercorpus.DownloadLedger
 
 type plannedDownload struct {
 	candidate fillercorpus.InventoryCase
@@ -87,16 +62,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	maxItems := flags.Int("max-items", 0, "hard approved item ceiling")
 	maxBytes := flags.Int64("max-bytes", 0, "hard approved media-byte ceiling")
 	delay := flags.Duration("delay", time.Second, "minimum delay between HTTP requests")
-	profile := flags.String("profile", "", "required rights profile: development or certification")
+	profile := flags.String("profile", "", "required rights profile: quarantine, development, or certification")
 	processorID := flags.String("processor-id", "", "exact approved inference processor identifier (certification only)")
 	processorTermsSHA256 := flags.String("processor-terms-sha256", "", "SHA-256 of approved processor terms snapshot (certification only)")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	profileValid := *profile == fillercorpus.RightsProfileDevelopment || *profile == fillercorpus.RightsProfileCertification
+	profileValid := fillercorpus.KnownRightsProfile(*profile)
 	certificationIdentityValid := *profile != fillercorpus.RightsProfileCertification || (strings.TrimSpace(*processorID) != "" && fillercorpus.IsSHA256(*processorTermsSHA256))
 	if *inventoryPath == "" || *approvalsPath == "" || *outputDir == "" || *ledgerPath == "" || *userAgent == "" || *generatedAtText == "" || *maxRequests <= 0 || *maxItems <= 0 || *maxBytes <= 0 || *delay < 500*time.Millisecond || !profileValid || !certificationIdentityValid {
-		_, _ = fmt.Fprintln(stderr, "filler-corpus-download: inventory, rights approvals, output, ledger, identified User-Agent, generation time, explicit development/certification profile, positive ceilings, >=500ms delay, and certification processor identity are required")
+		_, _ = fmt.Fprintln(stderr, "filler-corpus-download: inventory, rights approvals, output, ledger, identified User-Agent, generation time, explicit quarantine/development/certification profile, positive ceilings, >=500ms delay, and certification processor identity are required")
 		return 2
 	}
 	generatedAt, err := time.Parse(time.RFC3339, *generatedAtText)
@@ -123,6 +98,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	plan, err := planDownloads(inv, approvals, opts)
 	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "filler-corpus-download:", err)
+		return 1
+	}
+	if err := requireNewLedger(opts.ledgerPath); err != nil {
 		_, _ = fmt.Fprintln(stderr, "filler-corpus-download:", err)
 		return 1
 	}
@@ -176,19 +155,11 @@ func planDownloads(inv fillercorpus.Inventory, approvals []fillercorpus.RightsDe
 		if approval.MetadataSHA256 != candidate.MetadataSHA256 || approval.ReviewerID == "" || approval.ReviewedAt.IsZero() || approval.ReviewedAt.Before(candidate.MetadataRetrievedAt) || approval.ReviewedAt.After(opts.generatedAt) || strings.TrimSpace(approval.Basis) == "" {
 			return nil, fmt.Errorf("rights-reviewed item %s is not tied to its metadata and complete review", approval.CaseID)
 		}
+		if err := validateDecisionProfile(approval, opts); err != nil {
+			return nil, fmt.Errorf("rights-reviewed item %s: %w", approval.CaseID, err)
+		}
 		if approval.Decision == "held" {
 			continue
-		}
-		if opts.profile == fillercorpus.RightsProfileCertification {
-			contract := approval.HoldoutContract
-			if reasons := fillercorpus.HoldoutRightsHoldReasons(contract, opts.generatedAt); len(reasons) != 0 || contract.ProcessorID != opts.processorID || contract.ProcessorTermsSHA256 != opts.processorTermsSHA256 || len(contract.HoldReasons) != 0 {
-				return nil, fmt.Errorf("approved item %s lacks the exact certification holdout authority", approval.CaseID)
-			}
-		} else if approval.HoldoutContract != nil {
-			return nil, fmt.Errorf("development item %s carries a certification-only holdout contract", approval.CaseID)
-		}
-		if !approval.Redistributable && opts.profile != fillercorpus.RightsProfileCertification {
-			return nil, fmt.Errorf("approved item %s is not explicitly redistributable", approval.CaseID)
 		}
 		if requiresCredit(candidate.LicenseURL) && strings.TrimSpace(approval.RequiredCredit) == "" {
 			return nil, fmt.Errorf("approved item %s requires attribution", approval.CaseID)
@@ -214,17 +185,50 @@ func planDownloads(inv fillercorpus.Inventory, approvals []fillercorpus.RightsDe
 	return plan, nil
 }
 
+func validateDecisionProfile(approval fillercorpus.RightsDecision, opts options) error {
+	switch opts.profile {
+	case fillercorpus.RightsProfileQuarantine:
+		if approval.HoldoutContract != nil || approval.QuarantineContract == nil || approval.Redistributable {
+			return fmt.Errorf("decision is not restricted to quarantine")
+		}
+		reasons := fillercorpus.QuarantineAcquisitionHoldReasons(approval.QuarantineContract)
+		if approval.Decision == "approved" && (len(reasons) != 0 || len(approval.QuarantineContract.HoldReasons) != 0) {
+			return fmt.Errorf("approval lacks exact quarantine authority")
+		}
+		if approval.Decision == "held" && len(approval.QuarantineContract.HoldReasons) == 0 {
+			return fmt.Errorf("held quarantine decision has no hold reasons")
+		}
+	case fillercorpus.RightsProfileCertification:
+		if approval.QuarantineContract != nil || approval.HoldoutContract == nil {
+			return fmt.Errorf("decision lacks a certification holdout contract")
+		}
+		contract := approval.HoldoutContract
+		reasons := fillercorpus.HoldoutRightsHoldReasons(contract, opts.generatedAt)
+		if approval.Decision == "approved" && (len(reasons) != 0 || contract.ProcessorID != opts.processorID || contract.ProcessorTermsSHA256 != opts.processorTermsSHA256 || len(contract.HoldReasons) != 0) {
+			return fmt.Errorf("approval lacks the exact certification holdout authority")
+		}
+	case fillercorpus.RightsProfileDevelopment:
+		if approval.QuarantineContract != nil || approval.HoldoutContract != nil || approval.Redistributable != (approval.Decision == "approved") {
+			return fmt.Errorf("decision is not exact development authority")
+		}
+	default:
+		return fmt.Errorf("unknown rights profile %q", opts.profile)
+	}
+	return nil
+}
+
 func executeDownloads(ctx context.Context, client *http.Client, plan []plannedDownload, opts options) (downloadLedger, error) {
 	if err := os.MkdirAll(opts.outputDir, 0o750); err != nil {
 		return downloadLedger{}, err
 	}
-	ledger := downloadLedger{SchemaVersion: 1, GeneratedAt: opts.generatedAt.UTC(), MaxRequests: opts.maxRequests, MaxItems: opts.maxItems, MaxBytes: opts.maxBytes}
+	ledger := downloadLedger{SchemaVersion: fillercorpus.DownloadLedgerSchemaVersion, Profile: opts.profile, GeneratedAt: opts.generatedAt.UTC(), MaxRequests: opts.maxRequests, MaxItems: opts.maxItems, MaxBytes: opts.maxBytes}
+	budget := requestBudget{max: opts.maxRequests}
 	lastRequestAt := time.Time{}
 	for _, item := range plan {
 		verifiedAt := opts.generatedAt.UTC()
 		hashes, size, err := hashFile(item.path)
 		if errors.Is(err, os.ErrNotExist) {
-			if ledger.RequestsUsed >= opts.maxRequests {
+			if budget.used >= budget.max {
 				return downloadLedger{}, fmt.Errorf("request ceiling exhausted before %s", item.candidate.CaseID)
 			}
 			if !lastRequestAt.IsZero() {
@@ -239,8 +243,7 @@ func executeDownloads(ctx context.Context, client *http.Client, plan []plannedDo
 					}
 				}
 			}
-			hashes, size, err = download(ctx, client, item, opts.userAgent)
-			ledger.RequestsUsed++
+			hashes, size, err = download(ctx, client, item, opts.userAgent, &budget)
 			lastRequestAt = time.Now()
 			verifiedAt = lastRequestAt.UTC()
 		}
@@ -251,7 +254,7 @@ func executeDownloads(ctx context.Context, client *http.Client, plan []plannedDo
 			return downloadLedger{}, fmt.Errorf("%s: downloaded bytes or source checksums do not match inventory", item.candidate.CaseID)
 		}
 		ledger.Bytes += size
-		ledger.Cases = append(ledger.Cases, downloadedCase{
+		ledger.Cases = append(ledger.Cases, fillercorpus.DownloadCase{
 			CaseID: item.candidate.CaseID, Authority: item.candidate.Authority, ItemID: item.candidate.ItemID, LicenseURL: item.candidate.LicenseURL,
 			ItemURL: item.candidate.ItemURL, MetadataURL: item.candidate.MetadataURL,
 			MetadataRetrievedAt: item.candidate.MetadataRetrievedAt, MetadataSHA256: item.candidate.MetadataSHA256,
@@ -259,19 +262,23 @@ func executeDownloads(ctx context.Context, client *http.Client, plan []plannedDo
 			Approval: item.approval, VerifiedAt: verifiedAt,
 		})
 	}
+	ledger.RequestsUsed = budget.used
 	return ledger, nil
 }
 
 type fileHashes struct{ sha256, sha1, md5 string }
 
-func download(ctx context.Context, client *http.Client, item plannedDownload, userAgent string) (fileHashes, int64, error) {
+func download(ctx context.Context, client *http.Client, item plannedDownload, userAgent string, budget *requestBudget) (fileHashes, int64, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, item.candidate.Representation.URL, nil)
 	if err != nil {
 		return fileHashes{}, 0, err
 	}
 	req.Header.Set("User-Agent", userAgent)
+	if err := budget.consume(); err != nil {
+		return fileHashes{}, 0, err
+	}
 	requestClient := *client
-	requestClient.CheckRedirect = redirectPolicy(item.candidate.AllowedMediaHosts)
+	requestClient.CheckRedirect = redirectPolicy(item.candidate.AllowedMediaHosts, budget)
 	resp, err := requestClient.Do(req)
 	if err != nil {
 		return fileHashes{}, 0, err
@@ -318,7 +325,7 @@ func download(ctx context.Context, client *http.Client, item plannedDownload, us
 	return hashes, n, nil
 }
 
-func redirectPolicy(allowedHosts []string) func(*http.Request, []*http.Request) error {
+func redirectPolicy(allowedHosts []string, budget *requestBudget) func(*http.Request, []*http.Request) error {
 	return func(req *http.Request, via []*http.Request) error {
 		if req.URL == nil {
 			return fmt.Errorf("refuse redirect without a destination URL")
@@ -329,8 +336,21 @@ func redirectPolicy(allowedHosts []string) func(*http.Request, []*http.Request) 
 		if len(via) >= 5 {
 			return fmt.Errorf("too many redirects")
 		}
-		return nil
+		return budget.consume()
 	}
+}
+
+type requestBudget struct {
+	used int
+	max  int
+}
+
+func (budget *requestBudget) consume() error {
+	if budget == nil || budget.max <= 0 || budget.used >= budget.max {
+		return fmt.Errorf("request ceiling exhausted")
+	}
+	budget.used++
+	return nil
 }
 
 func hashFile(path string) (fileHashes, int64, error) {
@@ -387,11 +407,20 @@ func readJSONL[T any](path string) ([]T, error) {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for line := 1; scanner.Scan(); line++ {
-		if len(scanner.Bytes()) == 0 {
+		raw := bytes.TrimSpace(scanner.Bytes())
+		if len(raw) == 0 {
 			continue
 		}
 		var value T
-		if err := json.Unmarshal(scanner.Bytes(), &value); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			return nil, fmt.Errorf("line %d: %w", line, err)
+		}
+		if err := decoder.Decode(&struct{}{}); err != io.EOF {
+			if err == nil {
+				err = fmt.Errorf("trailing JSON value")
+			}
 			return nil, fmt.Errorf("line %d: %w", line, err)
 		}
 		values = append(values, value)
@@ -399,15 +428,31 @@ func readJSONL[T any](path string) ([]T, error) {
 	return values, scanner.Err()
 }
 
+func requireNewLedger(path string) error {
+	_, err := os.Lstat(path)
+	switch {
+	case err == nil:
+		return fmt.Errorf("ledger output already exists")
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	default:
+		return fmt.Errorf("inspect ledger output: %w", err)
+	}
+}
+
 func writeJSON(path string, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(filepath.Dir(path), ".filler-corpus-ledger-*")
+	if err := os.MkdirAll(filepath.Dir(absolute), 0o750); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(absolute), ".filler-corpus-ledger-*")
 	if err != nil {
 		return err
 	}
@@ -428,7 +473,11 @@ func writeJSON(path string, value any) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tempName, path); err != nil {
+	if err := os.Link(tempName, absolute); err != nil {
+		return fmt.Errorf("publish immutable download ledger: %w", err)
+	}
+	if err := os.Remove(tempName); err != nil {
+		_ = os.Remove(absolute)
 		return err
 	}
 	ok = true

@@ -120,20 +120,23 @@ type InventoryEvidence struct {
 }
 
 type RightsDecision struct {
-	InventorySHA256 string                 `json:"inventorySha256"`
-	CaseID          string                 `json:"caseId"`
-	CaptureIDs      []string               `json:"captureIds"`
-	Authority       string                 `json:"authority"`
-	ItemID          string                 `json:"itemId"`
-	MetadataSHA256  string                 `json:"metadataSha256"`
-	ReviewerID      string                 `json:"reviewerId"`
-	ReviewedAt      time.Time              `json:"reviewedAt"`
-	Decision        string                 `json:"decision"`
-	Basis           string                 `json:"basis"`
-	Redistributable bool                   `json:"redistributable"`
-	RequiredCredit  string                 `json:"requiredCredit,omitempty"`
-	Restrictions    []string               `json:"restrictions,omitempty"`
-	HoldoutContract *HoldoutRightsContract `json:"holdoutContract,omitempty"`
+	WorksheetSchemaVersion int                              `json:"worksheetSchemaVersion,omitempty"`
+	InventorySHA256        string                           `json:"inventorySha256"`
+	CaseID                 string                           `json:"caseId"`
+	CaptureIDs             []string                         `json:"captureIds"`
+	Authority              string                           `json:"authority"`
+	ItemID                 string                           `json:"itemId"`
+	MetadataSHA256         string                           `json:"metadataSha256"`
+	ReviewerID             string                           `json:"reviewerId"`
+	ReviewedAt             time.Time                        `json:"reviewedAt"`
+	Decision               string                           `json:"decision"`
+	Basis                  string                           `json:"basis"`
+	Redistributable        bool                             `json:"redistributable"`
+	RequiredCredit         string                           `json:"requiredCredit,omitempty"`
+	Restrictions           []string                         `json:"restrictions,omitempty"`
+	QuarantineContract     *QuarantineAcquisitionContract   `json:"quarantineContract,omitempty"`
+	HoldoutContract        *HoldoutRightsContract           `json:"holdoutContract,omitempty"`
+	QuarantineInspection   *QuarantineInspectionCaseBinding `json:"quarantineInspection,omitempty"`
 }
 
 func CaseID(authority, itemID string) string { return authority + "/" + itemID }

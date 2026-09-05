@@ -14,6 +14,18 @@ import (
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
+type adjudicationPaths []string
+
+func (paths *adjudicationPaths) String() string { return fmt.Sprint([]string(*paths)) }
+
+func (paths *adjudicationPaths) Set(value string) error {
+	if value == "" {
+		return fmt.Errorf("prior adjudication path cannot be empty")
+	}
+	*paths = append(*paths, value)
+	return nil
+}
+
 func run(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("filler-temporal-structure-holdout-plan", flag.ContinueOnError)
 	flags.SetOutput(stderr)
@@ -31,14 +43,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 	sourceRoot := flags.String("source-root", "", "common root containing bounded and programme source media")
 	seed := flags.String("seed", "", "private deterministic selection seed")
 	seedFile := flags.String("seed-file", "", "file containing the private deterministic selection seed")
+	genesis := flags.Bool("genesis", false, "declare a first holdout with no prior exposure")
+	var priorAdjudications adjudicationPaths
+	flags.Var(&priorAdjudications, "prior-adjudication", "immutable burned-challenge adjudication authority; repeat for cumulative replacement lineage")
 	plannedText := flags.String("planned-at", "", "fixed RFC3339 planning time")
 	output := flags.String("out", "", "new private plan directory")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	plannedAt, err := time.Parse(time.RFC3339, *plannedText)
-	if err != nil || *selection == "" || *evidence == "" || *evidenceMap == "" || *human == "" || *humanAttestation == "" || *quality == "" || *suitability == "" || *referenceAudit == "" || *families == "" || *transitions == "" || *programmes == "" || *sourceRoot == "" || (*seed == "") == (*seedFile == "") || *output == "" {
-		_, _ = fmt.Fprintln(stderr, "filler-temporal-structure-holdout-plan: selection, evidence, evidence map, human assessment, human attestation, media quality, suitability, reference audit, families, transitions, programmes, source root, private seed, fixed planning time, and output are required")
+	validLineage := *genesis && len(priorAdjudications) == 0 || !*genesis && len(priorAdjudications) > 0
+	if err != nil || *selection == "" || *evidence == "" || *evidenceMap == "" || *human == "" || *humanAttestation == "" || *quality == "" || *suitability == "" || *referenceAudit == "" || *families == "" || *transitions == "" || *programmes == "" || *sourceRoot == "" || (*seed == "") == (*seedFile == "") || !validLineage || *output == "" {
+		_, _ = fmt.Fprintln(stderr, "filler-temporal-structure-holdout-plan: selection, evidence, evidence map, human assessment, human attestation, media quality, suitability, reference audit, families, transitions, programmes, source root, private seed, exactly one --genesis or --prior-adjudication lineage mode, fixed planning time, and output are required")
 		return 2
 	}
 	seedValue := *seed
@@ -54,7 +70,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		HumanAssessmentPath: *human, HumanAttestationPath: *humanAttestation, MediaQualityPath: *quality,
 		SuitabilityPath: *suitability, ReferenceAuditPath: *referenceAudit,
 		FamilyAuditPath: *families, TransitionAuthorityPath: *transitions, ProgrammeInventoryPath: *programmes,
-		SourceRoot: *sourceRoot, Seed: seedValue, PlannedAt: plannedAt.UTC(), OutputDir: *output,
+		SourceRoot: *sourceRoot, Seed: seedValue, Genesis: *genesis, PriorAdjudicationPaths: priorAdjudications,
+		PlannedAt: plannedAt.UTC(), OutputDir: *output,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "filler-temporal-structure-holdout-plan:", err)

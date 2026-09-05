@@ -8,11 +8,15 @@ import (
 )
 
 const (
+	RightsProfileQuarantine    = "quarantine"
 	RightsProfileDevelopment   = "development"
 	RightsProfileCertification = "certification"
 
-	HoldoutRightsWorksheetSchemaVersion = 4
-	HoldoutRightsContractSchemaVersion  = 1
+	QuarantineRightsWorksheetSchemaVersion     = 5
+	HoldoutRightsWorksheetSchemaVersion        = 7
+	HoldoutRightsContractSchemaVersion         = 1
+	QuarantineAcquisitionContractSchemaVersion = 1
+	QuarantinePurposeLocalInspection           = "local_quarantine_inspection"
 
 	RightsStatusCleared     = "cleared"
 	RightsStatusNotPresent  = "not_present"
@@ -27,6 +31,68 @@ const (
 	RedistributionMasterAndDerivatives = "master_and_permitted_derivatives"
 	RedistributionExternalOnly         = "external_evaluation_only"
 )
+
+type QuarantineAcquisitionContract struct {
+	SchemaVersion            int      `json:"schemaVersion"`
+	Purpose                  string   `json:"purpose"`
+	CopyAndStorage           bool     `json:"copyAndStorage"`
+	LocalTechnicalInspection bool     `json:"localTechnicalInspection"`
+	ProviderTransfer         bool     `json:"providerTransfer"`
+	Redistribution           bool     `json:"redistribution"`
+	CorpusPreparation        bool     `json:"corpusPreparation"`
+	Training                 bool     `json:"training"`
+	CatalogIngestion         bool     `json:"catalogIngestion"`
+	Scheduling               bool     `json:"scheduling"`
+	ProductionAdmission      bool     `json:"productionAdmission"`
+	HoldReasons              []string `json:"holdReasons,omitempty"`
+}
+
+func KnownRightsProfile(value string) bool {
+	switch value {
+	case RightsProfileQuarantine, RightsProfileDevelopment, RightsProfileCertification:
+		return true
+	default:
+		return false
+	}
+}
+
+func RightsWorksheetSchemaForProfile(profile string) (int, bool) {
+	switch profile {
+	case RightsProfileQuarantine:
+		return QuarantineRightsWorksheetSchemaVersion, true
+	case RightsProfileDevelopment:
+		return RightsWorksheetSchemaVersion, true
+	case RightsProfileCertification:
+		return HoldoutRightsWorksheetSchemaVersion, true
+	default:
+		return 0, false
+	}
+}
+
+func QuarantineAcquisitionHoldReasons(value *QuarantineAcquisitionContract) []string {
+	if value == nil {
+		return []string{"quarantine_contract_missing"}
+	}
+	reasons := make([]string, 0, 12)
+	add := func(condition bool, reason string) {
+		if condition {
+			reasons = append(reasons, reason)
+		}
+	}
+	add(value.SchemaVersion != QuarantineAcquisitionContractSchemaVersion, "contract_schema_invalid")
+	add(value.Purpose != QuarantinePurposeLocalInspection, "purpose_invalid")
+	add(!value.CopyAndStorage, "copy_storage_missing")
+	add(!value.LocalTechnicalInspection, "local_technical_inspection_missing")
+	add(value.ProviderTransfer, "provider_transfer_forbidden")
+	add(value.Redistribution, "redistribution_forbidden")
+	add(value.CorpusPreparation, "corpus_preparation_forbidden")
+	add(value.Training, "training_forbidden")
+	add(value.CatalogIngestion, "catalog_ingestion_forbidden")
+	add(value.Scheduling, "scheduling_forbidden")
+	add(value.ProductionAdmission, "production_admission_forbidden")
+	sort.Strings(reasons)
+	return reasons
+}
 
 type HoldoutRightsTemplate struct {
 	AgreementID          string `json:"agreementId"`

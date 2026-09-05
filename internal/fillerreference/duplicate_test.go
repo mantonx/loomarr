@@ -1,6 +1,7 @@
 package fillerreference
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -47,6 +48,46 @@ func TestCompareDuplicateSequencesRequiresEnoughEvidence(t *testing.T) {
 	a := []uint64{0x1111111111111111, 0x2222222222222222, 0x3333333333333333}
 	if got := CompareDuplicateSequences(a, a); got.Related {
 		t.Fatalf("short comparison = %+v, want unrelated", got)
+	}
+}
+
+func TestDuplicateComparisonsHonorCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	frames := make([]uint64, 100)
+	audio := make([]uint32, 100)
+	for index := range frames {
+		frames[index] = 0x0f0f0f0f0f0f0f0f ^ uint64(index)
+		audio[index] = uint32(index + 1)
+	}
+	if _, err := CompareDuplicateSequencesContext(ctx, frames, frames); err == nil {
+		t.Fatal("visual comparison ignored cancellation")
+	}
+	if _, err := CompareAudioEnvelopesContext(ctx, audio, audio); err == nil {
+		t.Fatal("audio comparison ignored cancellation")
+	}
+}
+
+func TestFingerprintComparabilityMatchesEvidenceRequirements(t *testing.T) {
+	frames := make([]uint64, duplicateMinFrames)
+	for index := range frames {
+		frames[index] = 0x0f0f0f0f0f0f0f0f ^ uint64(index)
+	}
+	if !VisualFingerprintComparable(frames) || VisualFingerprintComparable(frames[:duplicateMinFrames-1]) {
+		t.Fatal("visual comparability did not enforce informative-frame minimum")
+	}
+	audio := make([]uint32, duplicateAudioMinBins)
+	for index := range audio {
+		audio[index] = uint32(index)
+	}
+	if !AudioFingerprintComparable(audio) || AudioFingerprintComparable(audio[:duplicateAudioMinBins-1]) {
+		t.Fatal("audio comparability did not enforce bin minimum")
+	}
+	for index := range audio {
+		audio[index] = 1
+	}
+	if AudioFingerprintComparable(audio) {
+		t.Fatal("constant audio accepted as comparable")
 	}
 }
 

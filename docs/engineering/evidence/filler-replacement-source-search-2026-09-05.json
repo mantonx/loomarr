@@ -1,0 +1,207 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "filler-replacement-source-search-manifest-v1",
+  "generatedAt": "2026-09-05T10:29:13Z",
+  "trackingIssue": "https://github.com/loomarr/loomarr/issues/1089",
+  "sourceAccess": "catalogue_metadata_only",
+  "requestedAction": "download_direct_mp4_to_quarantine_only",
+  "downloadAuthorized": false,
+  "providerProcessingAuthorized": false,
+  "trainingAllowed": false,
+  "productionAdmissionAllowed": false,
+  "hashProjections": {
+    "catalogueMetadataProjectionSha256": "jq -cS '{item:{id:.item.id,title:.item.title,date:.item.date,created_published:.item.created_published,contributors:.item.contributors,description:.item.description,notes:.item.notes,rights:.item.rights},resources:[.resources[]?|{url,files}]}' | shasum -a 256",
+    "rightsStatementSha256": "jq -cS '[.item.rights[]?]' | shasum -a 256"
+  },
+  "priorExposure": {
+    "receiptSha256": "2d1713d5358914291cb94f0be996534b90bcd1913f93d0b3e9a691385cdc8d3c",
+    "programmeProvenance": [
+      {
+        "authority": "Library of Congress National Screening Room item: A better New York",
+        "reference": "https://www.loc.gov/item/2001642607/"
+      },
+      {
+        "authority": "Library of Congress National Screening Room item: The adventures of Junior Raindrop",
+        "reference": "https://www.loc.gov/item/2018601440/"
+      },
+      {
+        "authority": "Library of Congress National Screening Room item: Henry Browne, farmer",
+        "reference": "https://www.loc.gov/item/2020600701/"
+      },
+      {
+        "authority": "Library of Congress National Screening Room item: When work is done",
+        "reference": "https://www.loc.gov/item/2020600703/"
+      },
+      {
+        "authority": "Library of Congress National Screening Room item: Facts about film",
+        "reference": "https://www.loc.gov/item/2023600647/"
+      },
+      {
+        "authority": "Library of Congress National Screening Room item: Symphony in F",
+        "reference": "https://www.loc.gov/item/2024601128/"
+      }
+    ]
+  },
+  "request": {
+    "candidates": 4,
+    "expectedBytes": 1106169086,
+    "expectedGiB": 1.0302,
+    "programmeParentMinimumDurationSeconds": 120,
+    "selectionAuthority": false
+  },
+  "candidates": [
+    {
+      "rank": 2,
+      "candidateId": "loc-00694220",
+      "desiredUse": "programme_parent",
+      "catalogueId": "00694220",
+      "title": "The great train robbery",
+      "owningInstitution": "Library of Congress",
+      "creatorOrProducer": "Edison Manufacturing Co.",
+      "publicationDate": "1903",
+      "itemUrl": "https://www.loc.gov/item/00694220/",
+      "catalogueMetadataUrl": "https://www.loc.gov/item/00694220/?fo=json",
+      "catalogueMetadataProjectionSha256": "d29b4405012b6c306f16ef0ee2a31523097b9f51e81955ef5fff66e66b8abc85",
+      "directMediaUrl": "https://tile.loc.gov/storage-services/service/mbrs/ntscrm/00000765/00000765.mp4",
+      "directMediaExpectedBytes": 274118177,
+      "cataloguedDurationSeconds": 714,
+      "durationEvidence": "Duration: 11:54 at 18 fps.",
+      "movingMediaEvidence": "LOC catalogue resource declares a downloadable video/mp4 file.",
+      "rightsStatementUrl": "https://www.loc.gov/item/00694220/?fo=json",
+      "rightsStatementSha256": "5114d45880ee05ca4bdaa357c1961648cc1edd45d9329d9ff531c0f01492671e",
+      "rightsBasis": "loc_no_known_us_restrictions_notice",
+      "rightsUncertainty": [
+        "LOC assigns item-specific rights assessment to the user",
+        "catalogue records an original 1903 copyright registration",
+        "catalogue says some held copies are incomplete",
+        "foreign copyright status is not established",
+        "provider-processing authority is not established"
+      ],
+      "programmeParentIdentity": "loc-00694220-programme-parent",
+      "parentProvenance": {
+        "authority": "Library of Congress National Screening Room item: The great train robbery",
+        "reference": "https://www.loc.gov/item/00694220/"
+      },
+      "creatorFamilyKey": "edison-porter-early-film",
+      "campaignFamilyKey": null,
+      "v5NamedParentScreenResult": "provenance_distinct",
+      "hashFamilyClearanceStatus": "not_run",
+      "reviewStatus": "awaiting_owner_approval",
+      "stopReason": null
+    },
+    {
+      "rank": 3,
+      "candidateId": "loc-00694236",
+      "desiredUse": "programme_parent",
+      "catalogueId": "00694236",
+      "title": "The little train robbery",
+      "owningInstitution": "Library of Congress",
+      "creatorOrProducer": "Edison Manufacturing Co.",
+      "publicationDate": "1905",
+      "itemUrl": "https://www.loc.gov/item/00694236/",
+      "catalogueMetadataUrl": "https://www.loc.gov/item/00694236/?fo=json",
+      "catalogueMetadataProjectionSha256": "d1187a72479667e9524bef8b4edcaffde9a2024b11b1b4f69356e8e5d5a61202",
+      "directMediaUrl": "https://tile.loc.gov/storage-services/service/mbrs/ntscrm/02612215/02612215.mp4",
+      "directMediaExpectedBytes": 404702028,
+      "cataloguedDurationSeconds": 720,
+      "durationEvidence": "Duration: ca. 12 minutes at 16 fps.",
+      "movingMediaEvidence": "LOC catalogue resource declares a downloadable video/mp4 file.",
+      "rightsStatementUrl": "https://www.loc.gov/item/00694236/?fo=json",
+      "rightsStatementSha256": "5114d45880ee05ca4bdaa357c1961648cc1edd45d9329d9ff531c0f01492671e",
+      "rightsBasis": "loc_no_known_us_restrictions_notice",
+      "rightsUncertainty": [
+        "LOC assigns item-specific rights assessment to the user",
+        "catalogue records an original 1905 copyright registration",
+        "foreign copyright status is not established",
+        "provider-processing authority is not established"
+      ],
+      "programmeParentIdentity": "loc-00694236-programme-parent",
+      "parentProvenance": {
+        "authority": "Library of Congress National Screening Room item: The little train robbery",
+        "reference": "https://www.loc.gov/item/00694236/"
+      },
+      "creatorFamilyKey": "edison-porter-early-film",
+      "campaignFamilyKey": null,
+      "v5NamedParentScreenResult": "provenance_distinct",
+      "hashFamilyClearanceStatus": "not_run",
+      "reviewStatus": "awaiting_owner_approval",
+      "stopReason": null
+    },
+    {
+      "rank": 4,
+      "candidateId": "loc-00694366",
+      "desiredUse": "programme_parent",
+      "catalogueId": "00694366",
+      "title": "Panorama of Blackwell's Island, N.Y.",
+      "owningInstitution": "Library of Congress",
+      "creatorOrProducer": "Thomas A. Edison, Inc.",
+      "publicationDate": "1903",
+      "itemUrl": "https://www.loc.gov/item/00694366/",
+      "catalogueMetadataUrl": "https://www.loc.gov/item/00694366/?fo=json",
+      "catalogueMetadataProjectionSha256": "3771adafb91ceb66cdc15d485d92982e25e746dfe074a8919788c444bf61954e",
+      "directMediaUrl": "https://tile.loc.gov/storage-services/service/mbrs/ntscrm/01627552/01627552.mp4",
+      "directMediaExpectedBytes": 104341214,
+      "cataloguedDurationSeconds": 143,
+      "durationEvidence": "Duration: 2:23 at 15 fps.",
+      "movingMediaEvidence": "LOC catalogue resource declares a downloadable video/mp4 file.",
+      "rightsStatementUrl": "https://www.loc.gov/item/00694366/?fo=json",
+      "rightsStatementSha256": "5114d45880ee05ca4bdaa357c1961648cc1edd45d9329d9ff531c0f01492671e",
+      "rightsBasis": "loc_no_known_us_restrictions_notice",
+      "rightsUncertainty": [
+        "LOC assigns item-specific rights assessment to the user",
+        "catalogue records an original 1903 copyright registration",
+        "visible people and businesses require suitability and rights review",
+        "foreign copyright status is not established",
+        "provider-processing authority is not established"
+      ],
+      "programmeParentIdentity": "loc-00694366-programme-parent",
+      "parentProvenance": {
+        "authority": "Library of Congress National Screening Room item: Panorama of Blackwell's Island, N.Y.",
+        "reference": "https://www.loc.gov/item/00694366/"
+      },
+      "creatorFamilyKey": "edison-porter-early-film",
+      "campaignFamilyKey": null,
+      "v5NamedParentScreenResult": "provenance_distinct",
+      "hashFamilyClearanceStatus": "not_run",
+      "reviewStatus": "awaiting_owner_approval",
+      "stopReason": null
+    },
+    {
+      "rank": 1,
+      "candidateId": "loc-00694408",
+      "desiredUse": "programme_parent",
+      "catalogueId": "00694408",
+      "title": "A trip down Market Street before the fire",
+      "owningInstitution": "Library of Congress",
+      "creatorOrProducer": "Miles Brothers",
+      "publicationDate": "1906",
+      "itemUrl": "https://www.loc.gov/item/00694408/",
+      "catalogueMetadataUrl": "https://www.loc.gov/item/00694408/?fo=json",
+      "catalogueMetadataProjectionSha256": "0e708e9a8828923ea3ea09137dadef75b0e26e84844bd6a21a96320c2b3397c2",
+      "directMediaUrl": "https://tile.loc.gov/storage-services/service/mbrs/ntscrm/00015143/00015143.mp4",
+      "directMediaExpectedBytes": 323007667,
+      "cataloguedDurationSeconds": 503,
+      "durationEvidence": "Duration: 8:23 minutes at about 15 fps.",
+      "movingMediaEvidence": "LOC catalogue resource declares a downloadable video/mp4 file.",
+      "rightsStatementUrl": "https://www.loc.gov/item/00694408/?fo=json",
+      "rightsStatementSha256": "7ecfa87ba17761f5919a3e9d6f32bff74cbf0205ad02d7cd568ffa1ef0a6e6fb",
+      "rightsBasis": "loc_item_specific_public_domain_statement",
+      "rightsUncertainty": [
+        "visible people and businesses require suitability and rights review",
+        "foreign copyright status is not established",
+        "provider-processing authority is not established"
+      ],
+      "programmeParentIdentity": "loc-00694408-programme-parent",
+      "parentProvenance": {
+        "authority": "Library of Congress National Screening Room item: A trip down Market Street before the fire",
+        "reference": "https://www.loc.gov/item/00694408/"
+      },
+      "creatorFamilyKey": "miles-brothers-market-street",
+      "campaignFamilyKey": null,
+      "v5NamedParentScreenResult": "provenance_distinct",
+      "hashFamilyClearanceStatus": "not_run",
+      "reviewStatus": "awaiting_owner_approval",
+      "stopReason": null
+    }
+  ]
+}

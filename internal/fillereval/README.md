@@ -116,8 +116,12 @@ bounded by explicit minimum and maximum item counts. It exposes the source asser
 representation in immutable JSON plus a spreadsheet-safe CSV, but leaves every authority field
 blank. Reviewers edit only `reviewer_id`, `reviewed_at`, `decision`, `basis`, `redistributable`,
 `required_credit`, and `restrictions_json`. Local rows expose the exact media, rights-evidence, and
-provenance-evidence paths and hashes. This is a review queue, not evidence that any row is legally reusable.
-For the explicit `certification` profile, the worksheet instead uses schema v4 and requires the
+provenance-evidence paths and hashes. Development schema v6 also requires
+`LOOMARR_FILLER_CORPUS_QUARANTINE_INSPECTION` whenever the inventory contains non-local media. It
+selects only report cases that are eligible for rights review; held or absent remote cases never
+enter the worksheet, while direct local cases remain eligible without inventing a post-download
+report. This is a review queue, not evidence that any row is legally reusable.
+For the explicit `certification` profile, the worksheet instead uses schema v7 and requires the
 maintainer/counsel-approved agreement and processor identities. Its per-master schedule separately
 records signer authority, every required grant, six embedded-rights categories, redistribution
 scope, territory, term/expiry, withdrawal, attribution/restrictions, and any adjudication. All
@@ -127,16 +131,21 @@ authority cells remain blank in the generated CSV.
 inventory and the inert JSON worksheet. Every row must be present once, immutable source fields must
 match, decisions must be complete and time-bound, and approved BY/BY-SA media must carry attribution.
 Only a fully valid review is atomically converted to the JSONL consumed by the downloader.
-Schema-v4 approval is impossible while any required fact is missing, unknown, conflicting,
-expired, malformed, or inconsistent. Held rows retain stable machine-readable reasons. Schema-v3
-worksheets remain lockable only under the development profile and cannot pass certification
-download or preparation.
+Schema-v7 approval is impossible while any required fact is missing, unknown, conflicting,
+expired, malformed, or inconsistent. Held rows retain stable machine-readable reasons. The lock
+reopens the exact quarantine report, reproduces its transport-aware selection, and writes the
+report and inspected-content identities into every non-local decision. Historical development-v3
+and certification-v4 worksheets remain readable records but cannot create decisions accepted by
+new preparation.
 
 `make filler-corpus-prepare` is the next mechanical boundary. Its required profile and schema-v4 plan
 must both identify either a development seed or a certification corpus. Development preparation uses
 every and only approved row from a fully reviewed inventory and keeps held rows inert; certification
 requires every inventory row to be approved and assigned to the complete development/holdout split.
-It re-hashes every selected source file, measures the
+Before creating a staging directory, it reopens the exact quarantine report and re-hashes every
+selected source file. A non-local decision must bind that report and its source bytes must equal the
+inspected content SHA-256; report drift, a legacy unbound decision, or changed media fails without
+output. It then measures the
 bounded segment, and stages the four frames, 16 kHz mono audio, and direct-video derivatives under aggregate resource
 ceilings. It writes an unlabeled provenance-complete draft and the exact label-blind packet JSONL
 consumed by the paid runner. The plan cannot contain truth, taxonomy, policy flags, evidence labels,

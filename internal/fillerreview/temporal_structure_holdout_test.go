@@ -84,6 +84,36 @@ func TestBuildTemporalStructureChallengeRejectsReceiptThatDoesNotBindAuthoring(t
 	}
 }
 
+func TestBuildTemporalStructureHoldoutPlanRequiresExplicitLineageMode(t *testing.T) {
+	fixture := newTemporalStructureHoldoutFixture(t)
+	config := fixture.config(filepath.Join(t.TempDir(), "plan"))
+	config.Genesis = false
+	if _, err := BuildTemporalStructureHoldoutPlan(config); err == nil || !strings.Contains(err.Error(), "lineage mode") {
+		t.Fatalf("omitted lineage error = %v", err)
+	}
+	config.Genesis = true
+	config.PriorAdjudicationPaths = []string{"prior.json"}
+	if _, err := BuildTemporalStructureHoldoutPlan(config); err == nil || !strings.Contains(err.Error(), "lineage mode") {
+		t.Fatalf("mixed lineage error = %v", err)
+	}
+}
+
+func TestValidateTemporalStructureHoldoutReceiptAcceptsImmutableV3Authority(t *testing.T) {
+	fixture := newTemporalStructureHoldoutFixture(t)
+	root := filepath.Join(t.TempDir(), "plan")
+	if _, err := BuildTemporalStructureHoldoutPlan(fixture.config(root)); err != nil {
+		t.Fatal(err)
+	}
+	authoring := readStrictTestJSON[TemporalStructureChallengeAuthoring](t, filepath.Join(root, "authoring.json"))
+	receipt := readStrictTestJSON[TemporalStructureHoldoutReceipt](t, filepath.Join(root, "receipt.json"))
+	receipt.ContractVersion = TemporalStructureHoldoutLegacyContractVersion
+	receipt.PlanKind = ""
+	receipt.PriorExposure = TemporalStructureHoldoutTrainingExclusion{}
+	if err := validateTemporalStructureHoldoutReceipt(receipt, authoring, nil); err != nil {
+		t.Fatalf("immutable v3 receipt was rejected: %v", err)
+	}
+}
+
 func TestBuildTemporalStructureHoldoutPlanBindsAuthoritiesAndBuildsBalancedConstructions(t *testing.T) {
 	fixture := newTemporalStructureHoldoutFixture(t)
 	first := filepath.Join(t.TempDir(), "first")

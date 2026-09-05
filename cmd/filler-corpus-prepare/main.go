@@ -30,6 +30,7 @@ import (
 	"github.com/loomarr/loomarr/internal/fillerbakeoff"
 	"github.com/loomarr/loomarr/internal/fillercorpus"
 	"github.com/loomarr/loomarr/internal/fillereval"
+	"github.com/loomarr/loomarr/internal/fillerquarantine"
 	"github.com/loomarr/loomarr/internal/mediatools"
 )
 
@@ -86,6 +87,13 @@ type perceptualFamily struct {
 	hashes  [4]uint64
 }
 
+type sourcePreflight struct {
+	path      string
+	sourceRef string
+	hashes    mediaHashes
+	size      int64
+}
+
 type mediaDeriver interface {
 	Measure(context.Context, string, int64, int64) (mediaMeasurement, error)
 	Frames(context.Context, string, int64, int64) ([][]byte, error)
@@ -99,13 +107,14 @@ type realDeriver struct {
 }
 
 type options struct {
-	inventoryPath, approvalsPath, planPath, localRoot, remoteRoot string
-	draftOut, packetsOut, derivativesRoot                         string
-	kind                                                          fillereval.CorpusKind
-	preparedAt                                                    time.Time
-	minItems, maxItems                                            int
-	maxInputBytes, maxOutputBytes                                 int64
-	maxWallTime                                                   time.Duration
+	inventoryPath, approvalsPath, planPath, quarantineInspectionPath string
+	localRoot, remoteRoot                                            string
+	draftOut, packetsOut, derivativesRoot                            string
+	kind                                                             fillereval.CorpusKind
+	preparedAt                                                       time.Time
+	minItems, maxItems                                               int
+	maxInputBytes, maxOutputBytes                                    int64
+	maxWallTime                                                      time.Duration
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -116,6 +125,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	profile := flags.String("profile", "", "required preparation profile: development or certification")
 	inventoryPath := flags.String("inventory", "", "strict mixed-authority inventory JSON")
 	approvalsPath := flags.String("rights-approvals", "", "locked rights decisions JSONL")
+	quarantineInspectionPath := flags.String("quarantine-inspection", "", "immutable quarantine-inspection report (required for non-local cases)")
 	planPath := flags.String("plan", "", "authored split, cluster, and segment plan JSON")
 	localRoot := flags.String("local-root", "", "direct-cohort media root")
 	remoteRoot := flags.String("remote-root", "", "downloaded public media root")
@@ -142,7 +152,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "filler-corpus-prepare: an explicit development or certification profile, all paths, valid preparation time, profile-sized item bounds, byte ceilings, and wall-time ceiling are required")
 		return 2
 	}
-	opts := options{inventoryPath: *inventoryPath, approvalsPath: *approvalsPath, planPath: *planPath, localRoot: *localRoot, remoteRoot: *remoteRoot, draftOut: *draftOut, packetsOut: *packetsOut, derivativesRoot: *derivativesRoot, kind: kind, preparedAt: preparedAt.UTC(), minItems: *minItems, maxItems: *maxItems, maxInputBytes: *maxInputBytes, maxOutputBytes: *maxOutputBytes, maxWallTime: *maxWall}
+	opts := options{inventoryPath: *inventoryPath, approvalsPath: *approvalsPath, planPath: *planPath, quarantineInspectionPath: *quarantineInspectionPath, localRoot: *localRoot, remoteRoot: *remoteRoot, draftOut: *draftOut, packetsOut: *packetsOut, derivativesRoot: *derivativesRoot, kind: kind, preparedAt: preparedAt.UTC(), minItems: *minItems, maxItems: *maxItems, maxInputBytes: *maxInputBytes, maxOutputBytes: *maxOutputBytes, maxWallTime: *maxWall}
 	deriver := &realDeriver{ffmpeg: *ffmpegPath, tools: mediatools.NewFFmpegTools(*ffmpegPath, filler.FFprobePathNextTo(*ffmpegPath), "", "", "")}
 	draft, packets, err := prepare(context.Background(), opts, deriver)
 	if err != nil {
@@ -183,6 +193,21 @@ func prepare(ctx context.Context, opts options, deriver mediaDeriver) (fillereva
 		return fillereval.Manifest{}, nil, err
 	}
 	inventoryDigest := fillercorpus.InventorySHA256(inventoryRaw)
+	var inspectionRaw []byte
+	if opts.quarantineInspectionPath != "" {
+		inspectionRaw, err = os.ReadFile(opts.quarantineInspectionPath)
+		if err != nil {
+			return fillereval.Manifest{}, nil, fmt.Errorf("read quarantine inspection: %w", err)
+		}
+	}
+	authority, err := fillerquarantine.OpenRightsEligibility(inventoryRaw, inspectionRaw)
+	if err != nil {
+		return fillereval.Manifest{}, nil, err
+	}
+	selection, err := authority.Selected(1, len(inv.Cases))
+	if err != nil {
+		return fillereval.Manifest{}, nil, err
+	}
 	approvals, err := readJSONL[fillercorpus.RightsDecision](opts.approvalsPath)
 	if err != nil {
 		return fillereval.Manifest{}, nil, err
@@ -196,6 +221,89 @@ func prepare(ctx context.Context, opts options, deriver mediaDeriver) (fillereva
 	}
 	if err := validateSliceGates(plan.Kind, plan.SliceGates, len(plan.Cases)); err != nil {
 		return fillereval.Manifest{}, nil, err
+	}
+	byCase := make(map[string]fillercorpus.InventoryCase, len(inv.Cases))
+	for _, item := range inv.Cases {
+		byCase[item.CaseID] = item
+	}
+	eligibleCases := make(map[string]struct{}, len(selection.Cases))
+	for _, candidate := range selection.Cases {
+		eligibleCases[candidate.Inventory.CaseID] = struct{}{}
+	}
+	decisions := make(map[string]fillercorpus.RightsDecision, len(approvals))
+	approvedCount := 0
+	for _, decision := range approvals {
+		if _, duplicate := decisions[decision.CaseID]; duplicate {
+			return fillereval.Manifest{}, nil, fmt.Errorf("duplicate rights decision %q", decision.CaseID)
+		}
+		item, exists := byCase[decision.CaseID]
+		if !exists {
+			return fillereval.Manifest{}, nil, fmt.Errorf("rights decision %q has no inventory case", decision.CaseID)
+		}
+		if _, eligible := eligibleCases[decision.CaseID]; !eligible {
+			return fillereval.Manifest{}, nil, fmt.Errorf("rights decision %q is outside quarantine eligibility", decision.CaseID)
+		}
+		if err := validateRightsDecision(decision, item, inventoryDigest, opts.preparedAt, plan.Kind); err != nil {
+			return fillereval.Manifest{}, nil, err
+		}
+		decisions[decision.CaseID] = decision
+		if decision.Decision == "approved" {
+			approvedCount++
+		}
+	}
+	if len(decisions) != len(eligibleCases) {
+		return fillereval.Manifest{}, nil, fmt.Errorf("rights decisions cover %d/%d quarantine-eligible cases", len(decisions), len(eligibleCases))
+	}
+	expectedCases := len(byCase)
+	if plan.Kind == fillereval.CorpusDevelopmentSeed {
+		expectedCases = approvedCount
+	} else if approvedCount != len(byCase) {
+		return fillereval.Manifest{}, nil, fmt.Errorf("certification preparation requires every inventory case to be approved")
+	}
+	if len(plan.Cases) != expectedCases {
+		return fillereval.Manifest{}, nil, fmt.Errorf("plan covers %d cases; profile requires exactly %d", len(plan.Cases), expectedCases)
+	}
+
+	// Complete every authority, decision, and source-byte check before a
+	// derivative staging directory or provider-visible packet can exist.
+	preflight := make(map[string]sourcePreflight, len(plan.Cases))
+	preflightContent := make(map[string]string, len(plan.Cases))
+	var preflightInputBytes int64
+	for _, planned := range plan.Cases {
+		item, exists := byCase[planned.CaseID]
+		if !exists {
+			return fillereval.Manifest{}, nil, fmt.Errorf("plan case %q is absent from inventory", planned.CaseID)
+		}
+		if _, duplicate := preflight[planned.CaseID]; duplicate {
+			return fillereval.Manifest{}, nil, fmt.Errorf("duplicate plan case %q", planned.CaseID)
+		}
+		approval, approved := decisions[planned.CaseID]
+		if !approved || approval.Decision != "approved" || !approval.Redistributable {
+			return fillereval.Manifest{}, nil, fmt.Errorf("case %q lacks a complete redistribution approval bound to this inventory", planned.CaseID)
+		}
+		mediaPath, sourceRef, pathErr := mediaPathFor(opts, item)
+		if pathErr != nil {
+			return fillereval.Manifest{}, nil, fmt.Errorf("case %q: %w", planned.CaseID, pathErr)
+		}
+		hashes, size, hashErr := hashMedia(mediaPath)
+		if hashErr != nil {
+			return fillereval.Manifest{}, nil, fmt.Errorf("case %q: %w", planned.CaseID, hashErr)
+		}
+		if size != item.Representation.Bytes || !matches(item.Representation.SHA256, hashes.sha256) || !matches(item.Representation.SHA1, hashes.sha1) || !matches(item.Representation.MD5, hashes.md5) {
+			return fillereval.Manifest{}, nil, fmt.Errorf("case %q media identity differs from inventory", planned.CaseID)
+		}
+		if err := authority.Require(approval, hashes.sha256); err != nil {
+			return fillereval.Manifest{}, nil, err
+		}
+		if prior := preflightContent[hashes.sha256]; prior != "" {
+			return fillereval.Manifest{}, nil, fmt.Errorf("case %q duplicates media bytes from %q", planned.CaseID, prior)
+		}
+		preflightContent[hashes.sha256] = planned.CaseID
+		preflightInputBytes += size
+		if preflightInputBytes > opts.maxInputBytes {
+			return fillereval.Manifest{}, nil, fmt.Errorf("source media exceeds aggregate byte ceiling")
+		}
+		preflight[planned.CaseID] = sourcePreflight{path: mediaPath, sourceRef: sourceRef, hashes: hashes, size: size}
 	}
 	if _, err := os.Stat(opts.derivativesRoot); !os.IsNotExist(err) {
 		return fillereval.Manifest{}, nil, fmt.Errorf("derivative output already exists")
@@ -214,40 +322,6 @@ func prepare(ctx context.Context, opts options, deriver mediaDeriver) (fillereva
 		}
 	}()
 
-	byCase := make(map[string]fillercorpus.InventoryCase, len(inv.Cases))
-	for _, item := range inv.Cases {
-		byCase[item.CaseID] = item
-	}
-	decisions := make(map[string]fillercorpus.RightsDecision, len(approvals))
-	approvedCount := 0
-	for _, decision := range approvals {
-		if _, duplicate := decisions[decision.CaseID]; duplicate {
-			return fillereval.Manifest{}, nil, fmt.Errorf("duplicate rights decision %q", decision.CaseID)
-		}
-		item, exists := byCase[decision.CaseID]
-		if !exists {
-			return fillereval.Manifest{}, nil, fmt.Errorf("rights decision %q has no inventory case", decision.CaseID)
-		}
-		if err := validateRightsDecision(decision, item, inventoryDigest, opts.preparedAt, plan.Kind); err != nil {
-			return fillereval.Manifest{}, nil, err
-		}
-		decisions[decision.CaseID] = decision
-		if decision.Decision == "approved" {
-			approvedCount++
-		}
-	}
-	if len(decisions) != len(byCase) {
-		return fillereval.Manifest{}, nil, fmt.Errorf("rights decisions cover %d/%d inventory cases", len(decisions), len(byCase))
-	}
-	expectedCases := len(byCase)
-	if plan.Kind == fillereval.CorpusDevelopmentSeed {
-		expectedCases = approvedCount
-	} else if approvedCount != len(byCase) {
-		return fillereval.Manifest{}, nil, fmt.Errorf("certification preparation requires every inventory case to be approved")
-	}
-	if len(plan.Cases) != expectedCases {
-		return fillereval.Manifest{}, nil, fmt.Errorf("plan covers %d cases; profile requires exactly %d", len(plan.Cases), expectedCases)
-	}
 	seenCases := map[string]struct{}{}
 	clusterSplits := map[string]fillereval.Split{}
 	holdoutClusters := map[string]string{}
@@ -255,12 +329,11 @@ func prepare(ctx context.Context, opts options, deriver mediaDeriver) (fillereva
 	holdoutCampaigns := map[string]string{}
 	familySplits := map[string]fillereval.Split{}
 	holdoutFamilies := map[string]string{}
-	contentCases := map[string]string{}
 	var perceptualFamilies []perceptualFamily
 	splitCounts := map[fillereval.Split]int{}
 	draft := fillereval.Manifest{SchemaVersion: fillereval.SchemaVersion, Kind: plan.Kind, CorpusVersion: plan.CorpusVersion, SliceGates: slices.Clone(plan.SliceGates)}
 	packets := make([]fillerbakeoff.Packet, 0, len(plan.Cases))
-	var inputBytes, outputBytes int64
+	var outputBytes int64
 	for _, planned := range plan.Cases {
 		if time.Since(started) > opts.maxWallTime {
 			return fillereval.Manifest{}, nil, fmt.Errorf("wall-time ceiling exceeded")
@@ -316,25 +389,8 @@ func prepare(ctx context.Context, opts options, deriver mediaDeriver) (fillereva
 		if !ok || approval.Decision != "approved" || !approval.Redistributable {
 			return fillereval.Manifest{}, nil, fmt.Errorf("case %q lacks a complete redistribution approval bound to this inventory", planned.CaseID)
 		}
-		mediaPath, sourceRef, err := mediaPathFor(opts, item)
-		if err != nil {
-			return fillereval.Manifest{}, nil, fmt.Errorf("case %q: %w", planned.CaseID, err)
-		}
-		hashes, size, err := hashMedia(mediaPath)
-		if err != nil {
-			return fillereval.Manifest{}, nil, fmt.Errorf("case %q: %w", planned.CaseID, err)
-		}
-		if size != item.Representation.Bytes || !matches(item.Representation.SHA256, hashes.sha256) || !matches(item.Representation.SHA1, hashes.sha1) || !matches(item.Representation.MD5, hashes.md5) {
-			return fillereval.Manifest{}, nil, fmt.Errorf("case %q media identity differs from inventory", planned.CaseID)
-		}
-		if prior := contentCases[hashes.sha256]; prior != "" {
-			return fillereval.Manifest{}, nil, fmt.Errorf("case %q duplicates media bytes from %q", planned.CaseID, prior)
-		}
-		contentCases[hashes.sha256] = planned.CaseID
-		inputBytes += size
-		if inputBytes > opts.maxInputBytes {
-			return fillereval.Manifest{}, nil, fmt.Errorf("source media exceeds aggregate byte ceiling")
-		}
+		checked := preflight[planned.CaseID]
+		mediaPath, sourceRef, hashes, size := checked.path, checked.sourceRef, checked.hashes, checked.size
 		measurement, err := deriver.Measure(ctx, mediaPath, planned.SegmentStartMS, planned.SegmentStartMS+planned.SegmentDurationMS)
 		if err != nil || measurement.DurationMS < planned.SegmentStartMS+planned.SegmentDurationMS {
 			return fillereval.Manifest{}, nil, fmt.Errorf("case %q media measurement is incomplete: %w", planned.CaseID, err)
@@ -510,15 +566,18 @@ func validateRightsDecision(decision fillercorpus.RightsDecision, item fillercor
 		return fmt.Errorf("case %q has an invalid rights decision", decision.CaseID)
 	}
 	if kind == fillereval.CorpusCertification {
+		if decision.WorksheetSchemaVersion != fillercorpus.HoldoutRightsWorksheetSchemaVersion {
+			return fmt.Errorf("case %q has a legacy or mismatched certification rights decision", decision.CaseID)
+		}
 		contract := decision.HoldoutContract
-		if contract == nil || (decision.Decision == "approved" && (len(contract.HoldReasons) != 0 || len(fillercorpus.HoldoutRightsHoldReasons(contract, preparedAt)) != 0)) {
+		if decision.QuarantineContract != nil || contract == nil || (decision.Decision == "approved" && (len(contract.HoldReasons) != 0 || len(fillercorpus.HoldoutRightsHoldReasons(contract, preparedAt)) != 0)) {
 			return fmt.Errorf("case %q lacks certification holdout authority", decision.CaseID)
 		}
 		wantRedistributable := contract.RedistributionScope == fillercorpus.RedistributionMasterAndDerivatives
 		if decision.Decision == "approved" && decision.Redistributable != wantRedistributable {
 			return fmt.Errorf("case %q has a conflicting redistribution scope", decision.CaseID)
 		}
-	} else if decision.HoldoutContract != nil || decision.Redistributable != (decision.Decision == "approved") {
+	} else if decision.WorksheetSchemaVersion != fillercorpus.RightsWorksheetSchemaVersion || decision.QuarantineContract != nil || decision.HoldoutContract != nil || decision.Redistributable != (decision.Decision == "approved") {
 		return fmt.Errorf("case %q has an invalid development rights decision", decision.CaseID)
 	}
 	return nil

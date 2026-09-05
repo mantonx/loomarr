@@ -396,6 +396,7 @@ filler-corpus-prepare: ## build an unlabeled corpus draft and bounded evidence p
 	    --profile "$$LOOMARR_FILLER_CORPUS_PROFILE" \
 	    --inventory "$$LOOMARR_FILLER_CORPUS_INVENTORY" \
 	    --rights-approvals "$$LOOMARR_FILLER_CORPUS_RIGHTS_APPROVALS" \
+	    --quarantine-inspection "$$LOOMARR_FILLER_CORPUS_QUARANTINE_INSPECTION" \
 	    --plan "$$LOOMARR_FILLER_CORPUS_PREPARATION_PLAN" \
 	    --local-root "$$LOOMARR_FILLER_CORPUS_LOCAL_ROOT" \
 	    --remote-root "$$LOOMARR_FILLER_CORPUS_MEDIA_DIR" \
@@ -432,6 +433,7 @@ filler-corpus-rights-review: ## prepare an inert worksheet from a frozen filler 
 	  eval "$$(./scripts/dev-env.sh export)"; \
 	  $(GO) run ./cmd/filler-corpus-rights-review \
 	    --inventory "$$LOOMARR_FILLER_CORPUS_INVENTORY" \
+	    --quarantine-inspection "$$LOOMARR_FILLER_CORPUS_QUARANTINE_INSPECTION" \
 	    --out "$${LOOMARR_FILLER_CORPUS_RIGHTS_WORKSHEET:-$$LOOMARR_ARTIFACT_DIR/filler-corpus-rights-review.json}" \
 	    --csv-out "$${LOOMARR_FILLER_CORPUS_RIGHTS_CSV:-$$LOOMARR_ARTIFACT_DIR/filler-corpus-rights-review.csv}" \
 	    --prepared-at "$$LOOMARR_FILLER_CORPUS_RIGHTS_PREPARED_AT" \
@@ -450,6 +452,7 @@ filler-corpus-rights-lock: ## validate completed rights review CSV into approval
 	  eval "$$(./scripts/dev-env.sh export)"; \
 	  $(GO) run ./cmd/filler-corpus-rights-lock \
 	    --inventory "$$LOOMARR_FILLER_CORPUS_INVENTORY" \
+	    --quarantine-inspection "$$LOOMARR_FILLER_CORPUS_QUARANTINE_INSPECTION" \
 	    --worksheet "$$LOOMARR_FILLER_CORPUS_RIGHTS_WORKSHEET" \
 	    --completed-csv "$$LOOMARR_FILLER_CORPUS_RIGHTS_CSV" \
 	    --approvals-out "$${LOOMARR_FILLER_CORPUS_RIGHTS_APPROVALS:-$$LOOMARR_ARTIFACT_DIR/filler-corpus-rights-approvals.jsonl}" \

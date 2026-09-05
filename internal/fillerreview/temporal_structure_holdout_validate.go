@@ -2,6 +2,7 @@ package fillerreview
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -9,10 +10,13 @@ import (
 )
 
 func validateTemporalStructureHoldoutReceipt(receipt TemporalStructureHoldoutReceipt, authoring TemporalStructureChallengeAuthoring, transition *TemporalTransitionAuthority) error {
-	if receipt.SchemaVersion != TemporalStructureHoldoutSchemaVersion || receipt.ContractVersion != TemporalStructureHoldoutContractVersion || receipt.PlannedAt.IsZero() || !reviewSHA256(receipt.SeedSHA256) || !reviewSHA256(receipt.AuthoringSHA256) || receipt.Cases != TemporalStructureHoldoutCases || receipt.StandaloneCases != temporalStructureHoldoutClassCases || receipt.CompilationCases != temporalStructureHoldoutClassCases || receipt.ProgrammeExcerptCases != temporalStructureHoldoutClassCases || receipt.IndependentSources != temporalStructureHoldoutClassCases || receipt.ProgrammeParents != temporalStructureHoldoutParentSources || len(receipt.SelectedAnchors) != temporalStructureHoldoutClassCases || len(receipt.CompilationConstructions) != temporalStructureHoldoutClassCases || len(receipt.ProgrammeConstructions) != temporalStructureHoldoutClassCases || receipt.TrainingAllowed || receipt.ProductionAdmissionAllowed || len(authoring.Cases) != receipt.Cases || len(authoring.Sources) != temporalStructureHoldoutClassCases+temporalStructureHoldoutParentSources {
+	if receipt.SchemaVersion != TemporalStructureHoldoutSchemaVersion || !validTemporalStructureHoldoutContract(receipt.ContractVersion) || receipt.PlannedAt.IsZero() || !reviewSHA256(receipt.SeedSHA256) || !reviewSHA256(receipt.AuthoringSHA256) || receipt.Cases != TemporalStructureHoldoutCases || receipt.StandaloneCases != temporalStructureHoldoutClassCases || receipt.CompilationCases != temporalStructureHoldoutClassCases || receipt.ProgrammeExcerptCases != temporalStructureHoldoutClassCases || receipt.IndependentSources != temporalStructureHoldoutClassCases || receipt.ProgrammeParents != temporalStructureHoldoutParentSources || len(receipt.SelectedAnchors) != temporalStructureHoldoutClassCases || len(receipt.CompilationConstructions) != temporalStructureHoldoutClassCases || len(receipt.ProgrammeConstructions) != temporalStructureHoldoutClassCases || receipt.TrainingAllowed || receipt.ProductionAdmissionAllowed || len(authoring.Cases) != receipt.Cases || len(authoring.Sources) != temporalStructureHoldoutClassCases+temporalStructureHoldoutParentSources {
 		return fmt.Errorf("temporal structure holdout receipt counts or disposition are invalid")
 	}
-	if err := validateTemporalStructureHoldoutInputs(receipt.Inputs); err != nil {
+	if err := validateTemporalStructureHoldoutLineage(receipt); err != nil {
+		return err
+	}
+	if err := validateTemporalStructureHoldoutInputs(receipt.Inputs, receipt.ContractVersion, receipt.PlanKind); err != nil {
 		return err
 	}
 	sources, cases, unitCounts, err := indexTemporalStructureHoldoutAuthoring(authoring)
@@ -26,7 +30,7 @@ func validateTemporalStructureHoldoutReceipt(receipt TemporalStructureHoldoutRec
 	if err != nil {
 		return err
 	}
-	if err := validateTemporalStructureHoldoutTrainingExclusion(receipt.FutureTrainingExclusion, anchors, sources); err != nil {
+	if err := validateTemporalStructureHoldoutTrainingExclusion(receipt, anchors, sources); err != nil {
 		return err
 	}
 	if err := validateTemporalStructureHoldoutStandaloneCases(cases, anchors); err != nil {
@@ -38,65 +42,122 @@ func validateTemporalStructureHoldoutReceipt(receipt TemporalStructureHoldoutRec
 	return validateTemporalStructureHoldoutProgrammeCuts(receipt.ProgrammeConstructions, cases, sources)
 }
 
-func validateTemporalStructureHoldoutTrainingExclusion(exclusion TemporalStructureHoldoutTrainingExclusion, anchors map[string]TemporalStructureHoldoutAnchor, sources map[string]TemporalStructureChallengeSource) error {
-	if exclusion.Split != "holdout" || len(exclusion.SourceSHA256) != len(sources) || len(exclusion.FamilyIDs) != len(anchors) || len(exclusion.ProgrammeProvenance) != temporalStructureHoldoutParentSources || !sort.StringsAreSorted(exclusion.SourceSHA256) || !sort.StringsAreSorted(exclusion.FamilyIDs) || !sort.SliceIsSorted(exclusion.ProgrammeProvenance, func(i, j int) bool {
-		left, right := exclusion.ProgrammeProvenance[i], exclusion.ProgrammeProvenance[j]
-		return left.Authority+"\x00"+left.Reference < right.Authority+"\x00"+right.Reference
-	}) {
-		return fmt.Errorf("temporal structure holdout future training exclusion is invalid")
-	}
-	wantSources, wantFamilies, wantProvenance := map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}
+func validateTemporalStructureHoldoutTrainingExclusion(receipt TemporalStructureHoldoutReceipt, anchors map[string]TemporalStructureHoldoutAnchor, sources map[string]TemporalStructureChallengeSource) error {
+	current := emptyTemporalStructureHoldoutExposure()
 	for _, source := range sources {
-		wantSources[source.SHA256] = struct{}{}
+		current.SourceSHA256 = append(current.SourceSHA256, source.SHA256)
 		if source.Provenance.Kind == TemporalStructureSourceProgrammeParent {
-			wantProvenance[source.Provenance.Authority+"\x00"+source.Provenance.Reference] = struct{}{}
+			current.ProgrammeProvenance = append(current.ProgrammeProvenance, TemporalStructureHoldoutProgrammeProvenance{Authority: source.Provenance.Authority, Reference: source.Provenance.Reference})
 		}
 	}
 	for _, anchor := range anchors {
-		wantFamilies[anchor.FamilyID] = struct{}{}
+		current.FamilyIDs = append(current.FamilyIDs, anchor.FamilyID)
 	}
-	for _, digest := range exclusion.SourceSHA256 {
-		if _, exists := wantSources[digest]; !exists || !reviewSHA256(digest) {
-			return fmt.Errorf("temporal structure holdout future training source exclusion drift")
+	sort.Strings(current.SourceSHA256)
+	sort.Strings(current.FamilyIDs)
+	sort.Slice(current.ProgrammeProvenance, func(i, j int) bool {
+		return temporalStructureProgrammeProvenanceKey(current.ProgrammeProvenance[i]) < temporalStructureProgrammeProvenanceKey(current.ProgrammeProvenance[j])
+	})
+	if err := validateTemporalStructureHoldoutExposure(current); err != nil {
+		return fmt.Errorf("temporal structure holdout current exposure: %w", err)
+	}
+	want := current
+	if receipt.ContractVersion == TemporalStructureHoldoutContractVersion {
+		if !disjointTemporalStructureHoldoutExposure(receipt.PriorExposure, current) {
+			return fmt.Errorf("temporal structure holdout reuses prior source, family, or programme exposure")
 		}
-		delete(wantSources, digest)
+		want = unionTemporalStructureHoldoutExposure(receipt.PriorExposure, current)
 	}
-	for _, family := range exclusion.FamilyIDs {
-		if _, exists := wantFamilies[family]; !exists {
-			return fmt.Errorf("temporal structure holdout future training family exclusion drift")
-		}
-		delete(wantFamilies, family)
+	if err := validateTemporalStructureHoldoutExposure(receipt.FutureTrainingExclusion); err != nil {
+		return fmt.Errorf("temporal structure holdout future training exclusion is invalid: %w", err)
 	}
-	for _, provenance := range exclusion.ProgrammeProvenance {
-		key := provenance.Authority + "\x00" + provenance.Reference
-		if _, exists := wantProvenance[key]; !exists {
-			return fmt.Errorf("temporal structure holdout future training programme exclusion drift")
-		}
-		delete(wantProvenance, key)
-	}
-	if len(wantSources) != 0 || len(wantFamilies) != 0 || len(wantProvenance) != 0 {
-		return fmt.Errorf("temporal structure holdout future training exclusion is incomplete")
+	if !equalTemporalStructureHoldoutExposure(receipt.FutureTrainingExclusion, want) {
+		return fmt.Errorf("temporal structure holdout future training exclusion is not the exact cumulative union")
 	}
 	return nil
 }
 
-func validateTemporalStructureHoldoutInputs(inputs []TemporalStructureHoldoutInput) error {
+func validateTemporalStructureHoldoutLineage(receipt TemporalStructureHoldoutReceipt) error {
+	if receipt.ContractVersion == TemporalStructureHoldoutLegacyContractVersion {
+		if receipt.PlanKind != "" || receipt.PriorExposure.Split != "" || len(receipt.PriorExposure.SourceSHA256) != 0 || len(receipt.PriorExposure.FamilyIDs) != 0 || len(receipt.PriorExposure.ProgrammeProvenance) != 0 {
+			return fmt.Errorf("legacy temporal structure holdout carries replacement lineage")
+		}
+		return nil
+	}
+	if err := validateTemporalStructureHoldoutExposure(receipt.PriorExposure); err != nil {
+		return fmt.Errorf("temporal structure holdout prior exposure is invalid: %w", err)
+	}
+	if receipt.PlanKind != TemporalStructureHoldoutPlanGenesis && receipt.PlanKind != TemporalStructureHoldoutPlanReplacement {
+		return fmt.Errorf("temporal structure holdout plan kind is invalid")
+	}
+	if receipt.PlanKind == TemporalStructureHoldoutPlanGenesis && (len(receipt.PriorExposure.SourceSHA256) != 0 || len(receipt.PriorExposure.FamilyIDs) != 0 || len(receipt.PriorExposure.ProgrammeProvenance) != 0) {
+		return fmt.Errorf("genesis temporal structure holdout carries prior exposure")
+	}
+	return nil
+}
+
+func validateTemporalStructureHoldoutInputs(inputs []TemporalStructureHoldoutInput, contract, planKind string) error {
 	want := map[string]struct{}{
 		"evidence_manifest": {}, "evidence_private_map": {}, "family_audit": {}, "human_assessment": {},
 		"human_attestation": {}, "media_quality": {}, "programme_inventory": {}, "reference_audit": {},
 		"selection": {}, "suitability": {},
 		"transition_authority": {},
 	}
-	if len(inputs) != len(want) || !sort.SliceIsSorted(inputs, func(i, j int) bool { return inputs[i].Name < inputs[j].Name }) {
+	if len(inputs) < len(want) || !sort.SliceIsSorted(inputs, func(i, j int) bool { return inputs[i].Name < inputs[j].Name }) {
 		return fmt.Errorf("temporal structure holdout receipt input authority is incomplete or unordered")
 	}
+	priorInputs := 0
+	seenInputs := make(map[string]struct{}, len(inputs))
 	for _, input := range inputs {
-		if _, exists := want[input.Name]; !exists || !reviewSHA256(input.SHA256) {
+		if !reviewSHA256(input.SHA256) {
 			return fmt.Errorf("temporal structure holdout receipt contains an invalid input")
 		}
-		delete(want, input.Name)
+		if _, duplicate := seenInputs[input.Name]; duplicate {
+			return fmt.Errorf("temporal structure holdout receipt repeats an input")
+		}
+		seenInputs[input.Name] = struct{}{}
+		if _, exists := want[input.Name]; exists {
+			delete(want, input.Name)
+			continue
+		}
+		if contract != TemporalStructureHoldoutContractVersion || !strings.HasPrefix(input.Name, "prior_adjudication:") || strings.TrimPrefix(input.Name, "prior_adjudication:") == "" {
+			return fmt.Errorf("temporal structure holdout receipt contains an invalid input")
+		}
+		priorInputs++
+	}
+	if len(want) != 0 || contract == TemporalStructureHoldoutLegacyContractVersion && priorInputs != 0 || planKind == TemporalStructureHoldoutPlanGenesis && priorInputs != 0 || planKind == TemporalStructureHoldoutPlanReplacement && priorInputs == 0 {
+		return fmt.Errorf("temporal structure holdout receipt input authority does not match lineage")
 	}
 	return nil
+}
+
+func validTemporalStructureHoldoutContract(value string) bool {
+	return value == TemporalStructureHoldoutLegacyContractVersion || value == TemporalStructureHoldoutContractVersion
+}
+
+func disjointTemporalStructureHoldoutExposure(left, right TemporalStructureHoldoutTrainingExclusion) bool {
+	for _, pair := range [][2][]string{{left.SourceSHA256, right.SourceSHA256}, {left.FamilyIDs, right.FamilyIDs}} {
+		seen := stringSet(pair[0])
+		for _, value := range pair[1] {
+			if _, exists := seen[value]; exists {
+				return false
+			}
+		}
+	}
+	seenProvenance := make(map[string]struct{}, len(left.ProgrammeProvenance))
+	for _, value := range left.ProgrammeProvenance {
+		seenProvenance[temporalStructureProgrammeProvenanceKey(value)] = struct{}{}
+	}
+	for _, value := range right.ProgrammeProvenance {
+		if _, exists := seenProvenance[temporalStructureProgrammeProvenanceKey(value)]; exists {
+			return false
+		}
+	}
+	return true
+}
+
+func equalTemporalStructureHoldoutExposure(left, right TemporalStructureHoldoutTrainingExclusion) bool {
+	return left.Split == right.Split && slices.Equal(left.SourceSHA256, right.SourceSHA256) && slices.Equal(left.FamilyIDs, right.FamilyIDs) && slices.Equal(left.ProgrammeProvenance, right.ProgrammeProvenance)
 }
 
 func indexTemporalStructureHoldoutAuthoring(authoring TemporalStructureChallengeAuthoring) (map[string]TemporalStructureChallengeSource, map[string]TemporalStructureChallengeCase, map[fillereval.UnitKind]int, error) {

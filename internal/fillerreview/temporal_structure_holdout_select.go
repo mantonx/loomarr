@@ -24,6 +24,8 @@ var temporalStructureHoldoutRoleQuotas = map[fillereval.TemporalRole]int{
 }
 
 func selectTemporalStructureHoldoutAnchors(seed string, loaded temporalStructureHoldoutLoaded) ([]temporalStructureHoldoutSelectedAnchor, error) {
+	priorSources := stringSet(loaded.prior.exposure.SourceSHA256)
+	priorFamilies := stringSet(loaded.prior.exposure.FamilyIDs)
 	evidenceByAlias := make(map[string]TemporalTruthEvidenceCase, len(loaded.evidence.Cases))
 	for _, item := range loaded.evidence.Cases {
 		evidenceByAlias[item.Alias] = item
@@ -89,6 +91,12 @@ func selectTemporalStructureHoldoutAnchors(seed string, loaded temporalStructure
 		if familyID == "" {
 			familyID = "singleton-" + hashBytes([]byte(mapping.CaseID))[:24]
 		}
+		if _, exposed := priorSources[evidence.Video.SHA256]; exposed {
+			continue
+		}
+		if _, exposed := priorFamilies[familyID]; exposed {
+			continue
+		}
 		rank := hashBytes([]byte(seed + "\x00anchor\x00" + assessment.EvidenceAlias))
 		sourceID := "bounded-" + hashBytes([]byte(assessment.EvidenceAlias))[:24]
 		metadataSHA := temporalTruthJSONSHA(struct {
@@ -139,8 +147,23 @@ func selectTemporalStructureHoldoutAnchors(seed string, loaded temporalStructure
 	return selected, nil
 }
 
-func selectTemporalStructureHoldoutParents(seed string, inventory TemporalStructureHoldoutProgrammeInventory) ([]TemporalStructureChallengeSource, error) {
-	parents := append([]TemporalStructureChallengeSource(nil), inventory.Sources...)
+func selectTemporalStructureHoldoutParents(seed string, inventory TemporalStructureHoldoutProgrammeInventory, prior TemporalStructureHoldoutTrainingExclusion) ([]TemporalStructureChallengeSource, error) {
+	priorSources := stringSet(prior.SourceSHA256)
+	priorProvenance := make(map[string]struct{}, len(prior.ProgrammeProvenance))
+	for _, item := range prior.ProgrammeProvenance {
+		priorProvenance[temporalStructureProgrammeProvenanceKey(item)] = struct{}{}
+	}
+	parents := make([]TemporalStructureChallengeSource, 0, len(inventory.Sources))
+	for _, item := range inventory.Sources {
+		if _, exposed := priorSources[item.SHA256]; exposed {
+			continue
+		}
+		key := temporalStructureProgrammeProvenanceKey(TemporalStructureHoldoutProgrammeProvenance{Authority: item.Provenance.Authority, Reference: item.Provenance.Reference})
+		if _, exposed := priorProvenance[key]; exposed {
+			continue
+		}
+		parents = append(parents, item)
+	}
 	sort.Slice(parents, func(i, j int) bool {
 		left := hashBytes([]byte(seed + "\x00programme-parent\x00" + parents[i].ID))
 		right := hashBytes([]byte(seed + "\x00programme-parent\x00" + parents[j].ID))

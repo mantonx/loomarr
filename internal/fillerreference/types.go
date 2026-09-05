@@ -107,33 +107,8 @@ type RawAuditInputs struct {
 	ContentReview  []byte
 }
 
-type DownloadLedger struct {
-	SchemaVersion   int            `json:"schemaVersion"`
-	InventorySHA256 string         `json:"inventorySha256"`
-	GeneratedAt     time.Time      `json:"generatedAt"`
-	MaxRequests     int            `json:"maxRequests"`
-	RequestsUsed    int            `json:"requestsUsed"`
-	MaxItems        int            `json:"maxItems"`
-	MaxBytes        int64          `json:"maxBytes"`
-	Bytes           int64          `json:"bytes"`
-	Cases           []DownloadCase `json:"cases"`
-}
-
-type DownloadCase struct {
-	CaseID              string                               `json:"caseId"`
-	Authority           string                               `json:"authority"`
-	ItemID              string                               `json:"itemId"`
-	LicenseURL          string                               `json:"licenseUrl"`
-	ItemURL             string                               `json:"itemUrl"`
-	MetadataURL         string                               `json:"metadataUrl"`
-	MetadataRetrievedAt time.Time                            `json:"metadataRetrievedAt"`
-	MetadataSHA256      string                               `json:"metadataSha256"`
-	Representation      fillercorpus.InventoryRepresentation `json:"representation"`
-	LocalFile           string                               `json:"localFile"`
-	ContentSHA256       string                               `json:"contentSha256"`
-	Approval            fillercorpus.RightsDecision          `json:"approval"`
-	VerifiedAt          time.Time                            `json:"verifiedAt"`
-}
+type DownloadLedger = fillercorpus.DownloadLedger
+type DownloadCase = fillercorpus.DownloadCase
 
 type Summary struct {
 	Cases      int            `json:"cases"`

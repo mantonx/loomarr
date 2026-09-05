@@ -19,12 +19,14 @@ func constructTemporalStructureHoldout(config TemporalStructureHoldoutConfig, lo
 	}
 	receipt := TemporalStructureHoldoutReceipt{
 		SchemaVersion: TemporalStructureHoldoutSchemaVersion, ContractVersion: TemporalStructureHoldoutContractVersion,
-		PlannedAt: config.PlannedAt.UTC(), SeedSHA256: hashBytes([]byte(config.Seed)), Inputs: loaded.inputs,
+		PlannedAt: config.PlannedAt.UTC(), PlanKind: loaded.prior.planKind,
+		SeedSHA256: hashBytes([]byte(config.Seed)), Inputs: loaded.inputs,
 		Cases: TemporalStructureHoldoutCases, StandaloneCases: temporalStructureHoldoutClassCases,
 		CompilationCases: temporalStructureHoldoutClassCases, ProgrammeExcerptCases: temporalStructureHoldoutClassCases,
 		IndependentSources: temporalStructureHoldoutClassCases, ProgrammeParents: temporalStructureHoldoutParentSources,
 		StandaloneRoleCounts:    map[fillereval.TemporalRole]int{},
-		FutureTrainingExclusion: TemporalStructureHoldoutTrainingExclusion{Split: "holdout"},
+		PriorExposure:           cloneTemporalStructureTrainingExclusion(loaded.prior.exposure),
+		FutureTrainingExclusion: cloneTemporalStructureTrainingExclusion(loaded.prior.exposure),
 		TrainingAllowed:         false, ProductionAdmissionAllowed: false,
 	}
 	for index := range anchors {

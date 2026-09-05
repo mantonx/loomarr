@@ -3,21 +3,25 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/loomarr/loomarr/internal/fillercorpus"
+	"github.com/loomarr/loomarr/internal/fillerquarantine"
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
@@ -26,16 +30,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("filler-corpus-rights-lock", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	inventoryPath := flags.String("inventory", "", "frozen source inventory JSON")
+	quarantineInspectionPath := flags.String("quarantine-inspection", "", "immutable quarantine-inspection report (development/certification non-local cases)")
 	worksheetPath := flags.String("worksheet", "", "inert rights worksheet JSON")
 	csvPath := flags.String("completed-csv", "", "completed rights review CSV")
 	outputPath := flags.String("approvals-out", "", "validated rights decisions JSONL")
 	lockedAtText := flags.String("locked-at", "", "decision lock time in RFC3339 format")
-	profile := flags.String("profile", "", "required rights profile: development or certification")
+	profile := flags.String("profile", "", "required rights profile: quarantine, development, or certification")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
-	if *inventoryPath == "" || *worksheetPath == "" || *csvPath == "" || *outputPath == "" || *lockedAtText == "" || (*profile != fillercorpus.RightsProfileDevelopment && *profile != fillercorpus.RightsProfileCertification) {
-		_, _ = fmt.Fprintln(stderr, "filler-corpus-rights-lock: inventory, worksheet, completed CSV, approvals output, lock time, and explicit development/certification profile are required")
+	if *inventoryPath == "" || *worksheetPath == "" || *csvPath == "" || *outputPath == "" || *lockedAtText == "" || !fillercorpus.KnownRightsProfile(*profile) {
+		_, _ = fmt.Fprintln(stderr, "filler-corpus-rights-lock: inventory, worksheet, completed CSV, approvals output, lock time, and explicit quarantine/development/certification profile are required")
 		return 2
 	}
 	lockedAt, err := time.Parse(time.RFC3339, *lockedAtText)
@@ -43,7 +48,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "filler-corpus-rights-lock: parse --locked-at:", err)
 		return 2
 	}
-	decisions, err := lockDecisionsForProfile(*inventoryPath, *worksheetPath, *csvPath, lockedAt, *profile)
+	if err := requireNewApprovals(*outputPath); err != nil {
+		_, _ = fmt.Fprintln(stderr, "filler-corpus-rights-lock:", err)
+		return 1
+	}
+	decisions, err := lockDecisionsForProfile(*inventoryPath, *worksheetPath, *csvPath, lockedAt, *profile, *quarantineInspectionPath)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "filler-corpus-rights-lock:", err)
 		return 1
@@ -56,7 +65,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func lockDecisionsForProfile(inventoryPath, worksheetPath, csvPath string, lockedAt time.Time, profile string) ([]fillercorpus.RightsDecision, error) {
+func lockDecisionsForProfile(inventoryPath, worksheetPath, csvPath string, lockedAt time.Time, profile string, inspectionPaths ...string) ([]fillercorpus.RightsDecision, error) {
+	if len(inspectionPaths) > 1 {
+		return nil, fmt.Errorf("at most one quarantine inspection path is permitted")
+	}
+	inspectionPath := ""
+	if len(inspectionPaths) == 1 {
+		inspectionPath = inspectionPaths[0]
+	}
 	inventoryRaw, err := os.ReadFile(inventoryPath)
 	if err != nil {
 		return nil, fmt.Errorf("read inventory: %w", err)
@@ -70,18 +86,18 @@ func lockDecisionsForProfile(inventoryPath, worksheetPath, csvPath string, locke
 	if err != nil {
 		return nil, fmt.Errorf("read worksheet: %w", err)
 	}
-	var sheet fillercorpus.RightsWorksheet
-	if err := json.Unmarshal(raw, &sheet); err != nil {
+	sheet, err := decodeWorksheet(raw)
+	if err != nil {
 		return nil, fmt.Errorf("decode worksheet: %w", err)
 	}
-	expectedSchema := fillercorpus.RightsWorksheetSchemaVersion
-	if profile == fillercorpus.RightsProfileCertification {
-		expectedSchema = fillercorpus.HoldoutRightsWorksheetSchemaVersion
+	expectedSchema, knownProfile := fillercorpus.RightsWorksheetSchemaForProfile(profile)
+	if !knownProfile {
+		return nil, fmt.Errorf("unknown rights profile %q", profile)
 	}
-	profileMatches := sheet.Profile == profile || (profile == fillercorpus.RightsProfileDevelopment && sheet.Profile == "")
+	profileMatches := sheet.Profile == profile
 	if sheet.SchemaVersion != expectedSchema || !profileMatches || len(sheet.Cases) == 0 || sheet.InventorySHA256 != inventoryDigest ||
 		!sheet.SnapshotAt.Equal(inv.SnapshotAt) ||
-		sheet.PreparedAt.Before(sheet.SnapshotAt) || sheet.MinItems <= 0 || sheet.MaxItems < sheet.MinItems || len(inv.Cases) < sheet.MinItems {
+		sheet.PreparedAt.Before(sheet.SnapshotAt) || sheet.MinItems <= 0 || sheet.MaxItems < sheet.MinItems {
 		return nil, fmt.Errorf("worksheet identity is invalid")
 	}
 	if profile == fillercorpus.RightsProfileCertification {
@@ -89,17 +105,51 @@ func lockDecisionsForProfile(inventoryPath, worksheetPath, csvPath string, locke
 			return nil, err
 		}
 	} else if sheet.HoldoutTemplate != nil {
-		return nil, fmt.Errorf("development worksheet cannot contain a holdout contract template")
+		return nil, fmt.Errorf("non-certification worksheet cannot contain a holdout contract template")
 	}
 	expectedCases := make([]fillercorpus.RightsReviewRow, 0, len(inv.Cases))
-	for _, item := range inv.Cases {
-		expectedCases = append(expectedCases, fillercorpus.RightsReviewRowFromCase(item))
-	}
-	sort.Slice(expectedCases, func(i, j int) bool {
-		return sha256Hex(inventoryDigest+"/"+expectedCases[i].CaseID) < sha256Hex(inventoryDigest+"/"+expectedCases[j].CaseID)
-	})
-	if len(expectedCases) > sheet.MaxItems {
-		expectedCases = expectedCases[:sheet.MaxItems]
+	expectedInspectionByCase := make(map[string]*fillercorpus.QuarantineInspectionCaseBinding, len(inv.Cases))
+	if profile == fillercorpus.RightsProfileQuarantine {
+		if inspectionPath != "" || sheet.QuarantineInspection != nil {
+			return nil, fmt.Errorf("quarantine profile cannot consume a post-download inspection")
+		}
+		for _, item := range inv.Cases {
+			expectedCases = append(expectedCases, fillercorpus.RightsReviewRowFromCase(item))
+		}
+		sort.Slice(expectedCases, func(i, j int) bool {
+			return sha256Hex(inventoryDigest+"/"+expectedCases[i].CaseID) < sha256Hex(inventoryDigest+"/"+expectedCases[j].CaseID)
+		})
+		if len(expectedCases) > sheet.MaxItems {
+			expectedCases = expectedCases[:sheet.MaxItems]
+		}
+		if len(expectedCases) < sheet.MinItems {
+			return nil, fmt.Errorf("worksheet selection is below its minimum")
+		}
+	} else {
+		var inspectionRaw []byte
+		if inspectionPath != "" {
+			inspectionRaw, err = os.ReadFile(inspectionPath)
+			if err != nil {
+				return nil, fmt.Errorf("read quarantine inspection: %w", err)
+			}
+		}
+		authority, openErr := fillerquarantine.OpenRightsEligibility(inventoryRaw, inspectionRaw)
+		if openErr != nil {
+			return nil, openErr
+		}
+		selection, selectErr := authority.Selected(sheet.MinItems, sheet.MaxItems)
+		if selectErr != nil {
+			return nil, selectErr
+		}
+		if !reflect.DeepEqual(sheet.QuarantineInspection, selection.QuarantineInspection) {
+			return nil, fmt.Errorf("worksheet does not bind the exact quarantine inspection")
+		}
+		for _, candidate := range selection.Cases {
+			row := fillercorpus.RightsReviewRowFromCase(candidate.Inventory)
+			row.QuarantineInspection = candidate.QuarantineInspection
+			expectedCases = append(expectedCases, row)
+			expectedInspectionByCase[candidate.Inventory.CaseID] = candidate.QuarantineInspection
+		}
 	}
 	if len(sheet.Cases) != len(expectedCases) {
 		return nil, fmt.Errorf("worksheet selection does not match its frozen inventory and bounds")
@@ -110,9 +160,9 @@ func lockDecisionsForProfile(inventoryPath, worksheetPath, csvPath string, locke
 	}
 	defer func() { _ = file.Close() }()
 	reader := csv.NewReader(file)
-	header := fillercorpus.RightsReviewCSVHeader()
-	if profile == fillercorpus.RightsProfileCertification {
-		header = fillercorpus.HoldoutRightsReviewCSVHeader()
+	header, err := fillercorpus.RightsReviewCSVHeaderForProfile(profile)
+	if err != nil {
+		return nil, err
 	}
 	reader.FieldsPerRecord = len(header)
 	records, err := reader.ReadAll()
@@ -130,10 +180,13 @@ func lockDecisionsForProfile(inventoryPath, worksheetPath, csvPath string, locke
 		if _, duplicate := byID[row.CaseID]; duplicate {
 			return nil, fmt.Errorf("duplicate worksheet row %s", row.CaseID)
 		}
+		if profile == fillercorpus.RightsProfileQuarantine && row.QuarantineInspection != nil {
+			return nil, fmt.Errorf("quarantine worksheet row %q cannot contain post-download authority", row.CaseID)
+		}
 		item := expectedCases[index]
 		item.Rank = index + 1
 		item.InventorySHA256 = inventoryDigest
-		if row.Rank != index+1 || !reflect.DeepEqual(fillercorpus.ImmutableRightsReviewRecord(row), fillercorpus.ImmutableRightsReviewRecord(item)) {
+		if row.Rank != index+1 || !reflect.DeepEqual(fillercorpus.ImmutableRightsReviewRecordForProfile(row, profile), fillercorpus.ImmutableRightsReviewRecordForProfile(item, profile)) {
 			return nil, fmt.Errorf("worksheet row %s changes the deterministic frozen selection", row.CaseID)
 		}
 		byID[row.CaseID] = row
@@ -150,18 +203,29 @@ func lockDecisionsForProfile(inventoryPath, worksheetPath, csvPath string, locke
 			return nil, fmt.Errorf("duplicate completed review row %s", caseID)
 		}
 		seen[caseID] = struct{}{}
-		if expected := fillercorpus.ImmutableRightsReviewRecord(row); !reflect.DeepEqual(record[:len(expected)], expected) {
+		expected := fillercorpus.ImmutableRightsReviewRecordForProfile(row, profile)
+		if !reflect.DeepEqual(record[:len(expected)], expected) {
 			return nil, fmt.Errorf("completed review row %s changes immutable worksheet fields", caseID)
 		}
-		fields := record[len(fillercorpus.ImmutableRightsReviewRecord(row)):]
+		fields := record[len(expected):]
 		var decision fillercorpus.RightsDecision
-		if profile == fillercorpus.RightsProfileCertification {
+		switch profile {
+		case fillercorpus.RightsProfileQuarantine:
+			decision, err = parseQuarantineDecision(row, fields, lockedAt)
+		case fillercorpus.RightsProfileCertification:
 			decision, err = parseHoldoutDecision(row, sheet.HoldoutTemplate, fields, lockedAt)
-		} else {
+		default:
 			decision, err = parseDecision(row, fields, lockedAt)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("completed review row %s: %w", caseID, err)
+		}
+		if binding := expectedInspectionByCase[caseID]; binding != nil {
+			value := *binding
+			decision.QuarantineInspection = &value
+		}
+		if profile != fillercorpus.RightsProfileQuarantine {
+			decision.WorksheetSchemaVersion = sheet.SchemaVersion
 		}
 		decisions = append(decisions, decision)
 	}
@@ -169,6 +233,65 @@ func lockDecisionsForProfile(inventoryPath, worksheetPath, csvPath string, locke
 		return nil, fmt.Errorf("completed CSV covers %d of %d worksheet rows", len(seen), len(sheet.Cases))
 	}
 	return decisions, nil
+}
+
+func parseQuarantineDecision(row fillercorpus.RightsReviewRow, fields []string, lockedAt time.Time) (fillercorpus.RightsDecision, error) {
+	if len(fields) != 15 {
+		return fillercorpus.RightsDecision{}, fmt.Errorf("quarantine review has %d fields; want 15", len(fields))
+	}
+	reviewerID := strings.TrimSpace(fields[0])
+	reviewedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(fields[1]))
+	if reviewerID == "" || err != nil || reviewedAt.Before(row.MetadataRetrievedAt) || reviewedAt.After(lockedAt) {
+		return fillercorpus.RightsDecision{}, fmt.Errorf("reviewer and review time must bind a completed review to the frozen metadata")
+	}
+	decision := strings.TrimSpace(fields[2])
+	if decision != "approved" && decision != "held" {
+		return fillercorpus.RightsDecision{}, fmt.Errorf("decision must be approved or held")
+	}
+	basis := strings.TrimSpace(fields[3])
+	if basis == "" {
+		return fillercorpus.RightsDecision{}, fmt.Errorf("a reasoned basis is required")
+	}
+	values := make([]bool, 9)
+	for index := range values {
+		value, parseErr := strconv.ParseBool(strings.TrimSpace(fields[4+index]))
+		if parseErr != nil {
+			return fillercorpus.RightsDecision{}, fmt.Errorf("%s must be explicitly true or false", fillercorpus.QuarantineRightsReviewCSVHeader()[len(fillercorpus.ImmutableRightsReviewRecord(row))+4+index])
+		}
+		values[index] = value
+	}
+	contract := &fillercorpus.QuarantineAcquisitionContract{
+		SchemaVersion:  fillercorpus.QuarantineAcquisitionContractSchemaVersion,
+		Purpose:        fillercorpus.QuarantinePurposeLocalInspection,
+		CopyAndStorage: values[0], LocalTechnicalInspection: values[1], ProviderTransfer: values[2],
+		Redistribution: values[3], CorpusPreparation: values[4], Training: values[5],
+		CatalogIngestion: values[6], Scheduling: values[7], ProductionAdmission: values[8],
+	}
+	contract.HoldReasons = fillercorpus.QuarantineAcquisitionHoldReasons(contract)
+	if decision == "approved" && len(contract.HoldReasons) != 0 {
+		return fillercorpus.RightsDecision{}, fmt.Errorf("approval is held by: %s", strings.Join(contract.HoldReasons, ", "))
+	}
+	if decision == "held" {
+		if slices.Contains(values, true) {
+			return fillercorpus.RightsDecision{}, fmt.Errorf("held rows cannot grant quarantine or downstream authority")
+		}
+		if len(contract.HoldReasons) == 0 {
+			contract.HoldReasons = []string{"reviewer_hold"}
+		}
+	}
+	requiredCredit := strings.TrimSpace(fields[13])
+	if decision == "approved" && requiresCredit(row.LicenseURL) && requiredCredit == "" {
+		return fillercorpus.RightsDecision{}, fmt.Errorf("the asserted license requires attribution")
+	}
+	var restrictions []string
+	if err := json.Unmarshal([]byte(fields[14]), &restrictions); err != nil {
+		return fillercorpus.RightsDecision{}, fmt.Errorf("restrictions_json must be a JSON string array")
+	}
+	return fillercorpus.RightsDecision{
+		InventorySHA256: row.InventorySHA256, CaseID: row.CaseID, CaptureIDs: append([]string(nil), row.CaptureIDs...), Authority: row.Authority, ItemID: row.ItemID, MetadataSHA256: row.MetadataSHA256,
+		ReviewerID: reviewerID, ReviewedAt: reviewedAt.UTC(), Decision: decision, Basis: basis, Redistributable: false,
+		RequiredCredit: requiredCredit, Restrictions: restrictions, QuarantineContract: contract,
+	}, nil
 }
 
 func parseHoldoutDecision(row fillercorpus.RightsReviewRow, template *fillercorpus.HoldoutRightsTemplate, fields []string, lockedAt time.Time) (fillercorpus.RightsDecision, error) {
@@ -311,11 +434,43 @@ func requiresCredit(licenseURL string) bool {
 	return strings.Contains(value, "/licenses/by/") || strings.Contains(value, "/licenses/by-sa/")
 }
 
+func decodeWorksheet(raw []byte) (fillercorpus.RightsWorksheet, error) {
+	var sheet fillercorpus.RightsWorksheet
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&sheet); err != nil {
+		return sheet, err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("trailing JSON value")
+		}
+		return sheet, err
+	}
+	return sheet, nil
+}
+
+func requireNewApprovals(path string) error {
+	_, err := os.Lstat(path)
+	switch {
+	case err == nil:
+		return fmt.Errorf("approvals output already exists")
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	default:
+		return fmt.Errorf("inspect approvals output: %w", err)
+	}
+}
+
 func writeJSONL(path string, decisions []fillercorpus.RightsDecision) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
 		return err
 	}
-	temp, err := os.CreateTemp(filepath.Dir(path), ".filler-corpus-rights-lock-*")
+	if err := os.MkdirAll(filepath.Dir(absolute), 0o750); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(absolute), ".filler-corpus-rights-lock-*")
 	if err != nil {
 		return err
 	}
@@ -340,7 +495,11 @@ func writeJSONL(path string, decisions []fillercorpus.RightsDecision) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(tempName, path); err != nil {
+	if err := os.Link(tempName, absolute); err != nil {
+		return fmt.Errorf("publish immutable rights decisions: %w", err)
+	}
+	if err := os.Remove(tempName); err != nil {
+		_ = os.Remove(absolute)
 		return err
 	}
 	ok = true

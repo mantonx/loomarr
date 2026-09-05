@@ -16,7 +16,9 @@ import (
 
 	"github.com/loomarr/loomarr/internal/fillercorpus"
 	"github.com/loomarr/loomarr/internal/fillereval"
+	"github.com/loomarr/loomarr/internal/fillerquarantine"
 	"github.com/loomarr/loomarr/internal/mediatools"
+	"github.com/loomarr/loomarr/internal/testkit"
 )
 
 type fakeDeriver struct{ frame, alternateFrame []byte }
@@ -116,8 +118,35 @@ func TestPrepareCertificationRejectsSchemaThreeRightsApprovals(t *testing.T) {
 		plan.SliceGates[0].MinAccuracyLower = .5
 	})
 	opts.kind = fillereval.CorpusCertification
-	if _, _, err := prepare(t.Context(), opts, deriver); err == nil || !strings.Contains(err.Error(), "lacks certification holdout authority") {
+	if _, _, err := prepare(t.Context(), opts, deriver); err == nil || !strings.Contains(err.Error(), "legacy or mismatched certification rights decision") {
 		t.Fatalf("schema-v3 certification error = %v", err)
+	}
+}
+
+func TestPrepareRejectsQuarantineAuthorityForEveryCorpusProfile(t *testing.T) {
+	for _, kind := range []fillereval.CorpusKind{fillereval.CorpusDevelopmentSeed, fillereval.CorpusCertification} {
+		t.Run(string(kind), func(t *testing.T) {
+			opts, deriver := preparationFixture(t)
+			mutatePreparationFixture(t, opts, func(_ *fillercorpus.Inventory, decisions []fillercorpus.RightsDecision, plan *preparationPlan) {
+				for index := range decisions {
+					decisions[index].Redistributable = false
+					decisions[index].QuarantineContract = &fillercorpus.QuarantineAcquisitionContract{
+						SchemaVersion:  fillercorpus.QuarantineAcquisitionContractSchemaVersion,
+						Purpose:        fillercorpus.QuarantinePurposeLocalInspection,
+						CopyAndStorage: true, LocalTechnicalInspection: true,
+					}
+				}
+				if kind == fillereval.CorpusCertification {
+					plan.Kind = kind
+					plan.Cases[1].Split = fillereval.SplitHoldout
+					plan.SliceGates[0].MinAccuracyLower = .5
+				}
+			})
+			opts.kind = kind
+			if _, _, err := prepare(t.Context(), opts, deriver); err == nil {
+				t.Fatal("quarantine authority entered corpus preparation")
+			}
+		})
 	}
 }
 
@@ -169,6 +198,46 @@ func TestPrepareFailsClosedWithoutExactApprovalAndPublishesNoDerivatives(t *test
 	}
 }
 
+func TestPrepareRemoteMediaRequiresExactInspectionBinding(t *testing.T) {
+	opts, deriver, _ := remotePreparationFixture(t)
+	decisions, err := readJSONL[fillercorpus.RightsDecision](opts.approvalsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisions[0].QuarantineInspection = nil
+	if err := writeJSONL(opts.approvalsPath, decisions); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := prepare(t.Context(), opts, deriver); err == nil || !strings.Contains(err.Error(), "does not bind the exact quarantine inspection") {
+		t.Fatalf("unbound remote decision error = %v", err)
+	}
+	if _, err := os.Stat(opts.derivativesRoot); !os.IsNotExist(err) {
+		t.Fatalf("unbound authority published derivatives: %v", err)
+	}
+}
+
+func TestPrepareRejectsPostInspectionSourceMutationBeforeCreatingOutput(t *testing.T) {
+	opts, deriver, remotePath := remotePreparationFixture(t)
+	media, err := os.ReadFile(remotePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range media {
+		media[index] ^= 0xff
+	}
+	if err := os.WriteFile(remotePath, media, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outputParent := filepath.Join(filepath.Dir(opts.derivativesRoot), "authority-preflight-output")
+	opts.derivativesRoot = filepath.Join(outputParent, "derivatives")
+	if _, _, err := prepare(t.Context(), opts, deriver); err == nil || !strings.Contains(err.Error(), "source bytes differ from quarantine inspection") {
+		t.Fatalf("mutated remote source error = %v", err)
+	}
+	if _, err := os.Stat(outputParent); !os.IsNotExist(err) {
+		t.Fatalf("authority failure created output directories: %v", err)
+	}
+}
+
 func TestPrepareRejectsPerceptualFamilySplitAcrossClusters(t *testing.T) {
 	opts, deriver := preparationFixture(t)
 	deriver.alternateFrame = deriver.frame
@@ -194,6 +263,7 @@ func TestPrepareRejectsCampaignAuthoredAfterAcquisition(t *testing.T) {
 
 func addHoldoutContracts(decisions []fillercorpus.RightsDecision) {
 	for index := range decisions {
+		decisions[index].WorksheetSchemaVersion = fillercorpus.HoldoutRightsWorksheetSchemaVersion
 		decisions[index].HoldoutContract = validHoldoutContract(decisions[index].CaseID)
 	}
 }
@@ -280,7 +350,7 @@ func preparationFixture(t *testing.T) (options, fakeDeriver) {
 	var approvals bytes.Buffer
 	encoder := json.NewEncoder(&approvals)
 	for _, item := range inv.Cases {
-		if err := encoder.Encode(fillercorpus.RightsDecision{InventorySHA256: digest, CaseID: item.CaseID, CaptureIDs: item.CaptureIDs, Authority: item.Authority, ItemID: item.ItemID, MetadataSHA256: item.MetadataSHA256, ReviewerID: "rights-reviewer", ReviewedAt: snapshot.Add(time.Hour), Decision: "approved", Basis: "signed grant inspected", Redistributable: true}); err != nil {
+		if err := encoder.Encode(fillercorpus.RightsDecision{WorksheetSchemaVersion: fillercorpus.RightsWorksheetSchemaVersion, InventorySHA256: digest, CaseID: item.CaseID, CaptureIDs: item.CaptureIDs, Authority: item.Authority, ItemID: item.ItemID, MetadataSHA256: item.MetadataSHA256, ReviewerID: "rights-reviewer", ReviewedAt: snapshot.Add(time.Hour), Decision: "approved", Basis: "signed grant inspected", Redistributable: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -356,4 +426,105 @@ func mutatePreparationFixture(t *testing.T, opts options, mutate func(*fillercor
 	if err := os.WriteFile(opts.planPath, planRaw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func remotePreparationFixture(t *testing.T) (options, fakeDeriver, string) {
+	t.Helper()
+	opts, deriver := preparationFixture(t)
+	inventoryRaw, err := os.ReadFile(opts.inventoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inv fillercorpus.Inventory
+	if err := json.Unmarshal(inventoryRaw, &inv); err != nil {
+		t.Fatal(err)
+	}
+	decisions, err := readJSONL[fillercorpus.RightsDecision](opts.approvalsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan preparationPlan
+	if err := readStrictJSON(opts.planPath, &plan); err != nil {
+		t.Fatal(err)
+	}
+
+	item := &inv.Cases[0]
+	oldPath := filepath.Join(opts.localRoot, item.Representation.Path)
+	media, err := os.ReadFile(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directCapture := &inv.Captures[0]
+	directCapture.PredictedMediaBytes -= int64(len(media))
+	remoteAuthority, collection, role := "archive.org/prelinger", "prelinger", "commercial"
+	remoteCaptureID := fillercorpus.NewCaptureID(remoteAuthority, collection, role)
+	inv.Captures = append(inv.Captures, fillercorpus.Capture{
+		CaptureID: remoteCaptureID, Transport: fillercorpus.TransportHTTPS, Authority: remoteAuthority, Collection: collection, RoleHint: role, SnapshotAt: inv.SnapshotAt,
+		MaxRequests: 10, RequestsUsed: 1, MaxResponseBytes: 10_000, ResponseBytes: 100, MaxPredictedMediaBytes: 10_000, PredictedMediaBytes: int64(len(media)), MaxWallTimeMS: 1_000, WallTimeMS: 10,
+	})
+	item.CaseID = fillercorpus.CaseID(remoteAuthority, item.ItemID)
+	item.CaptureIDs = []string{remoteCaptureID}
+	item.Authority = remoteAuthority
+	item.Collection = []string{collection}
+	item.ItemURL = "https://archive.org/details/" + item.ItemID
+	item.MetadataURL = "https://archive.org/metadata/" + item.ItemID
+	item.AllowedMediaHosts = []string{"archive.org", ".archive.org"}
+	item.Representation.Transport = fillercorpus.TransportHTTPS
+	item.Representation.URL = "https://archive.org/download/" + item.ItemID + "/" + item.Representation.Name
+	item.Representation.Path = ""
+	item.Representation.SHA256 = ""
+	remoteName := fillercorpus.InventorySHA256([]byte(item.CaseID))[:16] + filepath.Ext(item.Representation.Name)
+	remotePath := filepath.Join(opts.remoteRoot, remoteName)
+	if err := os.WriteFile(remotePath, media, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	decisions[0].CaseID = item.CaseID
+	decisions[0].CaptureIDs = append([]string(nil), item.CaptureIDs...)
+	decisions[0].Authority = item.Authority
+	plan.Cases[0].CaseID = item.CaseID
+
+	inventoryRaw, err = json.Marshal(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failures := fillercorpus.ValidateInventory(inv); len(failures) != 0 {
+		t.Fatalf("remote inventory: %v", failures)
+	}
+	if err := os.WriteFile(opts.inventoryPath, inventoryRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := fillercorpus.InventorySHA256(inventoryRaw)
+	reportRaw := testkit.FillerQuarantineReport(t, inventoryRaw, map[string]string{item.CaseID: fillerquarantine.DispositionEligibleForRightsReview}, map[string]string{item.CaseID: fillercorpus.InventorySHA256(media)})
+	reportPath := filepath.Join(filepath.Dir(opts.inventoryPath), "inspection.json")
+	if err := os.WriteFile(reportPath, reportRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	authority, err := fillerquarantine.OpenRightsEligibility(inventoryRaw, reportRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection, err := authority.Selected(1, len(inv.Cases))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindingByCase := make(map[string]*fillercorpus.QuarantineInspectionCaseBinding, len(selection.Cases))
+	for _, candidate := range selection.Cases {
+		bindingByCase[candidate.Inventory.CaseID] = candidate.QuarantineInspection
+	}
+	for index := range decisions {
+		decisions[index].InventorySHA256 = digest
+		decisions[index].QuarantineInspection = bindingByCase[decisions[index].CaseID]
+	}
+	if err := writeJSONL(opts.approvalsPath, decisions); err != nil {
+		t.Fatal(err)
+	}
+	planRaw, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(opts.planPath, planRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts.quarantineInspectionPath = reportPath
+	return opts, deriver, remotePath
 }

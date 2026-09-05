@@ -1,6 +1,7 @@
 package fillerreference
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -318,14 +319,28 @@ func (a FamilyAudit) ValidateSplit(caseSplits map[string]string) error {
 // normalized correlation. Constant/near-silent tracks have no useful variance
 // and cannot establish a duplicate relationship.
 func CompareAudioEnvelopes(a, b []uint32) AudioComparison {
+	result, _ := CompareAudioEnvelopesContext(context.Background(), a, b)
+	return result
+}
+
+// CompareAudioEnvelopesContext is the cancellable form used by bounded
+// inspection jobs. Cancellation never produces a partial comparison.
+func CompareAudioEnvelopesContext(ctx context.Context, a, b []uint32) (AudioComparison, error) {
 	result := AudioComparison{}
 	if len(a) < duplicateAudioMinBins || len(b) < duplicateAudioMinBins {
-		return result
+		return result, nil
 	}
 	minimum := min(len(a), len(b))
 	minimumOverlap := int(float64(minimum) * duplicateMinCoverage)
 	best := -2.0
 	for offset := -len(a) + minimumOverlap; offset <= len(b)-minimumOverlap; offset++ {
+		if offset&63 == 0 {
+			select {
+			case <-ctx.Done():
+				return AudioComparison{}, ctx.Err()
+			default:
+			}
+		}
 		start := max(0, -offset)
 		end := min(len(a), len(b)-offset)
 		n := end - start
@@ -334,12 +349,26 @@ func CompareAudioEnvelopes(a, b []uint32) AudioComparison {
 		}
 		var sumA, sumB float64
 		for i := start; i < end; i++ {
+			if i&1023 == 0 {
+				select {
+				case <-ctx.Done():
+					return AudioComparison{}, ctx.Err()
+				default:
+				}
+			}
 			sumA += float64(a[i])
 			sumB += float64(b[i+offset])
 		}
 		meanA, meanB := sumA/float64(n), sumB/float64(n)
 		var numerator, varianceA, varianceB float64
 		for i := start; i < end; i++ {
+			if i&1023 == 0 {
+				select {
+				case <-ctx.Done():
+					return AudioComparison{}, ctx.Err()
+				default:
+				}
+			}
 			deltaA := float64(a[i]) - meanA
 			deltaB := float64(b[i+offset]) - meanB
 			numerator += deltaA * deltaB
@@ -359,7 +388,22 @@ func CompareAudioEnvelopes(a, b []uint32) AudioComparison {
 		}
 	}
 	result.Related = result.ComparedBins >= duplicateAudioMinBins && result.Correlation >= duplicateAudioCorr
-	return result
+	return result, nil
+}
+
+// AudioFingerprintComparable reports whether an audio envelope contains the
+// minimum amount and variance needed to establish a duplicate relationship.
+func AudioFingerprintComparable(value []uint32) bool {
+	if len(value) < duplicateAudioMinBins {
+		return false
+	}
+	first := value[0]
+	for _, item := range value[1:] {
+		if item != first {
+			return true
+		}
+	}
+	return false
 }
 
 // CompareDuplicateSequences performs an order-preserving match over useful
@@ -369,19 +413,40 @@ func CompareAudioEnvelopes(a, b []uint32) AudioComparison {
 // compilation. Near-flat frames do not count because black and white cards are
 // common across unrelated adverts, but they retain their timeline position.
 func CompareDuplicateSequences(a, b []uint64) DuplicateComparison {
+	result, _ := CompareDuplicateSequencesContext(context.Background(), a, b)
+	return result
+}
+
+// CompareDuplicateSequencesContext is the cancellable form used by bounded
+// inspection jobs. Cancellation never produces a partial comparison.
+func CompareDuplicateSequencesContext(ctx context.Context, a, b []uint64) (DuplicateComparison, error) {
 	usefulA := informativeCount(a)
 	usefulB := informativeCount(b)
 	result := DuplicateComparison{ComparedFramesA: usefulA, ComparedFramesB: usefulB}
 	if usefulA < duplicateMinFrames || usefulB < duplicateMinFrames {
-		return result
+		return result, nil
 	}
 	type alignment struct{ matches, distance, maximum int }
 	best := alignment{}
 	// offset is b's frame index minus a's. Every comparison along one
 	// diagonal therefore represents one continuous temporal alignment.
 	for offset := -len(a) + 1; offset < len(b); offset++ {
+		if offset&63 == 0 {
+			select {
+			case <-ctx.Done():
+				return DuplicateComparison{}, ctx.Err()
+			default:
+			}
+		}
 		candidate := alignment{}
 		for i := max(0, -offset); i < len(a) && i+offset < len(b); i++ {
+			if i&1023 == 0 {
+				select {
+				case <-ctx.Done():
+					return DuplicateComparison{}, ctx.Err()
+				default:
+				}
+			}
 			j := i + offset
 			if !informativeHash(a[i]) || !informativeHash(b[j]) {
 				continue
@@ -404,7 +469,13 @@ func CompareDuplicateSequences(a, b []uint64) DuplicateComparison {
 		result.MaximumDistance = best.maximum
 	}
 	result.Related = result.Coverage >= duplicateMinCoverage
-	return result
+	return result, nil
+}
+
+// VisualFingerprintComparable reports whether a visual sequence contains the
+// minimum number of informative frames needed to establish a relationship.
+func VisualFingerprintComparable(value []uint64) bool {
+	return informativeCount(value) >= duplicateMinFrames
 }
 
 func informativeCount(in []uint64) int {

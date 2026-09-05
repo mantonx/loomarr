@@ -46,3 +46,40 @@ func TestHoldoutRightsHoldReasonsFailClosedByIndependentAxis(t *testing.T) {
 		})
 	}
 }
+
+func TestQuarantineAcquisitionHoldReasonsForbidEveryDownstreamUse(t *testing.T) {
+	valid := func() *QuarantineAcquisitionContract {
+		return &QuarantineAcquisitionContract{
+			SchemaVersion:            QuarantineAcquisitionContractSchemaVersion,
+			Purpose:                  QuarantinePurposeLocalInspection,
+			CopyAndStorage:           true,
+			LocalTechnicalInspection: true,
+		}
+	}
+	if reasons := QuarantineAcquisitionHoldReasons(valid()); len(reasons) != 0 {
+		t.Fatalf("valid quarantine contract held by %v", reasons)
+	}
+	tests := map[string]struct {
+		mutate func(*QuarantineAcquisitionContract)
+		want   string
+	}{
+		"copy":               {func(value *QuarantineAcquisitionContract) { value.CopyAndStorage = false }, "copy_storage_missing"},
+		"inspection":         {func(value *QuarantineAcquisitionContract) { value.LocalTechnicalInspection = false }, "local_technical_inspection_missing"},
+		"provider transfer":  {func(value *QuarantineAcquisitionContract) { value.ProviderTransfer = true }, "provider_transfer_forbidden"},
+		"redistribution":     {func(value *QuarantineAcquisitionContract) { value.Redistribution = true }, "redistribution_forbidden"},
+		"corpus preparation": {func(value *QuarantineAcquisitionContract) { value.CorpusPreparation = true }, "corpus_preparation_forbidden"},
+		"training":           {func(value *QuarantineAcquisitionContract) { value.Training = true }, "training_forbidden"},
+		"catalog ingestion":  {func(value *QuarantineAcquisitionContract) { value.CatalogIngestion = true }, "catalog_ingestion_forbidden"},
+		"scheduling":         {func(value *QuarantineAcquisitionContract) { value.Scheduling = true }, "scheduling_forbidden"},
+		"production":         {func(value *QuarantineAcquisitionContract) { value.ProductionAdmission = true }, "production_admission_forbidden"},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			contract := valid()
+			test.mutate(contract)
+			if reasons := QuarantineAcquisitionHoldReasons(contract); !slices.Contains(reasons, test.want) {
+				t.Fatalf("reasons = %v; want %q", reasons, test.want)
+			}
+		})
+	}
+}

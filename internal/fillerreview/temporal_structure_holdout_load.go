@@ -20,6 +20,7 @@ type temporalStructureHoldoutLoaded struct {
 	family             temporalStructureHoldoutFamilyAudit
 	transition         TemporalTransitionAuthority
 	programmeInventory TemporalStructureHoldoutProgrammeInventory
+	prior              temporalStructureHoldoutPrior
 	inputs             []TemporalStructureHoldoutInput
 }
 
@@ -84,6 +85,10 @@ func loadTemporalStructureHoldout(config TemporalStructureHoldoutConfig) (tempor
 	if err != nil {
 		return temporalStructureHoldoutLoaded{}, err
 	}
+	prior, err := loadTemporalStructureHoldoutPrior(config)
+	if err != nil {
+		return temporalStructureHoldoutLoaded{}, err
+	}
 	inputs := []TemporalStructureHoldoutInput{
 		{Name: "evidence_manifest", SHA256: evidenceSHA},
 		{Name: "evidence_private_map", SHA256: hashBytes(privateMapRaw)},
@@ -97,6 +102,7 @@ func loadTemporalStructureHoldout(config TemporalStructureHoldoutConfig) (tempor
 		{Name: "suitability", SHA256: suitabilitySHA},
 		{Name: "transition_authority", SHA256: transitionSHA},
 	}
+	inputs = append(inputs, prior.inputs...)
 	for _, input := range inputs {
 		if !reviewSHA256(input.SHA256) {
 			return temporalStructureHoldoutLoaded{}, fmt.Errorf("temporal structure holdout could not hash input %q", input.Name)
@@ -106,7 +112,7 @@ func loadTemporalStructureHoldout(config TemporalStructureHoldoutConfig) (tempor
 	return temporalStructureHoldoutLoaded{
 		selection: selection, evidence: evidence, evidenceSHA: evidenceSHA, privateMap: privateMap,
 		human: human, humanSHA: humanSHA, quality: quality, suitability: suitability,
-		family: family, transition: transition, programmeInventory: inventory, inputs: inputs,
+		family: family, transition: transition, programmeInventory: inventory, prior: prior, inputs: inputs,
 	}, nil
 }
 

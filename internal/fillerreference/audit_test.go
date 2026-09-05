@@ -32,6 +32,19 @@ func TestBuildAuditDerivesInputIdentitiesFromOwnedRawArtifacts(t *testing.T) {
 	}
 }
 
+func TestBuildAuditAcceptsPurposeBoundDevelopmentLedgerAndRejectsQuarantine(t *testing.T) {
+	manifest, packets, mapping, downloads, review := fixture()
+	downloads.SchemaVersion = 2
+	downloads.Profile = fillercorpus.RightsProfileDevelopment
+	if _, err := buildAudit(t, manifest, packets, mapping, downloads, review, time.Date(2026, 8, 31, 20, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("schema-v2 development ledger: %v", err)
+	}
+	downloads.Profile = fillercorpus.RightsProfileQuarantine
+	if _, err := buildAudit(t, manifest, packets, mapping, downloads, review, time.Date(2026, 8, 31, 20, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("quarantine ledger entered reference audit")
+	}
+}
+
 func TestBuildAuditKeepsAdmissionEditorialAndAcceptanceSeparate(t *testing.T) {
 	manifest, packets, mapping, downloads, review := fixture()
 	audit, err := buildAudit(t, manifest, packets, mapping, downloads, review, time.Date(2026, 8, 31, 20, 0, 0, 0, time.UTC))
