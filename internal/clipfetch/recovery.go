@@ -41,6 +41,7 @@ func RecoverAcquisitionArtifacts(
 		now = time.Now
 	}
 	var cursor filler.AcquisitionArtifactCursor
+	processed := make(map[string]struct{})
 	for {
 		artifacts, err := store.ListRecoverableAcquisitionArtifactsAfter(ctx, cursor, 500)
 		if err != nil {
@@ -55,6 +56,28 @@ func RecoverAcquisitionArtifacts(
 			case <-ctx.Done():
 				return result, ctx.Err()
 			default:
+			}
+			if _, seen := processed[artifact.ID]; seen {
+				continue
+			}
+			processed[artifact.ID] = struct{}{}
+			if artifact.Provider == string(YouTube) && artifact.State == filler.ArtifactStaged && artifact.ProviderArchiveEntry == "" {
+				artifact = repairArtifact(artifact, "staged yt-dlp artifact has no durable provider archive entry", now())
+				if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{artifact}); err != nil {
+					return result, err
+				}
+				result.Repair++
+				continue
+			}
+			if artifact.ProviderArchiveEntry != "" && !artifact.ProviderArchiveCommitted {
+				if err := commitProviderArchive(watchDir, []string{artifact.ProviderArchiveEntry}); err != nil {
+					return result, fmt.Errorf("replay provider archive for acquisition artifact %s: %w", artifact.ID, err)
+				}
+				artifact.ProviderArchiveCommitted = true
+				artifact.UpdatedAt = now().UTC()
+				if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{artifact}); err != nil {
+					return result, err
+				}
 			}
 			if artifact.State == filler.ArtifactRepair {
 				result.Repair++

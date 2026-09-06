@@ -26,6 +26,15 @@ func TestAcquisitionArtifactValidate_BindsExactWatchRelativeBytes(t *testing.T) 
 		"escaping staging": func(a *filler.AcquisitionArtifact) { a.StagingPath = "../one.mp4" },
 		"missing digest":   func(a *filler.AcquisitionArtifact) { a.MediaSHA256 = "" },
 		"zero bytes":       func(a *filler.AcquisitionArtifact) { a.MediaBytes = 0 },
+		"archive newline": func(a *filler.AcquisitionArtifact) {
+			a.ProviderArchiveEntry = "youtube one\nyoutube two"
+		},
+		"archive additional identity": func(a *filler.AcquisitionArtifact) {
+			a.ProviderArchiveEntry = "youtube one two"
+		},
+		"committed empty archive": func(a *filler.AcquisitionArtifact) {
+			a.ProviderArchiveCommitted = true
+		},
 		"repair without reason": func(a *filler.AcquisitionArtifact) {
 			a.State, a.RepairReason = filler.ArtifactRepair, ""
 		},

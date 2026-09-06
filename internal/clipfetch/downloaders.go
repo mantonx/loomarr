@@ -119,7 +119,7 @@ func (d *YtDlpDownloader) Download(ctx context.Context, src Source, dropDir stri
 		"--download-archive", archiveFile,
 		"--ffmpeg-location", d.ffmpegPath,
 		"-o", filepath.Join(absDropDir, "%(title)s [%(id)s].%(ext)s"),
-		"--print-to-file", "after_move:%(filepath)j", resultPath,
+		"--print-to-file", "after_move:%(id)s\t%(filepath)j", resultPath,
 		src.URL,
 	}
 	cmd := exec.Command(d.ytDlpPath, args...)
@@ -147,8 +147,8 @@ func (d *YtDlpDownloader) Download(ctx context.Context, src Source, dropDir stri
 	// (`--write-info-json`) and re-creating it would throw away the title and description that
 	// are the tagger's real text signals. `stampFetched` merges into what yt-dlp wrote.
 	//
-	// ⚠ Best-effort: a stamp that fails must not fail the download. The clip is on disk and
-	// catalogueable; the cost is that it files without review rather than being lost.
+	// A stamp failure is returned with the exact output as a held repair. Durable acquisition
+	// ownership prevents missing portable provenance from making the media intake-visible.
 	root, err := os.OpenRoot(absDropDir)
 	if err != nil {
 		return DownloadResult{}, fmt.Errorf("open yt-dlp output root: %w", err)
@@ -160,7 +160,15 @@ func (d *YtDlpDownloader) Download(ctx context.Context, src Source, dropDir stri
 	}
 	result := DownloadResult{Fetched: len(mediaPaths), Outputs: make([]Output, 0, len(mediaPaths))}
 	var provenanceErr error
-	for _, relativeMedia := range mediaPaths {
+	var attemptArchive []string
+	if src.archiveAttempt {
+		attemptArchive, err = archiveLines(archiveFile)
+		if err != nil {
+			return DownloadResult{}, fmt.Errorf("read yt-dlp attempt archive: %w", err)
+		}
+	}
+	for _, reported := range mediaPaths {
+		relativeMedia := reported.path
 		mediaPath := filepath.Join(absDropDir, relativeMedia)
 		digest, size, clipHash, inspectErr := inspectOutput(mediaPath)
 		if inspectErr != nil {
@@ -181,7 +189,21 @@ func (d *YtDlpDownloader) Download(ctx context.Context, src Source, dropDir stri
 			output.Repair = stampErr.Error()
 			provenanceErr = errors.Join(provenanceErr, stampErr)
 		}
-		output.ArchiveID = archiveIDFromSidecar(output.SidecarPath)
+		output.ArchiveID = reported.archiveID
+		if output.ArchiveID == "" {
+			output.ArchiveID = archiveIDFromSidecar(output.SidecarPath)
+		}
+		if src.archiveAttempt {
+			entry, entryErr := exactArchiveEntry(attemptArchive, output.ArchiveID)
+			if entryErr != nil {
+				if output.Repair == "" {
+					output.Repair = entryErr.Error()
+				}
+				provenanceErr = errors.Join(provenanceErr, entryErr)
+			} else {
+				output.ArchiveEntry = entry
+			}
+		}
 		result.Outputs = append(result.Outputs, output)
 	}
 	return result, provenanceErr
@@ -191,17 +213,21 @@ func (d *YtDlpDownloader) Download(ctx context.Context, src Source, dropDir stri
 // caller invokes it only after staged ownership is durable; a failed manifest write therefore
 // leaves the shared retry authority untouched while retaining the hidden bytes for repair.
 func (d *YtDlpDownloader) CommitArchive(dropDir, publicationDir string, outputs []Output) error {
+	_ = dropDir
 	if publicationDir == "" {
 		return nil
 	}
-	attempt, err := archiveLines(filepath.Join(dropDir, ".yt-dlp-archive.txt"))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+	entries := make([]string, 0, len(outputs))
+	for _, output := range outputs {
+		if output.ArchiveEntry != "" {
+			entries = append(entries, output.ArchiveEntry)
+		}
 	}
-	if err != nil {
-		return fmt.Errorf("read yt-dlp attempt archive: %w", err)
-	}
-	if len(attempt) == 0 {
+	return commitProviderArchive(publicationDir, entries)
+}
+
+func commitProviderArchive(publicationDir string, entries []string) error {
+	if len(entries) == 0 {
 		return nil
 	}
 	if err := os.MkdirAll(publicationDir, 0o750); err != nil {
@@ -212,19 +238,16 @@ func (d *YtDlpDownloader) CommitArchive(dropDir, publicationDir string, outputs 
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("read yt-dlp publication archive: %w", err)
 	}
-	owned := make(map[string]struct{}, len(outputs))
-	for _, output := range outputs {
-		if output.ArchiveID != "" {
-			owned[output.ArchiveID] = struct{}{}
-		}
-	}
 	known := make(map[string]struct{}, len(existing))
 	for _, line := range existing {
 		known[line] = struct{}{}
 	}
 	var additions []string
-	for _, line := range attempt {
-		if _, already := known[line]; already || !archiveLineOwnedBy(line, owned) {
+	for _, line := range entries {
+		if err := filler.ValidateProviderArchiveEntry(line); err != nil {
+			return fmt.Errorf("validate yt-dlp archive entry: %w", err)
+		}
+		if _, already := known[line]; already {
 			continue
 		}
 		known[line] = struct{}{}
@@ -242,6 +265,9 @@ func (d *YtDlpDownloader) CommitArchive(dropDir, publicationDir string, outputs 
 		if _, err := file.WriteString(line + "\n"); err != nil {
 			return fmt.Errorf("append yt-dlp publication archive: %w", err)
 		}
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync yt-dlp publication archive: %w", err)
 	}
 	return nil
 }
@@ -274,13 +300,28 @@ func archiveLines(path string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
-func archiveLineOwnedBy(line string, owned map[string]struct{}) bool {
-	fields := strings.Fields(line)
-	if len(fields) < 2 {
-		return false
+func exactArchiveEntry(lines []string, archiveID string) (string, error) {
+	if strings.TrimSpace(archiveID) == "" || strings.ContainsAny(archiveID, " \t\r\n") {
+		return "", errors.New("yt-dlp output has no exact provider archive identity")
 	}
-	_, ok := owned[fields[len(fields)-1]]
-	return ok
+	var match string
+	for _, line := range lines {
+		if filler.ValidateProviderArchiveEntry(line) != nil {
+			continue
+		}
+		fields := strings.Fields(line)
+		if fields[1] != archiveID {
+			continue
+		}
+		if match != "" && match != line {
+			return "", errors.New("yt-dlp output has ambiguous provider archive identity")
+		}
+		match = line
+	}
+	if match == "" {
+		return "", errors.New("yt-dlp output has no matching provider archive entry")
+	}
+	return match, nil
 }
 
 func archiveIDFromSidecar(path string) string {
@@ -297,24 +338,35 @@ func archiveIDFromSidecar(path string) string {
 	return sidecar.ID
 }
 
-// ytDlpSidecars reads yt-dlp's JSON-encoded after-move paths from the private result file for this
-// invocation. Ordinary stdout/stderr diagnostics are deliberately never considered provenance.
+// ytDlpMediaPaths reads yt-dlp's output ID plus JSON-encoded after-move path from the private
+// result file for this invocation. Legacy path-only fixture records remain accepted; in that case
+// the exact ID is recovered from the paired sidecar. Ordinary diagnostics are never provenance.
 // A skipped retry writes no records. Candidates are opened through root, so their descriptor stays
 // bound to the file yt-dlp named even if its path changes before stamping.
-func ytDlpMediaPaths(root *os.Root, resultPath string) ([]string, error) {
+type ytDlpReportedMedia struct {
+	path      string
+	archiveID string
+}
+
+func ytDlpMediaPaths(root *os.Root, resultPath string) ([]ytDlpReportedMedia, error) {
 	file, err := os.Open(resultPath)
 	if err != nil {
 		return nil, fmt.Errorf("open yt-dlp result file: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 
-	var paths []string
+	var paths []ytDlpReportedMedia
 	seen := make(map[string]struct{})
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 4*1024), 1024*1024)
 	for scanner.Scan() {
+		line := scanner.Text()
+		archiveID := ""
+		if before, after, ok := strings.Cut(line, "\t"); ok {
+			archiveID, line = before, after
+		}
 		var media string
-		if err := json.Unmarshal(scanner.Bytes(), &media); err != nil || media == "" {
+		if err := json.Unmarshal([]byte(line), &media); err != nil || media == "" {
 			continue
 		}
 		if !filepath.IsAbs(media) {
@@ -332,7 +384,7 @@ func ytDlpMediaPaths(root *os.Root, resultPath string) ([]string, error) {
 			continue
 		}
 		seen[relativeMedia] = struct{}{}
-		paths = append(paths, relativeMedia)
+		paths = append(paths, ytDlpReportedMedia{path: relativeMedia, archiveID: archiveID})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read yt-dlp result file: %w", err)

@@ -163,16 +163,16 @@ func TestRun_PersistsExactManifestBeforePublishing(t *testing.T) {
 		}
 		return clipfetch.DownloadResult{Fetched: 1, Outputs: []clipfetch.Output{{MediaPath: media, SidecarPath: sidecar, SHA256: digest, Bytes: 22, ClipHash: clipHash}}}, nil
 	}
-	ing := clipfetch.New(downloaderFunc(func(_ context.Context, src clipfetch.Source, attemptDir string) (clipfetch.DownloadResult, error) {
+	ing := clipfetch.New(nil, downloaderFunc(func(_ context.Context, src clipfetch.Source, attemptDir string) (clipfetch.DownloadResult, error) {
 		return downloader.Call(downloadRequest{source: src, dir: attemptDir})
-	}), nil, dir, discardLog()).WithArtifactWriter(artifactWriterFunc(func(ctx context.Context, artifacts []filler.AcquisitionArtifact) error {
+	}), dir, discardLog()).WithArtifactWriter(artifactWriterFunc(func(ctx context.Context, artifacts []filler.AcquisitionArtifact) error {
 		_, err := writer.Call(append([]filler.AcquisitionArtifact(nil), artifacts...))
 		return err
 	}))
 
 	res := ing.Run(t.Context(), []clipfetch.Source{{
-		ID: "youtube:classic", AcquisitionID: "acq-1", Kind: clipfetch.YouTube,
-		URL: "https://youtube.com/watch?v=one",
+		ID: "archive:classic", AcquisitionID: "acq-1", Kind: clipfetch.Archive,
+		URL: "https://archive.org/details/one",
 	}})
 	if res.Failed != 0 || res.Fetched != 1 || len(res.Artifacts) != 1 {
 		t.Fatalf("result = %+v, want one published artifact", res)
@@ -299,7 +299,7 @@ func TestYtDlpArchiveCommitExcludesUnreportedOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := clipfetch.NewYtDlpDownloader("yt-dlp", "ffmpeg")
-	if err := d.CommitArchive(attempt, dir, []clipfetch.Output{{ArchiveID: "owned-id"}}); err != nil {
+	if err := d.CommitArchive(attempt, dir, []clipfetch.Output{{ArchiveID: "owned-id", ArchiveEntry: "youtube owned-id"}}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, ".yt-dlp-archive.txt"))

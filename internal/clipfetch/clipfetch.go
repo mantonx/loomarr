@@ -67,9 +67,11 @@ type Output struct {
 	Bytes       int64
 	ClipHash    string
 	// ArchiveID is the provider identity reported by yt-dlp for this exact output. It is used
-	// only to advance the provider archive after this output has durable ownership.
+	// to bind the exact archive line emitted by the same invocation.
 	ArchiveID string
-	Repair    string
+	// ArchiveEntry is the exact provider deduplication line bound to this reported output.
+	ArchiveEntry string
+	Repair       string
 }
 
 type DownloadResult struct {
@@ -187,6 +189,22 @@ func (i *Ingestor) Run(ctx context.Context, sources []Source) Result {
 					res.Failed++
 					continue
 				}
+				archiveUpdated := false
+				for index := range manifests {
+					if manifests[index].ProviderArchiveEntry == "" {
+						continue
+					}
+					manifests[index].ProviderArchiveCommitted = true
+					manifests[index].UpdatedAt = i.now().UTC()
+					archiveUpdated = true
+				}
+				if archiveUpdated {
+					if persistErr := i.writer.UpsertAcquisitionArtifacts(ctx, manifests); persistErr != nil {
+						i.logf("acknowledge provider archive for %s: %v", src.URL, persistErr)
+						res.Failed++
+						continue
+					}
+				}
 			}
 			published, publishErr := i.publish(ctx, manifests, download.Outputs)
 			manifests = published
@@ -238,6 +256,9 @@ func (i *Ingestor) manifests(src Source, outputDir string, outputs []Output) []f
 			}
 		}
 		state := filler.ArtifactStaged
+		if src.Kind == YouTube && output.ArchiveEntry == "" && output.Repair == "" {
+			output.Repair = "yt-dlp output has no exact provider archive entry"
+		}
 		if output.Repair != "" {
 			state = filler.ArtifactRepair
 		}
@@ -247,7 +268,8 @@ func (i *Ingestor) manifests(src Source, outputDir string, outputs []Output) []f
 			Provider: string(src.Kind), SourceURL: src.URL, StagingPath: stagingPath,
 			MediaPath: mediaPath, SidecarPath: sidecarPath, MediaSHA256: output.SHA256,
 			MediaBytes: output.Bytes, ClipHash: output.ClipHash, State: state,
-			RepairReason: output.Repair, CompletedAt: now, UpdatedAt: now,
+			ProviderArchiveEntry: output.ArchiveEntry,
+			RepairReason:         output.Repair, CompletedAt: now, UpdatedAt: now,
 		})
 	}
 	return manifests

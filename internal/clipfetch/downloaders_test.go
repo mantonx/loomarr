@@ -297,7 +297,7 @@ func TestYtDlpDownloader_StampsOnlyCurrentInvocationSidecars(t *testing.T) {
 	marker := filepath.Join(drop, ".first-run")
 	ytdlp := testkit.Executable(t, "yt-dlp", fmt.Sprintf(`#!/bin/sh
 case "$*" in
-	*--print-to-file\ after_move:%%\(filepath\)j*) ;;
+	*--print-to-file*after_move:*filepath*) ;;
 	*) exit 9 ;;
 esac
 while test "$1" != "--print-to-file"; do shift; done

@@ -1237,9 +1237,10 @@ func testFillerAcquisitionArtifacts(t *testing.T, newStore NewStoreFunc) {
 	artifacts := []filler.AcquisitionArtifact{
 		{
 			ID: "artifact-one", AcquisitionID: run.ID, SourceID: run.SourceID,
-			Provider: "archive", SourceURL: "https://archive.org/details/one",
+			Provider: "youtube", SourceURL: "https://youtube.com/watch?v=artifact-one",
 			StagingPath: ".loomarr-acquisitions/acq-manifest/one.mp4", MediaPath: "one.mp4",
 			SidecarPath: "one.info.json", MediaSHA256: strings.Repeat("a", 64), MediaBytes: 42,
+			ProviderArchiveEntry: "youtube artifact-one", ProviderArchiveCommitted: true,
 			State: filler.ArtifactStaged, CompletedAt: now, UpdatedAt: now,
 		},
 		{

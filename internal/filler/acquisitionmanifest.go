@@ -35,10 +35,14 @@ type AcquisitionArtifact struct {
 	MediaSHA256   string
 	MediaBytes    int64
 	ClipHash      string
-	State         AcquisitionArtifactState
-	RepairReason  string
-	CompletedAt   time.Time
-	UpdatedAt     time.Time
+	// ProviderArchiveEntry is the exact downloader-emitted deduplication line for this output.
+	// ProviderArchiveCommitted becomes true only after that line is durable in the shared archive.
+	ProviderArchiveEntry     string
+	ProviderArchiveCommitted bool
+	State                    AcquisitionArtifactState
+	RepairReason             string
+	CompletedAt              time.Time
+	UpdatedAt                time.Time
 }
 
 // AcquisitionArtifactCursor is the stable ordering boundary for bounded recovery scans.
@@ -72,6 +76,13 @@ func (a AcquisitionArtifact) Validate() error {
 	if a.MediaBytes <= 0 {
 		return errors.New("acquisition artifact requires a positive media byte length")
 	}
+	if a.ProviderArchiveEntry != "" {
+		if err := ValidateProviderArchiveEntry(a.ProviderArchiveEntry); err != nil {
+			return fmt.Errorf("acquisition artifact provider archive entry: %w", err)
+		}
+	} else if a.ProviderArchiveCommitted {
+		return errors.New("acquisition artifact cannot commit an empty provider archive entry")
+	}
 	switch a.State {
 	case ArtifactStaged, ArtifactPublished, ArtifactConsumed, ArtifactRepair:
 	default:
@@ -82,6 +93,19 @@ func (a AcquisitionArtifact) Validate() error {
 	}
 	if a.CompletedAt.IsZero() || a.UpdatedAt.IsZero() {
 		return errors.New("acquisition artifact requires completion and update times")
+	}
+	return nil
+}
+
+// ValidateProviderArchiveEntry accepts exactly one canonical extractor-and-ID archive line.
+// Newlines, extra fields, and non-canonical spacing could otherwise smuggle additional identities.
+func ValidateProviderArchiveEntry(entry string) error {
+	if len(entry) > 4096 || strings.ContainsAny(entry, "\r\n") {
+		return errors.New("provider archive entry must be one bounded line")
+	}
+	fields := strings.Fields(entry)
+	if len(fields) != 2 || entry != fields[0]+" "+fields[1] {
+		return errors.New("provider archive entry must contain one extractor and one identity")
 	}
 	return nil
 }

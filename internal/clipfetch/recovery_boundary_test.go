@@ -33,6 +33,7 @@ func recoveryBoundaryArtifact(t *testing.T, root, id string, state filler.Acquis
 		SourceURL: "https://youtube.com/watch?v=boundary", StagingPath: filepath.ToSlash(filepath.Join(".loomarr-acquisitions", id, "download.mp4")),
 		MediaPath: filepath.Base(media), SidecarPath: strings.TrimSuffix(filepath.Base(media), ".mp4") + ".info.json",
 		MediaSHA256: digest, MediaBytes: size, ClipHash: hash, State: state, RepairReason: repairReason(state),
+		ProviderArchiveEntry: "youtube " + id, ProviderArchiveCommitted: true,
 		CompletedAt: at, UpdatedAt: at,
 	}
 }
