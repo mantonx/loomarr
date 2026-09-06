@@ -3834,6 +3834,13 @@ producer result supplies complete coverage only for flags explicitly claimed by 
 certificate; it cannot clear another flag merely because both originated in one model call. Private raw
 producer reports remain digest-bound evidence and public projections contain no matched words or descriptions.
 
+A visual observation with multiple opaque match ids and multiple intervals must not invent an id-to-interval
+association. Without an explicit binding, those ambiguous matches supply no timed suitability observations
+and leave coverage incomplete. Independently bound positives from other observations remain valid and can
+still reject; ambiguity never erases them. A single match id may cover multiple supplied intervals, and
+multiple match ids may share one supplied interval. Apple source-level positives retain their documented
+whole-source interval because that producer supplies no timestamps.
+
 Each axis record binds the complete child subject described above, its outcome, and the evaluator's policy,
 certification, implementation, and evidence-contract profile, plus the SHA-256 of its private bounded raw
 ledger or measurement bytes. The axis record publishes only after those raw bytes are durable. A child
