@@ -8,38 +8,29 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/loomarr/loomarr/internal/testkit"
 )
-
-type fakeAcousticProposer struct {
-	output  proposalOutput
-	err     error
-	request proposalRequest
-	calls   int
-}
-
-func (f *fakeAcousticProposer) Propose(_ context.Context, request proposalRequest) (proposalOutput, error) {
-	f.calls++
-	f.request = request
-	return f.output, f.err
-}
 
 func TestRunProposalNormalizesAndBindsCandidates(t *testing.T) {
 	t.Parallel()
 	plan := proposalTestPlan(t)
 	identity := validProposerIdentityFixture()
-	adapter := &fakeAcousticProposer{output: proposalOutput{
-		Identity: identity,
-		Complete: true,
-		Candidates: []proposedInterval{
-			{StartMS: 2_000, EndMS: 2_500},
-			{StartMS: 100, EndMS: 800},
-			{StartMS: 100, EndMS: 700},
-		},
+	adapter := &testkit.Recorder[proposalRequest, proposalOutput]{Respond: func(proposalRequest) (proposalOutput, error) {
+		return proposalOutput{
+			Identity: identity,
+			Complete: true,
+			Candidates: []proposedInterval{
+				{StartMS: 2_000, EndMS: 2_500},
+				{StartMS: 100, EndMS: 800},
+				{StartMS: 100, EndMS: 700},
+			},
+		}, nil
 	}}
 
-	got := runProposal(context.Background(), adapter, identity, plan)
-	if got.ProposalState != ProposalComplete || len(got.Candidates) != 3 || adapter.calls != 1 {
-		t.Fatalf("evidence=%+v calls=%d", got, adapter.calls)
+	got := runProposal(context.Background(), func(_ context.Context, request proposalRequest) (proposalOutput, error) { return adapter.Call(request) }, identity, plan)
+	if got.ProposalState != ProposalComplete || len(got.Candidates) != 3 || adapter.Calls() != 1 {
+		t.Fatalf("evidence=%+v calls=%d", got, adapter.Calls())
 	}
 	wantIntervals := []proposedInterval{{StartMS: 100, EndMS: 700}, {StartMS: 100, EndMS: 800}, {StartMS: 2_000, EndMS: 2_500}}
 	for index, want := range wantIntervals {
@@ -48,8 +39,9 @@ func TestRunProposalNormalizesAndBindsCandidates(t *testing.T) {
 			t.Fatalf("candidate[%d]=%+v", index, candidate)
 		}
 	}
-	if adapter.request.SourcePath != plan.SourcePath || adapter.request.AuthoritySHA256 != plan.AuthoritySHA256 || adapter.request.DurationMS != plan.Audio.EndMS {
-		t.Fatalf("request did not bind verified plan: %+v", adapter.request)
+	request := adapter.Inputs()[0]
+	if request.SourcePath != plan.SourcePath || request.AuthoritySHA256 != plan.AuthoritySHA256 || request.DurationMS != plan.Audio.EndMS {
+		t.Fatalf("request did not bind verified plan: %+v", request)
 	}
 }
 
@@ -57,7 +49,10 @@ func TestRunProposalAcceptsCompleteNoCandidateOutput(t *testing.T) {
 	t.Parallel()
 	plan := proposalTestPlan(t)
 	identity := validProposerIdentityFixture()
-	got := runProposal(context.Background(), &fakeAcousticProposer{output: proposalOutput{Identity: identity, Complete: true}}, identity, plan)
+	adapter := &testkit.Recorder[proposalRequest, proposalOutput]{Respond: func(proposalRequest) (proposalOutput, error) {
+		return proposalOutput{Identity: identity, Complete: true}, nil
+	}}
+	got := runProposal(context.Background(), func(_ context.Context, request proposalRequest) (proposalOutput, error) { return adapter.Call(request) }, identity, plan)
 	if got.ProposalState != ProposalComplete || len(got.Candidates) != 0 || got.Candidates == nil || got.Audio == nil || got.Video != VideoNotRun {
 		t.Fatalf("unexpected no-candidate evidence: %+v", got)
 	}
@@ -88,7 +83,8 @@ func TestRunProposalFailsClosedOnInvalidAdapterOutput(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			got := runProposal(context.Background(), &fakeAcousticProposer{output: test.output, err: test.err}, identity, proposalTestPlan(t))
+			adapter := &testkit.Recorder[proposalRequest, proposalOutput]{Respond: func(proposalRequest) (proposalOutput, error) { return test.output, test.err }}
+			got := runProposal(context.Background(), func(_ context.Context, request proposalRequest) (proposalOutput, error) { return adapter.Call(request) }, identity, proposalTestPlan(t))
 			if got.ProposalState != ProposalFailed || len(got.Candidates) != 0 || len(got.Audio) != 0 || got.Video != VideoNotRun {
 				t.Fatalf("invalid output escaped: %+v", got)
 			}
@@ -119,10 +115,10 @@ func TestRunProposalDoesNotInvokeAdapterWithInvalidInputs(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			adapter := &fakeAcousticProposer{}
-			got := runProposal(test.ctx, adapter, test.identity, test.plan)
-			if got.ProposalState != ProposalFailed || adapter.calls != 0 {
-				t.Fatalf("evidence=%+v calls=%d", got, adapter.calls)
+			adapter := &testkit.Recorder[proposalRequest, proposalOutput]{}
+			got := runProposal(test.ctx, func(_ context.Context, request proposalRequest) (proposalOutput, error) { return adapter.Call(request) }, test.identity, test.plan)
+			if got.ProposalState != ProposalFailed || adapter.Calls() != 0 {
+				t.Fatalf("evidence=%+v calls=%d", got, adapter.Calls())
 			}
 		})
 	}

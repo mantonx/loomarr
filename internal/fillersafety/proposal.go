@@ -40,16 +40,14 @@ type proposalOutput struct {
 	Candidates []proposedInterval
 }
 
-type acousticProposer interface {
-	Propose(context.Context, proposalRequest) (proposalOutput, error)
-}
+type acousticProposer func(context.Context, proposalRequest) (proposalOutput, error)
 
 func runProposal(ctx context.Context, proposer acousticProposer, expected proposerIdentity, plan *CompleteMediaPlan) Evidence {
 	failed := Evidence{ProposalState: ProposalFailed, Candidates: []Candidate{}, Audio: []AudioAssessment{}, Video: VideoNotRun}
 	if ctx == nil || ctx.Err() != nil || proposer == nil || !validProposerIdentity(expected) || !validProposalPlan(plan) {
 		return failed
 	}
-	output, err := proposer.Propose(ctx, proposalRequest{
+	output, err := proposer(ctx, proposalRequest{
 		AuthoritySHA256: plan.AuthoritySHA256,
 		SourceSHA256:    plan.SourceSHA256,
 		SourceBytes:     plan.SourceBytes,

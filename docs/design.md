@@ -4849,7 +4849,12 @@ native-audio adjudicator reduced that queue without earning negative authority, 
 complete-video/audio route corroborated the reduced set. Those observations establish the next
 production boundary, not a clean-source label or an admission certificate.
 
-The production **spoken-safety evaluator** is one deep Go module with one external evaluation operation
+The initial spoken-safety stage delivers a private cascade core and an ephemeral in-memory attempt
+record. Its evaluator and adapters remain unexported and unwired; this stage does not expose the
+external evaluation operation or claim an immutable durable ledger. The next stacked integration must
+deliver that operation and ledger before compatibility scoring or ingest wiring can consume the core.
+
+The completed production **spoken-safety evaluator** is one deep Go module with one external evaluation operation
 over an immutable source-authority document. It owns complete-source validation, bounded media planning,
 the ordered cascade, deterministic reduction, and canonical result validation. Local acoustic proposal,
 native-audio adjudication, complete-video/audio corroboration, and media extraction are private adapters;
@@ -4880,7 +4885,13 @@ routing, strict structured output, media ceilings, durable reservations, exact s
 metadata, and raw-response binding. Review, certification, and production safety modules may consume
 that behavior through private interfaces; none may weaken its route or accounting contract.
 
-Production integration is shadow-only. Its durable ledger is written before the compatibility score may
+Before reservation or HTTP, the transport requires validated route authority derived from the exact
+capability-snapshot bytes and expected digest. Validation binds freshness, requested and canonical
+model identities, upstream/provider route, required input modalities, structured-output support, and
+zero-data-retention eligibility. Unchecked strings or a syntactically valid digest cannot construct
+that authority; a missing or zero authority fails before any reservation or request.
+
+Subsequent production integration must be shadow-only. Its durable ledger is written before the compatibility score may
 run; failure to persist leaves the ingest parked and recoverable. The result grants no catalog filing,
 training, scheduling, or production-admission permission. An applied projection from certified
 spoken-safety evidence into the admission document is a later design and rollout change. Its identity

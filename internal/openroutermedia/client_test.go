@@ -69,7 +69,7 @@ func TestCallRejectsInvalidAudioBeforeReservation(t *testing.T) {
 func TestCallRequiresReservationBeforeHTTP(t *testing.T) {
 	t.Parallel()
 	called := false
-	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: httpfixture.RoundTripperFunc(func(*http.Request) (*http.Response, error) {
 		called = true
 		return nil, errors.New("unexpected request")
 	})}
@@ -236,10 +236,4 @@ func validResponse() []byte {
 
 func response(statusCode int, body []byte) *http.Response {
 	return &http.Response{StatusCode: statusCode, Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header)}
-}
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
-	return function(request)
 }

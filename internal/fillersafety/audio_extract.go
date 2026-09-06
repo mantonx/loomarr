@@ -10,15 +10,11 @@ import (
 	"github.com/loomarr/loomarr/internal/mediatools"
 )
 
-type candidateAudioExtractor interface {
-	Extract(context.Context, *CompleteMediaPlan, Candidate) ([]byte, error)
-}
+type candidateAudioExtractor func(context.Context, *CompleteMediaPlan, Candidate) ([]byte, error)
 
 type ffmpegCandidateAudioExtractor struct {
 	path string
 }
-
-var _ candidateAudioExtractor = ffmpegCandidateAudioExtractor{}
 
 func (e ffmpegCandidateAudioExtractor) Extract(ctx context.Context, plan *CompleteMediaPlan, candidate Candidate) ([]byte, error) {
 	if ctx == nil || ctx.Err() != nil || !validProposalPlan(plan) || candidate.StartMS < 0 || candidate.EndMS <= candidate.StartMS || candidate.EndMS > plan.Audio.EndMS || candidate.EndMS-candidate.StartMS > maxProposedIntervalMS {

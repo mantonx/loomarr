@@ -2,13 +2,9 @@ package fillersafety
 
 import "context"
 
-type audioAdjudicator interface {
-	adjudicate(context.Context, Candidate, []byte) (audioAttempt, error)
-}
+type audioAdjudicator func(context.Context, Candidate, []byte) (audioAttempt, error)
 
-type videoCorroborator interface {
-	corroborate(context.Context, *CompleteMediaPlan) (videoAttempt, error)
-}
+type videoCorroborator func(context.Context, *CompleteMediaPlan) (videoAttempt, error)
 
 type evaluator struct {
 	proposer         acousticProposer
@@ -36,13 +32,13 @@ func (e *evaluator) evaluate(ctx context.Context, plan *CompleteMediaPlan) evalu
 	evidence.Audio = make([]AudioAssessment, 0, len(evidence.Candidates))
 	for _, candidate := range evidence.Candidates {
 		assessment := AudioAssessment{CandidateID: candidate.ID, State: AudioFailed}
-		wav, err := e.audioExtractor.Extract(ctx, plan, candidate)
+		wav, err := e.audioExtractor(ctx, plan, candidate)
 		if err != nil {
 			evidence.Audio = append(evidence.Audio, assessment)
 			completed.AudioAttempts = append(completed.AudioAttempts, audioAttempt{Assessment: assessment, MatchedRuleIDs: []string{}})
 			continue
 		}
-		attempt, callErr := e.audio.adjudicate(ctx, candidate, wav)
+		attempt, callErr := e.audio(ctx, candidate, wav)
 		if callErr != nil && attempt.Assessment.State != AudioInvalidResponse {
 			attempt.Assessment = assessment
 		}
@@ -61,7 +57,7 @@ func (e *evaluator) evaluate(ctx context.Context, plan *CompleteMediaPlan) evalu
 		}
 	}
 	if allAbsent {
-		attempt, err := e.video.corroborate(ctx, plan)
+		attempt, err := e.video(ctx, plan)
 		if err != nil && attempt.State != VideoProhibitedUnprojectable && attempt.State != VideoIncomplete && attempt.State != VideoInvalidResponse {
 			attempt.State = VideoFailed
 		}
