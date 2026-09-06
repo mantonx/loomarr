@@ -28,9 +28,9 @@ import { FillerPage } from "./filler-page";
 // assertions here would only make two places to update.
 //
 // ⚠ The counts in the fixtures deliberately DISAGREE: the clip list has 2 items while the watch
-// endpoint reports 200. The header must follow the server and the Catalog badge must follow the
-// filtered query — equal fixtures could not tell those two rules apart, the same collapsed-
-// fixture trap that hid the clip-identity bug in the store.
+// endpoint reports 200. The stable Library badge must follow that server-owned catalog count,
+// not the route-local result page — equal fixtures could not tell those two rules apart, the same
+// collapsed-fixture trap that hid the clip-identity bug in the store.
 
 const clip = (hash: string, name: string): ClipDTO => ({
   hash,
@@ -66,8 +66,8 @@ const stubFillerPage = (over: { clips?: ClipDTO[]; incomingTotal?: number; total
     getMeMockHandler(me({ name: "Admin" })),
     getFillerWatchMockHandler({ sourcesOn: 4, sourcesTotal: 5, clips: 200, held: 0, health: "healthy" }),
     // ⚠ `total` is deliberately NOT derived from the arrays here — this file's whole point is that
-    // the Incoming badge follows the SERVER's count while the Catalog badge follows the filtered
-    // query, and equal fixtures could not tell those two rules apart. So the belt stays empty and
+    // the Incoming badge follows the SERVER's semantic-review count rather than the rendered
+    // rows, and equal fixtures could not tell those two rules apart. So the belt stays empty and
     // the count says 3. (§10 V51e renamed `asks`+`pipeline` → `clips`; the badge reads `total`
     // either way, which is why this survived the rename as a pure field swap.)
     getFillerDecisionReviewsMockHandler({ rows: [], total: over.incomingTotal ?? 3 }),
@@ -96,47 +96,41 @@ const makeWrapper = () => {
   );
 };
 
-const renderPage = (tab: "library" | "attention" | "sources", initialPath = "/filler/library") =>
+const renderPage = (tab: "library" | "incoming" | "sources", initialPath = "/filler/library") =>
   render(<RouterHarness content={<FillerPage tab={tab} />} initialPath={initialPath} />, {
     wrapper: makeWrapper(),
   });
 
 describe("FillerPage shell", () => {
-  // ⚠ The Catalog badge follows the FILTERED query — the opposite rule from the header, on
-  // purpose: the badge says "how many match what I asked for", the header says "what does the install
-  // hold". Moving the clip query into a Catalog tab component would leave this badge empty.
-  //
-  // ⚠ Since §10 V51d it reads the response's `total`, NOT `clips.length` — those were the same
-  // number only while the listing was unbounded. On a paged catalog the page length would render
-  // "60" beside a filter matching 1,204, which is a worse lie than no badge at all.
-  it("counts the Catalog badge from the filtered clip query, not the server total", async () => {
+  // The Library badge is shell-owned and intentionally stable: it reports the server-owned watch
+  // count, while the extracted catalog module owns its filtered result count and paging details.
+  it("keeps the Library badge stable from the server-owned catalog count", async () => {
     stubFillerPage();
     renderPage("library");
 
     const catalogTab = await screen.findByRole("link", { name: /library/i });
-    // The filter matches two ⇒ "2", though the watch endpoint reports a 200-clip catalog.
-    expect(within(catalogTab).getByText("2")).toBeInTheDocument();
+    expect(within(catalogTab).getByText("200")).toBeInTheDocument();
   });
 
   // ⚠ Admin-only, so this must WAIT for `/v1/auth/me`. Asserting on the link alone would pass
   // instantly against a member's (countless) tab and prove nothing.
-  it("counts the Needs attention badge from the semantic review total", async () => {
+  it("counts the Incoming badge from the semantic review total", async () => {
     stubFillerPage({ incomingTotal: 7 });
     renderPage("library");
 
     await waitFor(() => {
-      const incomingTab = screen.getByRole("link", { name: /needs attention/i });
+      const incomingTab = screen.getByRole("link", { name: /incoming/i });
       expect(within(incomingTab).getByText("7")).toBeInTheDocument();
     });
   });
 
-  it("keeps management behind one uncluttered destination", async () => {
+  it("makes Sources a routine top-level destination", async () => {
     stubFillerPage();
     renderPage("library");
 
-    const manageTab = await screen.findByRole("link", { name: /^manage$/i });
-    expect(manageTab).toHaveTextContent(/^Manage$/);
-    expect(screen.queryByRole("link", { name: /^sources$/i })).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /^sources$/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^incoming/i })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^manage$/i })).toBeInTheDocument();
   });
 
   it("treats section links as navigation without an orphan tabpanel role", async () => {
@@ -162,7 +156,7 @@ describe("FillerPage shell", () => {
     renderPage("sources");
 
     // Wait for the tab to be up, so this cannot pass merely by asserting before the render.
-    await screen.findByRole("link", { name: /^manage$/i });
+    await screen.findByRole("link", { name: /^sources$/i });
     expect(screen.queryByLabelText("Catalog health")).not.toBeInTheDocument();
   });
 
@@ -219,9 +213,8 @@ describe("FillerPage shell", () => {
   });
 });
 
-// Catalog paging (§10 V51d). ⚠ These live in the SHELL suite because paging is shell state —
-// the page number is in the URL, the count line and the pager bracket the grid, and the tab
-// badge reads the same total. The Catalog tab's per-clip behaviour stays in `test/filler.test.tsx`.
+// Route-level integration regressions for the extracted catalog: the module owns paging, while
+// these tests prove `/filler/library` still passes URL state through the page composition boundary.
 describe("FillerPage catalog paging", () => {
   const page = (n: number) => Array.from({ length: n }, (_, i) => clip(`hash-${i}`, `Clip ${i}`));
 

@@ -39,13 +39,14 @@ type fillerDecisionPageInput struct {
 }
 
 type fillerDecisionReviewDTO struct {
-	ID           string                       `json:"id"`
-	ClipHash     string                       `json:"clipHash"`
-	Question     string                       `json:"question"`
-	ReasonCodes  []filleradmission.ReasonCode `json:"reasonCodes"`
-	EvidenceRefs []string                     `json:"evidenceRefs"`
-	Conflicts    []filleradmission.Conflict   `json:"conflicts"`
-	CreatedAt    time.Time                    `json:"createdAt"`
+	ID              string                         `json:"id"`
+	ClipHash        string                         `json:"clipHash"`
+	Question        string                         `json:"question"`
+	ApplicationMode fillerdecision.ApplicationMode `json:"applicationMode" enum:"shadow,applied"`
+	ReasonCodes     []filleradmission.ReasonCode   `json:"reasonCodes"`
+	EvidenceRefs    []string                       `json:"evidenceRefs"`
+	Conflicts       []filleradmission.Conflict     `json:"conflicts"`
+	CreatedAt       time.Time                      `json:"createdAt"`
 }
 
 type fillerDecisionReviewsOutput struct {
@@ -163,9 +164,10 @@ func (s *Server) fillerDecisionReviews(ctx context.Context, in *fillerDecisionPa
 	for _, item := range page.Rows {
 		out.Body.Rows = append(out.Body.Rows, fillerDecisionReviewDTO{
 			ID: item.ID, ClipHash: item.ClipHash, Question: item.Question,
-			ReasonCodes:  append([]filleradmission.ReasonCode{}, item.ReasonCodes...),
-			EvidenceRefs: append([]string{}, item.EvidenceRefs...),
-			Conflicts:    append([]filleradmission.Conflict{}, item.Conflicts...), CreatedAt: item.CreatedAt,
+			ApplicationMode: item.ApplicationMode,
+			ReasonCodes:     append([]filleradmission.ReasonCode{}, item.ReasonCodes...),
+			EvidenceRefs:    append([]string{}, item.EvidenceRefs...),
+			Conflicts:       append([]filleradmission.Conflict{}, item.Conflicts...), CreatedAt: item.CreatedAt,
 		})
 	}
 	return out, nil

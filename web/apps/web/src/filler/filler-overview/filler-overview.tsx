@@ -12,7 +12,7 @@ type Action = {
   title: string;
   description: string;
   label: string;
-  to: "/filler/attention" | "/filler/manage";
+  to: "/filler/incoming" | "/filler/manage";
 };
 
 // This maps a server-owned action enum to presentation only. Priority and health are never
@@ -40,7 +40,7 @@ const decisionAction = (overview: FillerDecisionOverviewDTO): Action | undefined
         title: "A few clips need your judgment",
         description: `${pluralize(overview.actionCount ?? 0, "clip")} could not be classified safely without a person.`,
         label: "Review clips",
-        to: "/filler/attention",
+        to: "/filler/incoming",
       };
   }
 };

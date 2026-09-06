@@ -1,10 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { FillerPage } from "@/filler/filler-page";
-
-const AttentionScreen = () => <FillerPage tab="attention" />;
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 const Route = createFileRoute("/_authed/filler/attention")({
-  component: AttentionScreen,
+  beforeLoad: () => {
+    throw redirect({ to: "/filler/incoming" });
+  },
 });
 
 export { Route };

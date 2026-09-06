@@ -12,6 +12,11 @@ interface VideoPlayerProps {
   // browsers reject autoplay otherwise, which this handles rather than assuming (see the
   // component's play() rejection path).
   autoPlay?: boolean;
+  // Called from the media element's `playing` event, after playback has actually started or
+  // resumed. This is deliberately stronger than a play-button click or `play()` request: callers
+  // such as filler review use it to prove that the exact resolved bytes reached playback before
+  // enabling a semantic answer.
+  onPlaybackStart?: () => void;
   // Play only a WINDOW of the source (§10 V54), in SECONDS of media time — the unit the element
   // and `current`/`duration`/`seekTo` already speak, so a caller holding milliseconds converts.
   //

@@ -305,10 +305,10 @@ test("a trusted source converges into a channel break without routine approval",
   await expect(page.getByText("Filler is working on its own")).toBeVisible();
   const fillerNav = page.getByRole("navigation", { name: "Filler sections" });
   await expect(fillerNav.getByRole("link", { name: "Overview" })).toBeVisible();
-  await expect(fillerNav.getByRole("link", { name: /Needs attention/ })).toBeVisible();
+  await expect(fillerNav.getByRole("link", { name: "Incoming" })).toBeVisible();
   await expect(fillerNav.getByRole("link", { name: /Library/ })).toBeVisible();
   await expect(fillerNav.getByRole("link", { name: "Manage" })).toBeVisible();
-  await expect(fillerNav.getByRole("link", { name: "Sources" })).toHaveCount(0);
+  await expect(fillerNav.getByRole("link", { name: "Sources" })).toBeVisible();
 
   await page.goto("/filler/manage");
   await expect(page.getByText("Would admit (shadow)")).toBeVisible();

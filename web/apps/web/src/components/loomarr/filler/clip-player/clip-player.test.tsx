@@ -1,5 +1,5 @@
 import type { ClipDTO } from "@loomarr/api";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ClipPlayer } from "./clip-player";
 
@@ -42,6 +42,15 @@ describe("ClipPlayer", () => {
     // Autoplay is safe here: reaching this dialog required clicking a play button, so the gesture
     // that permits it has already happened.
     expect(video).toHaveAttribute("autoplay");
+  });
+
+  it("reports playback only after the media element starts playing", () => {
+    const onPlaybackStart = vi.fn();
+    render(<ClipPlayer clip={clip} onClose={() => {}} onPlaybackStart={onPlaybackStart} />);
+
+    expect(onPlaybackStart).not.toHaveBeenCalled();
+    fireEvent.playing(document.querySelector("video") as HTMLVideoElement);
+    expect(onPlaybackStart).toHaveBeenCalledOnce();
   });
 
   // ⚠ Radix REQUIRES a dialog title and warns loudly without one; it is also what names the modal

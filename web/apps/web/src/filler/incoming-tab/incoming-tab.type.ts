@@ -12,6 +12,12 @@ interface IncomingTabProps {
   // parameter was named `path` and typed `string`, so neither the compiler nor the test that
   // asserted `toHaveBeenCalledWith(ASK.path)` could see the mismatch.
   onEditTags: (hash: string) => void;
+
+  /** Exact clips already represented by the semantic review cards above this conveyor. */
+  excludedHashes?: ReadonlySet<string>;
+
+  /** Semantic exceptions rendered above the intake conveyor, included in its shared status. */
+  semanticReviewCount?: number;
 }
 
 export type { IncomingTabProps };

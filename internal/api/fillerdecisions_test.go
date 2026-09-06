@@ -21,6 +21,7 @@ type decisionListBody[T any] struct {
 
 type reviewWire struct {
 	ID, ClipHash, Question string
+	ApplicationMode        string   `json:"applicationMode"`
 	ReasonCodes            []string `json:"reasonCodes"`
 	EvidenceRefs           []string `json:"evidenceRefs"`
 }
@@ -86,6 +87,7 @@ func TestFillerDecisionProjectionsSeparateHumanWorkFromDiagnostics(t *testing.T)
 	var reviews decisionListBody[reviewWire]
 	decodeDecisionResponse(t, res, &reviews)
 	if reviews.Total != 1 || len(reviews.Rows) != 1 || reviews.Rows[0].Question == "" ||
+		reviews.Rows[0].ApplicationMode != "shadow" ||
 		len(reviews.Rows[0].ReasonCodes) != 1 || len(reviews.Rows[0].EvidenceRefs) != 2 {
 		t.Fatalf("reviews = %+v", reviews)
 	}

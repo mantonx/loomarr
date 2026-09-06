@@ -86,9 +86,10 @@ type Server struct {
 	// byte route 404s and the record route reports the image absent, which is the honest answer
 	// for an instance where the service is not wired.
 	images          ImageService
-	events          EventSource             // /v1/events SSE (Phase 11); nil ⇒ route 501
-	shutdown        <-chan struct{}         // generation shutdown closes long-lived streams before HTTP drain
-	filler          FillerService           // /v1/filler* (Phase 12); nil ⇒ sync/tag routes 501
+	events          EventSource     // /v1/events SSE (Phase 11); nil ⇒ route 501
+	shutdown        <-chan struct{} // generation shutdown closes long-lived streams before HTTP drain
+	filler          FillerService   // /v1/filler* (Phase 12); nil ⇒ sync/tag routes 501
+	fillerScreening FillerScreeningService
 	fillerDecisions *fillerdecision.Service // durable V63 admission audit and projections
 	fillerRights    FillerRightsService     // append-only current-use filler rights authority
 	pods            PodPreviewer            // /v1/channels/{id}/pods (§12); nil ⇒ 501
@@ -466,6 +467,12 @@ type TaxonomyChannelImpact struct {
 type FillerRewinder interface {
 	Rewind(ctx context.Context, hash string, from filler.StageID, force bool) error
 	RetryFailure(ctx context.Context, hash string) error
+}
+
+// FillerScreeningService is the browser-safe read boundary for one exact rendered child's five
+// screening axes. Implementations retain raw evidence and private paths behind this interface.
+type FillerScreeningService interface {
+	ReadSegmentScreeningSummary(context.Context, string, string) (filler.SegmentScreeningSummary, error)
 }
 
 // DiscoveredClip is one candidate the operator could add (§10, V33).
@@ -959,6 +966,7 @@ type Options struct {
 	Events          EventSource             // /v1/events SSE (Phase 11); nil ⇒ route 501
 	Shutdown        <-chan struct{}         // generation lifetime; closes SSE so http.Server.Shutdown can drain
 	Filler          FillerService           // /v1/filler sync/tag (Phase 12); nil ⇒ those routes 501
+	FillerScreening FillerScreeningService  // exact browser-safe rendered-child screening projection
 	FillerDecisions *fillerdecision.Service // /v1/filler/decisions* (§10 V63)
 	FillerRights    FillerRightsService     // /v1/filler/rights* (§10 V67)
 	Pods            PodPreviewer            // /v1/channels/{id}/pods preview (§12); nil ⇒ 501
