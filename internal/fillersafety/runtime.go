@@ -105,7 +105,7 @@ func NewOpenRouterEvaluationOperation(config OpenRouterEvaluationConfig) (Evalua
 	}}
 	operation, err := newEvaluationOperation(config.Repository, evaluator{
 		proposer: proposer, proposerIdentity: identity,
-		audioExtractor: ffmpegCandidateAudioExtractor{path: config.FFmpegPath}, audio: audio, video: video,
+		audioExtractor: ffmpegCandidateAudioExtractor{path: config.FFmpegPath}.Extract, audio: audio, video: video,
 	}, config.Budget, config.Now)
 	if err != nil {
 		return nil, RuntimeProfile{}, err
