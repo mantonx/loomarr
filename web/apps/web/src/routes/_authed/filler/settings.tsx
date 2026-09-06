@@ -138,7 +138,8 @@ const FillerSettingsScreen = () => (
         activeId="manage"
         tabs={[
           { id: "overview", label: "Overview", to: "/filler" },
-          { id: "attention", label: "Needs attention", to: "/filler/attention" },
+          { id: "sources", label: "Sources", to: "/filler/sources" },
+          { id: "incoming", label: "Incoming", to: "/filler/incoming" },
           { id: "library", label: "Library", to: "/filler/library" },
           { id: "manage", label: "Manage", to: "/filler/manage" },
         ]}

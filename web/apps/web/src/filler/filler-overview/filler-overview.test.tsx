@@ -71,7 +71,7 @@ describe("FillerOverview", () => {
     );
 
     expect(await screen.findByText("A few clips need your judgment")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Review clips" })).toHaveAttribute("href", "/filler/attention");
+    expect(screen.getByRole("link", { name: "Review clips" })).toHaveAttribute("href", "/filler/incoming");
     const summary = screen.getByRole("heading", { name: "Admission summary" }).parentElement?.parentElement;
     expect(summary).toBeTruthy();
     expect(within(summary as HTMLElement).getByText("18")).toBeInTheDocument();

@@ -65,6 +65,7 @@ const VideoPlayer = ({
   src,
   title,
   autoPlay,
+  onPlaybackStart,
   startAt,
   endAt,
   leading,
@@ -201,6 +202,7 @@ const VideoPlayer = ({
           muted={muted}
           playsInline
           onClick={toggle}
+          onPlaying={onPlaybackStart}
           // play/pause, elapsed, and metadata-load are owned by usePlaybackState.
           {...mediaHandlers}
         />

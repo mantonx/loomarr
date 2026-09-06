@@ -8,6 +8,9 @@ interface ClipPlayerProps {
   clip: ClipDTO | null;
   // Called when the dialog closes by any route — Escape, the close button, or the overlay.
   onClose: () => void;
+  // Called only once the browser reports that this clip's media is actually playing. Opening the
+  // dialog or requesting autoplay is not sufficient evidence because playback may fail.
+  onPlaybackStart?: () => void;
   className?: string;
 }
 

@@ -192,4 +192,16 @@ describe("IncomingTab", () => {
     renderTab();
     await waitFor(() => expect(screen.queryByText("Toy ad")).not.toBeInTheDocument());
   });
+
+  it("does not render a clip twice when the semantic review card owns it", async () => {
+    stubIncoming();
+    render(
+      <IncomingTab onEditTags={vi.fn()} excludedHashes={new Set([ASK.hash])} semanticReviewCount={1} />,
+      { wrapper: makeWrapper() },
+    );
+
+    expect(await screen.findByLabelText(/filler pipeline status/i)).toHaveTextContent(/1 clip decisions/i);
+    expect(screen.queryByText("Toy ad")).not.toBeInTheDocument();
+    expect(screen.queryByText("Nothing needs you")).not.toBeInTheDocument();
+  });
 });

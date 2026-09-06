@@ -70,9 +70,10 @@ func (s *Service) Reviews(ctx context.Context, cursor Cursor, limit int) (Review
 		decision := record.Result.Decision
 		out.Rows = append(out.Rows, ReviewItem{
 			ID: record.ID, ClipHash: record.ClipHash, Question: decision.ReviewQuestion,
-			ReasonCodes:  append([]filleradmission.ReasonCode{}, decision.ReasonCodes...),
-			EvidenceRefs: append([]string{}, decision.EvidenceRefs...),
-			Conflicts:    append([]filleradmission.Conflict{}, decision.Conflicts...), CreatedAt: record.CreatedAt,
+			ApplicationMode: record.ApplicationMode,
+			ReasonCodes:     append([]filleradmission.ReasonCode{}, decision.ReasonCodes...),
+			EvidenceRefs:    append([]string{}, decision.EvidenceRefs...),
+			Conflicts:       append([]filleradmission.Conflict{}, decision.Conflicts...), CreatedAt: record.CreatedAt,
 		})
 	}
 	return out, nil

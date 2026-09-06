@@ -71,6 +71,10 @@ func buildHTTP(deps httpBuild) http.Handler {
 	guideSvc, settingsSvc := deps.guide, deps.settings
 	liveConfig, libraryConfigured := deps.liveConfig, deps.libraryConfigured
 	jobsSvc, databaseSvc, residentLLM := deps.jobs, deps.database, deps.residentLLM
+	fillerScreening, screeningErr := buildSegmentScreeningSummaryService(fillerLayout)
+	if screeningErr != nil {
+		log.Error("filler screening summaries were not activated", "err", screeningErr)
+	}
 	return api.Router(log, api.Options{
 		Store:                st,
 		Auth:                 authorizer,
@@ -111,6 +115,7 @@ func buildHTTP(deps httpBuild) http.Handler {
 		Events:              eventBus,
 		Shutdown:            rootCtx.Done(),
 		Filler:              fillerSvc,
+		FillerScreening:     fillerScreening,
 		FillerDecisions:     deps.fillers.decisions,
 		FillerRights:        deps.fillers.rights,
 		Pods:                podPreview,

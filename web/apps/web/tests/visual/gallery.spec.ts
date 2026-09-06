@@ -73,18 +73,21 @@ for (const story of stories) {
     // taken inside one of those pauses agree, and it settles on an intermediate state.
     //
     // Storybook tracks the phase per render (`playing` → `finished`); a story with no
-    // `play()` reaches a terminal phase immediately, so this costs those nothing. `errored`
-    // and `aborted` are terminal too and must not hang here: a broken play function should
-    // fail on its own assertion, not time out on this wait.
-    await page.waitForFunction(
-      (id) => {
-        const renders = (window as unknown as StorybookPreviewWindow).__STORYBOOK_PREVIEW__?.storyRenders;
-        const phase = renders?.find((r) => r.id === id)?.phase;
-        return phase === "finished" || phase === "errored" || phase === "aborted";
-      },
-      story.id,
-      { timeout: 15_000 },
-    );
+    // `play()` reaches a terminal phase immediately, so this costs those nothing. Wait for
+    // every terminal phase so a broken play function fails with its actual phase rather
+    // than an unrelated timeout, then require success before treating pixels as evidence.
+    const phase = await page
+      .waitForFunction(
+        (id) => {
+          const renders = (window as unknown as StorybookPreviewWindow).__STORYBOOK_PREVIEW__?.storyRenders;
+          const phase = renders?.find((r) => r.id === id)?.phase;
+          return phase === "finished" || phase === "errored" || phase === "aborted" ? phase : undefined;
+        },
+        story.id,
+        { timeout: 15_000 },
+      )
+      .then((handle) => handle.jsonValue());
+    expect(phase, `Storybook interaction for ${story.id} must finish successfully`).toBe("finished");
 
     await page.evaluate(async () => {
       await document.fonts.ready;

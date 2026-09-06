@@ -1,44 +1,18 @@
 import {
   getFillerDecisionActivityMockHandler,
   getFillerDecisionDiagnosticsMockHandler,
-  getFillerIncomingMockHandler,
   getMeMockHandler,
-  getSettingsListMockHandler,
 } from "@loomarr/api/msw";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { me } from "@/test/fixtures/users";
 import { server } from "@/test/msw/server";
 import { RouterHarness } from "@/test/story-utils";
 import { FillerManage } from "./filler-manage";
-
-const emptyIncoming = {
-  overview: {
-    runnable: 0,
-    inProgress: 0,
-    scheduled: 0,
-    needsDecision: 0,
-    recoverable: 0,
-    admitted: 0,
-    rejected: 0,
-    dismissed: 0,
-  },
-  clips: [],
-  clipsTotal: 0,
-  decisionsTotal: 0,
-  reels: [],
-  reelsTotal: 0,
-  recentlyFiled: [],
-  recentlyFiledTotal: 0,
-  rejected: [],
-  rejectedTotal: 0,
-  stageOrder: [],
-  total: 0,
-};
 
 const wrapper = ({ children }: { children: ReactNode }) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -92,7 +66,7 @@ describe("FillerManage", () => {
       }),
       getFillerDecisionDiagnosticsMockHandler({ rows: [], total: 0 }),
     );
-    render(<FillerManage onEditTags={vi.fn()} />, { wrapper });
+    render(<FillerManage />, { wrapper });
 
     expect(await screen.findByText("Would admit (shadow)")).toHaveClass("text-caution");
     expect(screen.getByText("Would reject (shadow)")).toHaveClass("text-caution");
@@ -132,7 +106,7 @@ describe("FillerManage", () => {
       ),
       getFillerDecisionDiagnosticsMockHandler({ rows: [], total: 0 }),
     );
-    render(<FillerManage onEditTags={vi.fn()} />, { wrapper });
+    render(<FillerManage />, { wrapper });
 
     const unavailable = await screen.findAllByText("Decision mode unavailable");
     expect(unavailable).toHaveLength(2);
@@ -158,14 +132,12 @@ describe("FillerManage", () => {
         ],
         total: 1,
       }),
-      getFillerIncomingMockHandler(emptyIncoming),
-      getSettingsListMockHandler({ settings: [], features: { filler: true } }),
     );
-    render(<FillerManage onEditTags={vi.fn()} />, { wrapper });
+    render(<FillerManage />, { wrapper });
 
     await userEvent.click(await screen.findByRole("button", { name: "Show filler diagnostics" }));
     expect(await screen.findByText("provider unavailable")).toBeInTheDocument();
     expect(screen.getByText(/Recovery: configure provider/)).toBeInTheDocument();
-    expect(screen.getByText("Processing queue")).toBeInTheDocument();
+    expect(screen.queryByText("Processing queue")).not.toBeInTheDocument();
   });
 });

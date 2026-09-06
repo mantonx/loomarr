@@ -18,7 +18,7 @@ import type { ClipPlayerProps } from "./clip-player.type";
 // wide, unpadded surface, and the top-right corner is where the clip's title goes. The primitive
 // still supplies the focus trap, Escape handling, scroll-lock and aria-modal, which is the part
 // that actually matters.
-const ClipPlayer = ({ clip, onClose, className }: ClipPlayerProps) => (
+const ClipPlayer = ({ clip, onClose, onPlaybackStart, className }: ClipPlayerProps) => (
   <DialogPrimitive.Root
     open={clip !== null}
     onOpenChange={(next) => {
@@ -55,6 +55,7 @@ const ClipPlayer = ({ clip, onClose, className }: ClipPlayerProps) => (
             // The operator clicked a play button to get here, so the gesture that permits
             // autoplay has already happened.
             autoPlay
+            onPlaybackStart={onPlaybackStart}
             leading={
               // `render` so the Close behaviour composes onto the app's Button rather than onto a
               // hand-styled <button> that would have to re-derive the cursor and the focus ring

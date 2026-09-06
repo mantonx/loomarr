@@ -17,6 +17,8 @@ interface IncomingPanelProps {
   decisionsTotal?: number;
   reels: IncomingReelDTO[];
   reelsTotal?: number;
+  /** Another part of the same workbench already renders current work, so this list is not globally empty. */
+  suppressEmptyState?: boolean;
   /**
    * The whole stage ladder in run order — the response's `stageOrder`.
    *

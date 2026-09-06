@@ -1,15 +1,16 @@
-import type { FillerDecisionReviewsOutputBody } from "@loomarr/api";
+import type { FillerDecisionReviewsOutputBody, FillerScreeningDTO } from "@loomarr/api";
 import type { Decorator, Meta, StoryObj } from "@storybook/react-vite";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { widthFrame, withRouter } from "@/test/story-utils";
+import { withRouter } from "@/test/story-utils";
 import { FillerReviewQueue } from "./filler-review-queue";
 
 const row = (index: number) => ({
   id: `decision-${index}`,
-  clipHash: `abcdef0123456789${index}`,
+  clipHash: `${"a".repeat(63)}${index % 10}`,
+  applicationMode: "shadow" as const,
   createdAt: new Date().toISOString(),
   question: index % 2 === 0 ? "Is this a soda commercial?" : "Is this a programme promo?",
   reasonCodes: ["brand_category_conflict"],
@@ -24,13 +25,98 @@ const row = (index: number) => ({
   ],
 });
 
+const screeningFor = (clipHash: string): FillerScreeningDTO => ({
+  state: "available",
+  clipHash,
+  outcome: "pass",
+  assessedAt: new Date().toISOString(),
+  subjectSha256: "b".repeat(64),
+  evidenceSha256: "c".repeat(64),
+  axes: ["visual_safety", "spoken_safety", "written_safety", "rights", "playback_integrity"].map(
+    (axis, index) => ({
+      axis: axis as FillerScreeningDTO["axes"][number]["axis"],
+      outcome: "pass",
+      reasonCode: axis === "rights" ? "rights_verified" : "policy_clear",
+      evidenceSha256: String(index + 1).repeat(64),
+    }),
+  ),
+  rightsReview: {
+    sourceId: "archive:classic-commercials",
+    acquisitionId: "acq-mountain-dew-17",
+    sourceMasterSha256: "d".repeat(64),
+    policySha256: "4".repeat(64),
+    use: "filler_broadcast",
+    canRecord: true,
+    currentGrant: {
+      sha256: "e".repeat(64),
+      sourceId: "archive:classic-commercials",
+      acquisitionId: "acq-mountain-dew-17",
+      sourceMasterSha256: "d".repeat(64),
+      policySha256: "4".repeat(64),
+      use: "filler_broadcast",
+      status: "authorized",
+      withdrawal: "clear",
+      evidenceSha256: "f".repeat(64),
+      actorId: "admin-1",
+      effectiveAt: "2026-09-03T18:00:00Z",
+      recordedAt: "2026-09-03T18:00:00Z",
+    },
+  },
+  airworthiness: {
+    schemaVersion: 1,
+    contractVersion: "filler-airworthiness-decision-v1",
+    subjectSha256: "b".repeat(64),
+    profile: "all_ages",
+    policyVersion: "filler-airworthiness-policy-v1",
+    vocabularyVersion: "filler-airworthiness-vocabulary-v1",
+    verdict: "pass",
+    reasonCodes: ["airworthiness_evidence_satisfied"],
+    observedFlags: [],
+    heldAxes: [],
+    triggers: [],
+    evidenceSha256s: ["6".repeat(64), "7".repeat(64), "8".repeat(64)],
+    authoritySha256: "9".repeat(64),
+    decisionSha256: "0".repeat(64),
+  },
+});
+
 const withReviews =
-  (body: FillerDecisionReviewsOutputBody): Decorator =>
+  (body: FillerDecisionReviewsOutputBody, screening?: FillerScreeningDTO): Decorator =>
   (Story) => {
-    window.fetch = (() =>
-      Promise.resolve(
-        new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }),
-      )) as typeof fetch;
+    window.fetch = (async (input, init) => {
+      const request = input instanceof Request ? input : new Request(input, init);
+      const url = new URL(request.url);
+      const response = (value: unknown) =>
+        new Response(JSON.stringify(value), { status: 200, headers: { "content-type": "application/json" } });
+      if (url.pathname === "/v1/filler/decisions/reviews") return response(body);
+      if (url.pathname === "/v1/filler/screening") {
+        const hash = url.searchParams.get("hash") ?? body.rows[0]?.clipHash ?? "";
+        return response(screening ?? screeningFor(hash));
+      }
+      if (url.pathname === "/v1/filler") {
+        const hashes = url.searchParams.getAll("hashes");
+        return response({
+          clips: hashes.map((hash, index) => ({
+            hash,
+            name:
+              index === 0
+                ? "Mountain Dew commercial"
+                : index % 2 === 0
+                  ? `Soda commercial ${index + 1}`
+                  : `Station promo ${index + 1}`,
+            kind: "commercial",
+            durationMs: 30_000,
+            tagged: true,
+            aiTagged: true,
+            playCount: 0,
+            playsCounted: true,
+          })),
+          total: hashes.length,
+        });
+      }
+      if (request.method === "POST") return response({ id: "story-action" });
+      return new Response(null, { status: 404 });
+    }) as typeof fetch;
     return (
       <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
         <Story />
@@ -38,10 +124,16 @@ const withReviews =
     );
   };
 
+const withReviewWidth: Decorator = (Story) => (
+  <div style={{ width: 760, maxWidth: "calc(100vw - 32px)" }}>
+    <Story />
+  </div>
+);
+
 const meta = {
   title: "Filler/DecisionReviewQueue",
   component: FillerReviewQueue,
-  decorators: [widthFrame(760), withRouter("/filler/attention")],
+  decorators: [withReviewWidth, withRouter("/filler/incoming")],
 } satisfies Meta<typeof FillerReviewQueue>;
 
 export default meta;
@@ -50,13 +142,72 @@ type Story = StoryObj<typeof meta>;
 export const GenuineReview: Story = { decorators: [withReviews({ rows: [row(1)], total: 1 })] };
 export const Empty: Story = { decorators: [withReviews({ rows: [], total: 0 })] };
 export const LargeQueue: Story = {
-  decorators: [withReviews({ rows: Array.from({ length: 24 }, (_, index) => row(index)), total: 24 })],
+  decorators: [withReviews({ rows: Array.from({ length: 10 }, (_, index) => row(index)), total: 24 })],
+  play: async ({ canvas }) => {
+    await canvas.findByText("Station promo 10");
+  },
 };
 export const Correction: Story = {
   decorators: [withReviews({ rows: [row(2)], total: 1 })],
   play: async ({ canvas, userEvent }) => {
-    await userEvent.click(await canvas.findByRole("button", { name: "Correct" }));
+    await userEvent.click(await canvas.findByRole("button", { name: "Correct answer" }));
     await canvas.findByLabelText("Correction");
+  },
+};
+
+export const FiveAxisEvidence: Story = {
+  decorators: [withReviews({ rows: [row(2)], total: 1 })],
+  play: async ({ canvas, userEvent }) => {
+    await userEvent.click(await canvas.findByRole("button", { name: "Review evidence" }));
+    await canvas.findByText("Playback integrity");
+  },
+};
+
+export const EvidenceDrift: Story = {
+  decorators: [
+    withReviews(
+      { rows: [row(3)], total: 1 },
+      {
+        state: "unavailable",
+        reasonCode: "screening_evidence_drift",
+        clipHash: row(3).clipHash,
+        subjectSha256: "b".repeat(64),
+        evidenceSha256: "c".repeat(64),
+        axes: [],
+      },
+    ),
+  ],
+  play: async ({ canvas, userEvent }) => {
+    await userEvent.click(await canvas.findByRole("button", { name: "Review evidence" }));
+    await canvas.findByText("Screening evidence unavailable");
+  },
+};
+
+export const RightsRemediation: Story = {
+  decorators: [
+    withReviews(
+      { rows: [row(4)], total: 1 },
+      {
+        ...screeningFor(row(4).clipHash),
+        outcome: "hold",
+        axes: screeningFor(row(4).clipHash).axes.map((axis) =>
+          axis.axis === "rights" ? { ...axis, outcome: "hold", reasonCode: "rights_unknown" } : axis,
+        ),
+        rightsReview: {
+          sourceId: "archive:classic-commercials",
+          acquisitionId: "acq-mountain-dew-17",
+          sourceMasterSha256: "d".repeat(64),
+          policySha256: "4".repeat(64),
+          use: "filler_broadcast",
+          canRecord: true,
+        },
+      },
+    ),
+  ],
+  play: async ({ canvas, userEvent }) => {
+    await userEvent.click(await canvas.findByRole("button", { name: "Review evidence" }));
+    await userEvent.click(await canvas.findByRole("button", { name: "Review rights" }));
+    await canvas.findByLabelText("Private review file");
   },
 };
 

@@ -20,6 +20,7 @@ import (
 // authenticated user; tag edit, sync, and the AI-tagging job require admin
 // (filler ingestion is an admin concern, §7).
 func (s *Server) registerFiller(api huma.API) {
+	s.registerFillerScreening(api)
 	huma.Register(api, withRole(huma.Operation{
 		OperationID: "list-filler", Method: http.MethodGet, Path: "/v1/filler",
 		Summary: "List filler clips",
