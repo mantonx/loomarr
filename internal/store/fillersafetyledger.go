@@ -74,15 +74,26 @@ func (s *sqlStore) BeginSpokenSafetyRun(ctx context.Context, run fillersafety.Le
 }
 
 func (s *sqlStore) GetSpokenSafetyRun(ctx context.Context, id string) (fillersafety.LedgerRun, error) {
+	run, found, err := s.FindSpokenSafetyRun(ctx, id)
+	if err != nil {
+		return fillersafety.LedgerRun{}, err
+	}
+	if !found {
+		return fillersafety.LedgerRun{}, ErrNotFound
+	}
+	return run, nil
+}
+
+func (s *sqlStore) FindSpokenSafetyRun(ctx context.Context, id string) (fillersafety.LedgerRun, bool, error) {
 	run, err := scanSpokenSafetyRun(s.db.QueryRowContext(ctx,
 		s.ph(spokenSafetyRunSelect+` WHERE id = ?`), id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return fillersafety.LedgerRun{}, ErrNotFound
+		return fillersafety.LedgerRun{}, false, nil
 	}
 	if err != nil {
-		return fillersafety.LedgerRun{}, fmt.Errorf("get spoken-safety run: %w", err)
+		return fillersafety.LedgerRun{}, false, fmt.Errorf("find spoken-safety run: %w", err)
 	}
-	return run, nil
+	return run, true, nil
 }
 
 func scanSpokenSafetyRun(row scannable) (fillersafety.LedgerRun, error) {

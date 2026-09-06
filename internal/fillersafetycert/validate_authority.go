@@ -35,7 +35,8 @@ func validateRoute(route RouteAuthority, role, rung string, modalities []string)
 	if route.Role != role || route.Rung != rung || !slices.Equal(route.Modalities, modalities) ||
 		!boundedID(route.RequestedProvider) || !boundedID(route.RequestedModel) ||
 		!boundedID(route.ResolvedProvider) || !boundedID(route.ResolvedModel) ||
-		!boundedID(route.UpstreamProvider) || !boundedID(route.ModelFamily) ||
+		!boundedID(route.UpstreamProvider) || !boundedID(route.UpstreamProviderSlug) ||
+		route.ReasoningMode != ReasoningDisabled || !boundedID(route.ModelFamily) ||
 		!validSHA256(route.CapabilitySHA256) || !validSHA256(route.PromptSHA256) || !validSHA256(route.SchemaSHA256) {
 		return fmt.Errorf("route identity is incomplete or malformed")
 	}

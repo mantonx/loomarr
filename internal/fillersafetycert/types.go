@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	SchemaVersion   = 1
-	ContractVersion = "filler-spoken-cascade-certification-v1"
+	SchemaVersion   = 2
+	ContractVersion = "filler-spoken-cascade-certification-v2"
 
 	ChallengeDevelopment   = "development"
 	ChallengeCertification = "certification"
@@ -71,19 +71,25 @@ type Authority struct {
 }
 
 type RouteAuthority struct {
-	Role              string   `json:"role"`
-	Rung              string   `json:"rung"`
-	Modalities        []string `json:"modalities"`
-	RequestedProvider string   `json:"requestedProvider"`
-	RequestedModel    string   `json:"requestedModel"`
-	ResolvedProvider  string   `json:"resolvedProvider"`
-	ResolvedModel     string   `json:"resolvedModel"`
-	UpstreamProvider  string   `json:"upstreamProvider"`
-	ModelFamily       string   `json:"modelFamily"`
-	CapabilitySHA256  string   `json:"capabilitySha256"`
-	PromptSHA256      string   `json:"promptSha256"`
-	SchemaSHA256      string   `json:"schemaSha256"`
+	Role                 string   `json:"role"`
+	Rung                 string   `json:"rung"`
+	Modalities           []string `json:"modalities"`
+	RequestedProvider    string   `json:"requestedProvider"`
+	RequestedModel       string   `json:"requestedModel"`
+	ResolvedProvider     string   `json:"resolvedProvider"`
+	ResolvedModel        string   `json:"resolvedModel"`
+	UpstreamProvider     string   `json:"upstreamProvider"`
+	UpstreamProviderSlug string   `json:"upstreamProviderSlug"`
+	ReasoningMode        string   `json:"reasoningMode"`
+	ModelFamily          string   `json:"modelFamily"`
+	CapabilitySHA256     string   `json:"capabilitySha256"`
+	PromptSHA256         string   `json:"promptSha256"`
+	SchemaSHA256         string   `json:"schemaSha256"`
 }
+
+const (
+	ReasoningDisabled = "disabled"
+)
 
 type AuthorityCase struct {
 	Alias                 string                `json:"alias"`

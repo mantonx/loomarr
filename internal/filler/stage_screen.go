@@ -53,6 +53,7 @@ func (s *SegmentScreeningStage) Run(ctx context.Context, clip StoreClip) (StageR
 	}
 	media := SegmentScreeningMedia{
 		Subject:          subject,
+		Manifest:         *tags.MediaAssets,
 		SourceMasterPath: filepath.Join(s.clipDir, filepath.FromSlash(tags.MediaAssets.SourceMaster.Path)),
 		EvidencePath:     filepath.Join(s.clipDir, filepath.FromSlash(tags.MediaAssets.Evidence.Asset.Path)),
 		PlaybackPath:     playbackPath,

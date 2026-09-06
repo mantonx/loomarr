@@ -14,6 +14,7 @@ import (
 // the artifact it uses and prove its bytes against Subject before returning a result.
 type SegmentScreeningMedia struct {
 	Subject          SegmentScreeningSubject
+	Manifest         MediaAssetManifest
 	SourceMasterPath string
 	EvidencePath     string
 	PlaybackPath     string
@@ -122,6 +123,18 @@ func (r *SegmentScreeningRuntime) Screen(ctx context.Context, media SegmentScree
 func validateSegmentScreeningMedia(media SegmentScreeningMedia) error {
 	if err := ValidateSegmentScreeningSubject(media.Subject); err != nil {
 		return fmt.Errorf("segment screening media subject: %w", err)
+	}
+	if err := media.Manifest.validate(); err != nil ||
+		MediaAssetManifestAuthoritySHA256(media.Manifest) != media.Subject.MediaManifestSHA256 ||
+		media.Manifest.SourceMaster.SHA256 != media.Subject.SourceMasterSHA256 ||
+		media.Manifest.SourceMaster.Bytes != media.Subject.SourceMasterBytes || media.Manifest.Evidence == nil ||
+		media.Manifest.Evidence.Asset.SHA256 != media.Subject.EvidenceSHA256 ||
+		media.Manifest.Evidence.Asset.Bytes != media.Subject.EvidenceBytes ||
+		media.Manifest.Evidence.DurationMs != media.Subject.EvidenceDurationMs || media.Manifest.Playback == nil ||
+		media.Manifest.Playback.Asset.SHA256 != media.Subject.PlaybackSHA256 ||
+		media.Manifest.Playback.Asset.Bytes != media.Subject.PlaybackBytes ||
+		media.Manifest.Playback.DurationMs != media.Subject.PlaybackDurationMs {
+		return fmt.Errorf("segment screening media manifest does not match its subject")
 	}
 	paths := []string{media.SourceMasterPath, media.EvidencePath, media.PlaybackPath}
 	seen := make(map[string]struct{}, len(paths))

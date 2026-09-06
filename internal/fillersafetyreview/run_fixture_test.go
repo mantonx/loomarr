@@ -190,7 +190,8 @@ func fixtureRoute(rung string, modalities []string, family string, seed int) fil
 		Role: "spoken-safety", Rung: rung, Modalities: modalities,
 		RequestedProvider: "openrouter", RequestedModel: "vendor/evaluated",
 		ResolvedProvider: "openrouter", ResolvedModel: "vendor/evaluated-2026",
-		UpstreamProvider: "provider", ModelFamily: family, CapabilitySHA256: testFixtureSHA(seed),
+		UpstreamProvider: "provider", UpstreamProviderSlug: "provider/slug",
+		ReasoningMode: fillersafetycert.ReasoningDisabled, ModelFamily: family, CapabilitySHA256: testFixtureSHA(seed),
 		PromptSHA256: testFixtureSHA(seed + 1), SchemaSHA256: testFixtureSHA(seed + 2),
 	}
 }

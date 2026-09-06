@@ -44,6 +44,7 @@ type SpokenAuthority struct {
 type Subject struct {
 	SHA256         string
 	EvidenceSHA256 string
+	EvidenceBytes  int64
 	DurationMS     int64
 }
 
@@ -115,8 +116,9 @@ func spokenProfile(authority SpokenAuthority, flags map[fillerairworthiness.Flag
 func ProjectSpoken(subject Subject, report fillersafety.EvaluationReport, authority SpokenAuthority) (SpokenProjection, error) {
 	profile, err := SpokenProfile(authority)
 	if err != nil || fillersafety.ValidateEvaluationReport(report) != nil || !validSHA256(subject.SHA256) ||
-		!validSHA256(subject.EvidenceSHA256) || subject.DurationMS <= 0 ||
+		!validSHA256(subject.EvidenceSHA256) || subject.EvidenceBytes <= 0 || subject.DurationMS <= 0 ||
 		report.Run.SourceSHA256 != subject.EvidenceSHA256 || report.Run.DurationMS != subject.DurationMS ||
+		report.Run.SourceBytes != subject.EvidenceBytes ||
 		report.Run.PolicySHA256 != authority.PolicySHA256 || report.Run.CertificationSHA256 != authority.CertificationSHA256 ||
 		report.Run.ProposerSHA256 != authority.ProposerSHA256 || report.Run.Implementation != authority.EvaluationImplementation {
 		return SpokenProjection{}, fmt.Errorf("spoken Airworthiness projection input is invalid or drifted")

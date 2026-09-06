@@ -224,7 +224,8 @@ func playbackIntegrityMediaFixture(t *testing.T, quality MediaQuality) SegmentSc
 		t.Fatal(err)
 	}
 	return SegmentScreeningMedia{
-		Subject: subject, SourceMasterPath: sourcePath, EvidencePath: evidencePath, PlaybackPath: playbackPath,
+		Subject: subject, Manifest: manifest,
+		SourceMasterPath: sourcePath, EvidencePath: evidencePath, PlaybackPath: playbackPath,
 	}
 }
 

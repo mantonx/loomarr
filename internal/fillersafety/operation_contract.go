@@ -107,6 +107,7 @@ type HostedCallSettlement struct {
 // ExecutionRepository is the persistence port for one evaluation. Admission
 // and operator projections deliberately cannot implement it.
 type ExecutionRepository interface {
+	FindSpokenSafetyRun(context.Context, string) (LedgerRun, bool, error)
 	BeginSpokenSafetyRun(context.Context, LedgerRun) (bool, error)
 	AppendSpokenSafetyEvent(context.Context, LedgerEvent) error
 	ListSpokenSafetyEvents(context.Context, string) ([]LedgerEvent, error)

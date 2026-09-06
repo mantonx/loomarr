@@ -304,8 +304,10 @@ func segmentScreeningEvaluatorFixtures(order *[]string) map[SegmentScreeningAxis
 
 func segmentScreeningRuntimeMedia(t *testing.T) SegmentScreeningMedia {
 	t.Helper()
+	tags := screeningChildTagsFixture(t)
 	return SegmentScreeningMedia{
 		Subject:          screeningChildSubjectFixture(t),
+		Manifest:         *tags.MediaAssets,
 		SourceMasterPath: "/private/filler/.loomarr-media/masters/aa/master.mp4",
 		EvidencePath:     "/private/filler/.loomarr-media/evidence/bb/evidence.mp4",
 		PlaybackPath:     "/private/filler/children/playback.mp4",

@@ -11,19 +11,29 @@ import (
 // ValidateOpenRouterVideoRoute proves that one fresh exact route can accept the strict direct-video
 // contract. The returned values are copies from the immutable snapshot.
 func ValidateOpenRouterVideoRoute(snapshot OpenRouterSnapshot, modelID, upstreamProvider, upstreamProviderSlug string, at time.Time, maximumCompletionTokens int64) (OpenRouterModelSnapshot, OpenRouterEndpointSnapshot, error) {
+	return validateOpenRouterMediaRoute(snapshot, modelID, upstreamProvider, upstreamProviderSlug, "video", at, maximumCompletionTokens)
+}
+
+// ValidateOpenRouterAudioRoute proves that one fresh exact route can accept strict native-audio
+// input under the same ZDR, one-upstream, and structured-output contract as video.
+func ValidateOpenRouterAudioRoute(snapshot OpenRouterSnapshot, modelID, upstreamProvider, upstreamProviderSlug string, at time.Time, maximumCompletionTokens int64) (OpenRouterModelSnapshot, OpenRouterEndpointSnapshot, error) {
+	return validateOpenRouterMediaRoute(snapshot, modelID, upstreamProvider, upstreamProviderSlug, "audio", at, maximumCompletionTokens)
+}
+
+func validateOpenRouterMediaRoute(snapshot OpenRouterSnapshot, modelID, upstreamProvider, upstreamProviderSlug, modality string, at time.Time, maximumCompletionTokens int64) (OpenRouterModelSnapshot, OpenRouterEndpointSnapshot, error) {
 	if err := ValidateOpenRouterSnapshot(snapshot); err != nil {
 		return OpenRouterModelSnapshot{}, OpenRouterEndpointSnapshot{}, err
 	}
 	if snapshot.SourceBaseURL != OpenRouterBaseURL || at.IsZero() || at != at.UTC() {
-		return OpenRouterModelSnapshot{}, OpenRouterEndpointSnapshot{}, fmt.Errorf("OpenRouter video route requires canonical metadata source and UTC validation time")
+		return OpenRouterModelSnapshot{}, OpenRouterEndpointSnapshot{}, fmt.Errorf("OpenRouter media route requires canonical metadata source and UTC validation time")
 	}
 	age := at.Sub(snapshot.RetrievedAt)
 	if age < 0 || age > maxSnapshotAge {
-		return OpenRouterModelSnapshot{}, OpenRouterEndpointSnapshot{}, fmt.Errorf("OpenRouter video route is outside the snapshot's 24-hour window")
+		return OpenRouterModelSnapshot{}, OpenRouterEndpointSnapshot{}, fmt.Errorf("OpenRouter media route is outside the snapshot's 24-hour window")
 	}
 	model, ok := snapshotModel(snapshot, modelID)
-	if !ok || !slices.Contains(model.InputModalities, "text") || !slices.Contains(model.InputModalities, "video") {
-		return OpenRouterModelSnapshot{}, OpenRouterEndpointSnapshot{}, fmt.Errorf("OpenRouter video model is absent or lacks text/video input")
+	if !ok || !slices.Contains(model.InputModalities, "text") || !slices.Contains(model.InputModalities, modality) {
+		return OpenRouterModelSnapshot{}, OpenRouterEndpointSnapshot{}, fmt.Errorf("OpenRouter media model is absent or lacks text/%s input", modality)
 	}
 	endpoint, ok := snapshotEndpoint(model, upstreamProviderSlug, upstreamProvider)
 	if !ok || !endpoint.ZDR || endpoint.Status != 0 || maximumCompletionTokens <= 0 ||
@@ -31,7 +41,7 @@ func ValidateOpenRouterVideoRoute(snapshot OpenRouterSnapshot, modelID, upstream
 		!slices.Contains(endpoint.SupportedParameters, "response_format") ||
 		!slices.Contains(endpoint.SupportedParameters, "structured_outputs") ||
 		!slices.Contains(endpoint.SupportedParameters, "reasoning") {
-		return OpenRouterModelSnapshot{}, OpenRouterEndpointSnapshot{}, fmt.Errorf("OpenRouter video route is absent, non-ZDR, inactive, or lacks strict output and reasoning control")
+		return OpenRouterModelSnapshot{}, OpenRouterEndpointSnapshot{}, fmt.Errorf("OpenRouter media route is absent, non-ZDR, inactive, or lacks strict output and reasoning control")
 	}
 	return model, endpoint, nil
 }
