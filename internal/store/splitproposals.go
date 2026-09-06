@@ -27,10 +27,11 @@ type splitProposalDocument struct {
 	Segments  []filler.SplitSegment          `json:"segments,omitempty"`
 	Detection *filler.SplitDetectionProgress `json:"detection,omitempty"`
 	Spawned   []string                       `json:"spawned,omitempty"`
+	Source    filler.SplitSourceAsset        `json:"source,omitempty"`
 }
 
 func marshalSplitProposal(p filler.SplitProposal) ([]byte, error) {
-	return json.Marshal(splitProposalDocument{Version: 2, Segments: p.Segments, Detection: p.Detection, Spawned: p.Spawned})
+	return json.Marshal(splitProposalDocument{Version: 3, Segments: p.Segments, Detection: p.Detection, Spawned: p.Spawned, Source: p.Source})
 }
 
 func unmarshalSplitProposal(raw string, p *filler.SplitProposal) error {
@@ -44,7 +45,7 @@ func unmarshalSplitProposal(raw string, p *filler.SplitProposal) error {
 	if err := json.Unmarshal(trimmed, &doc); err != nil {
 		return err
 	}
-	p.Segments, p.Detection, p.Spawned = doc.Segments, doc.Detection, doc.Spawned
+	p.Segments, p.Detection, p.Spawned, p.Source = doc.Segments, doc.Detection, doc.Spawned, doc.Source
 	return nil
 }
 

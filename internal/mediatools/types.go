@@ -64,14 +64,26 @@ type TranscriptSegment struct {
 // create a state where a clip has a duration but silently lost its quality, which is exactly
 // the kind of half-populated row that is painful to notice later.
 type Probed struct {
-	DurationMs int64
+	DurationMs int64 `json:"durationMs"`
 	// Width is the VIDEO stream's width in pixels; zero when unavailable.
-	Width int
+	Width int `json:"width"`
 	// Height is the VIDEO stream's height in pixels; 0 when the file has no video stream or
 	// the probe could not tell. Quality is derived from it (see QualityFromHeight) rather
 	// than stored raw, because "1080p" is what a person reads and 1088 is what some encoders
 	// actually write.
-	Height int
+	Height int `json:"height"`
+	// Cadence, sample/display aspect and field order are exact ffprobe observations. Empty means
+	// unavailable; transforms may not turn that absence into a claim about the source.
+	Cadence          string `json:"cadence,omitempty"`
+	SampleAspect     string `json:"sampleAspect,omitempty"`
+	DisplayAspect    string `json:"displayAspect,omitempty"`
+	FieldOrder       string `json:"fieldOrder,omitempty"`
+	VideoStartMs     int64  `json:"videoStartMs,omitempty"`
+	VideoDurationMs  int64  `json:"videoDurationMs,omitempty"`
+	VideoTimingKnown bool   `json:"videoTimingKnown,omitempty"`
+	AudioStartMs     int64  `json:"audioStartMs,omitempty"`
+	AudioDurationMs  int64  `json:"audioDurationMs,omitempty"`
+	AudioTimingKnown bool   `json:"audioTimingKnown,omitempty"`
 	// Silent reports that the file carries NO audio stream at all (§10 V40).
 	//
 	// ⚠ Presence, not loudness — a clip CAN be legitimately quiet, and that is normalisation's
@@ -86,11 +98,11 @@ type Probed struct {
 	//
 	// Costs nothing extra to fill: the probe already asks for `codec_type` per stream so it can
 	// find the VIDEO height, and this reads the same answer.
-	Silent bool
+	Silent bool `json:"silent,omitempty"`
 	// NoVideo reports that ffprobe returned no video stream at all. It is explicit rather than
 	// inferred from Height == 0: injected/older probers may know duration without dimensions, and
 	// the zero value must remain permissive for the same compatibility reason as Silent above.
-	NoVideo bool
+	NoVideo bool `json:"noVideo,omitempty"`
 }
 
 // Prober reads a media file's duration and dimensions. Satisfied by FFprobe; injected so the

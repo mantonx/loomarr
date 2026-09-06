@@ -1,6 +1,7 @@
 package filler_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -617,7 +618,7 @@ func seedCompilation(st *splitMemStore, path string, durationMs int64) string {
 	// and DISTINCT from the path. Leaving it "" made SetClipComposite(clip.Hash=="") match whichever
 	// empty-hash clip the map iteration reached first — the compilation OR a freshly-cut segment — an
 	// intermittent "compilation not marked composite" flake ([[loomarr-fixture-collapsed-keys]]).
-	c.Hash = "hash-of-" + path
+	c.Hash = splitFixtureIdentity(path)
 	c.Path = path
 	c.Name = filepath.Base(path)
 	c.Kind = filler.Commercial
@@ -653,6 +654,7 @@ func stageParentForSplitReview(st *splitMemStore, hash string) {
 }
 
 func newSplitter(st filler.SplitStore, tools filler.MediaTools, provider *testkit.LLM, dropDir string) *filler.Splitter {
+	materializeSplitSources(st, dropDir)
 	var p llm.Provider
 	if provider != nil {
 		p = provider
@@ -667,13 +669,54 @@ func newSplitter(st filler.SplitStore, tools filler.MediaTools, provider *testki
 		func() time.Time { return time.Unix(1_800_000_000, 0).UTC() }, nil)
 }
 
+func splitFixtureBytes(path string) []byte {
+	return []byte("real split source fixture: " + path)
+}
+
+func splitFixtureIdentity(path string) string {
+	contents := splitFixtureBytes(path)
+	id, err := filler.ClipIDFromReaderAt(bytes.NewReader(contents), int64(len(contents)))
+	if err != nil {
+		panic(fmt.Sprintf("split fixture identity: %v", err))
+	}
+	return id
+}
+
+func materializeSplitSources(st filler.SplitStore, root string) {
+	clips, err := st.ListClips(context.Background())
+	if err != nil {
+		panic(fmt.Sprintf("list split fixture clips: %v", err))
+	}
+	for _, clip := range clips {
+		path := filepath.Join(root, filepath.FromSlash(clip.Path))
+		if _, err := os.Lstat(path); err == nil {
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			panic(fmt.Sprintf("stat split fixture source %s: %v", path, err))
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			panic(fmt.Sprintf("create split fixture source directory: %v", err))
+		}
+		if err := os.WriteFile(path, splitFixtureBytes(clip.Path), 0o600); err != nil {
+			panic(fmt.Sprintf("write split fixture source: %v", err))
+		}
+	}
+}
+
 func TestSplitStage_LongBoundaryScanResumesFromDurableChunkAfterRestartAndTimeout(t *testing.T) {
 	st := newSplitMemStore()
 	duration := int64((21 * time.Minute) / time.Millisecond)
 	hash := seedCompilation(st, "comps/three-hour-shape.mp4", duration)
+	var cancelSecondBoundary context.CancelFunc
+	cancelDuringSecondBoundary := false
 	tools := &fakeTools{boundaryFn: func(ctx context.Context, startMs, endMs int64) ([]filler.Interval, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		if cancelDuringSecondBoundary {
+			cancelDuringSecondBoundary = false
+			cancelSecondBoundary()
+			return nil, ctx.Err()
 		}
 		var gaps []filler.Interval
 		for cut := startMs + 30_000; cut < endMs; cut += 30_000 {
@@ -699,10 +742,21 @@ func TestSplitStage_LongBoundaryScanResumesFromDurableChunkAfterRestartAndTimeou
 	}
 	proposalID := props[0].ID
 
-	expired, cancel := context.WithCancel(context.Background())
+	preCanceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := newStage().Run(expired, clip); !errors.Is(err, context.Canceled) {
-		t.Fatalf("expired second chunk = %v, want cancellation", err)
+	spansBeforePreCanceled := len(tools.boundarySpans)
+	if _, err := newStage().Run(preCanceled, clip); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pre-canceled second chunk = %v, want cancellation", err)
+	}
+	if len(tools.boundarySpans) != spansBeforePreCanceled {
+		t.Fatalf("pre-canceled second chunk reached detector: spans = %v", tools.boundarySpans)
+	}
+
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	cancelSecondBoundary = cancelSecond
+	cancelDuringSecondBoundary = true
+	if _, err := newStage().Run(secondCtx, clip); !errors.Is(err, context.Canceled) {
+		t.Fatalf("in-detector second chunk = %v, want cancellation", err)
 	}
 	props, _ = st.ListSplitProposals(context.Background())
 	if props[0].Detection.ScannedThroughMs != 600_000 {
@@ -1389,6 +1443,10 @@ func TestConfirm_WritesReviewedSegments(t *testing.T) {
 		tags, ok := filler.ReadSidecarTags(filepath.Join(drop, seg.Path))
 		if !ok || tags.ConditioningLineage == nil || tags.ConditioningLineage.ChildHash != seg.Hash {
 			t.Errorf("confirmed segment %q child identity binding = %+v, ok=%v", seg.Name, tags.ConditioningLineage, ok)
+		} else if tags.ConditioningLineage.ParentAssetRole != string(filler.SplitSourceLegacyPlayback) ||
+			tags.ConditioningLineage.ParentAssetSHA256 != prop.Source.SHA256 {
+			t.Errorf("confirmed segment %q parent asset binding = %+v, want role %q digest %q",
+				seg.Name, tags.ConditioningLineage, filler.SplitSourceLegacyPlayback, prop.Source.SHA256)
 		}
 	}
 	// The cut files exist at cataloged paths (segments only; the composite keeps its own file).

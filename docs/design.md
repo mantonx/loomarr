@@ -1033,7 +1033,7 @@ private-address, and cancellation outcomes fail the lookup without yielding evid
 | POST | `/v1/proposals/{id}/deny` | Deny (admin) with optional reason; proposal → `denied`, member sees it in My proposals. |
 | GET | `/v1/filler` | List clip catalog; filter by kind/era/audience/category/untagged, by `taxon` (an exact graph node whose descendant rollups match too), by `unclassified` (no directly asserted taxonomy tags on any axis), or by `withoutAxis` (no direct assertion on one named axis; neutral because cue axes are intentionally sparse), plus `q` across name, brand, visible text, and tags (§7.2 — clip search lives here, not in `/v1/search`). |
 | PATCH | `/v1/filler/tags` | Edit a clip's tags — including **confirming an era suggestion** (§10): setting `era` on a clip that carries one clears the suggestion. The suggestion itself is never settable directly; only the tagger writes it, and only when the year is not in the source text. ⚠ **The clip is identified by its content `hash` in the BODY** (V45a) — completing the V38c identity change up through the API. The wire identity is the hash (hex, no slashes), NOT the path: the path is a disk *location* the server keeps to itself, and putting a slash-bearing path in a URL or body was the source of a routing/proxy 404. Every clip-addressing route (this, split, and the byte routes below) takes the hash. |
-| POST | `/v1/filler/rewind` | Re-run one clip from a named ingest stage (admin, §10 V55). This is the recovery path after a configuration or provider problem has been fixed: it resets that stage and every dependent stage, durably forces the selected rung past its ordinary applicability shortcut, clears only derived artifacts safe for that rung to replace, and puts the pipeline row back on the conveyor. Rewinding `transcode` is refused unless `force:true`, because it can replace the playable bytes; routine UI actions expose only non-destructive rewinds. |
+| POST | `/v1/filler/rewind` | Re-run one clip from a named ingest stage (admin, §10 V55). This is the recovery path after a configuration or provider problem has been fixed: it resets that stage and every dependent stage, durably forces the selected rung past its ordinary applicability shortcut, clears only derived artifacts safe for that rung to replace, and puts the pipeline row back on the conveyor. Rewinding `transcode` is refused unless `force:true`, because it can replace the playable derivative (the V66 source master remains retained); routine UI actions expose only non-destructive rewinds. |
 | POST | `/v1/filler/retry` | Retry one or up to 50 execution failures (admin, §10 V56). The server selects the failed rung from the lifecycle projection, preserves completed upstream work, and reports rows that are no longer retryable without coercing them. For an exhausted probe/transcode failure, restore, hold, and requeue commit atomically; content-decision overrides remain on the separate restore path. |
 | GET | `/v1/filler/discover` | Browse clips the operator could add, **downloading nothing** (admin, §10 V33/V17d). `q` searches archive.org by keyword; `collection` lists one named collection (a URL, a `/details/<id>` path, or a bare identifier); sending both searches **within that collection**, which is what a registered source row promises. The `collection`-only mode is what a **starter pack** is — a curated collection listed for keep/exclude before anything is fetched — so browsing a suggested pack and browsing a search result are one code path, not two. Neither mode requires the ingest tooling: listing is plain `net/http`, so an operator on a degraded install can still see what exists and learn why the fetch is unavailable. Licence availability is stated **once, about the search** — archive.org declares one on ~8% of items, so a per-row chip would imply a check that never happened (build plan §6.3). |
 | POST | `/v1/filler/sync` | Sync catalog from the Tunarr `local` filler source (§10). |
@@ -3440,9 +3440,10 @@ targets in one system means a clip normalised on file is then corrected again do
 different number — double processing, and a quieter result than either setting asks for. One
 target, whichever stage applies it.
 
-⚠ **It is DESTRUCTIVE and the operator is told so.** The original cannot be recovered; that is
-inherent to rewriting in place and is why this is opt-in rather than the default. What it must not
-also be is *repeating*: a re-scan cannot tell by looking that a file has already been normalised,
+⚠ **It changes the playback derivative and the operator is told so.** V66 retains the immutable
+source master, so the acquired bytes remain recoverable; the opt-in still changes what will air and
+therefore cannot be implicit. What it must not also be is *repeating*: a re-scan cannot tell by looking
+that a playable file has already been normalised,
 so without a marker every pass would normalise an already-normalised file, walking the loudness
 down on each run. The sidecar records `normalizedLufs` beside the clip, and the pass **skips any
 file already carrying that marker at the current target**. The marker travels with the clip the
@@ -3453,6 +3454,83 @@ disk measures at target already, so the playout filter is a no-op for it — whi
 before the toggle was turned on, or from a source that bypassed auto-file, are still corrected. The
 guarantee "every break plays at a consistent level" cannot depend on which clips happened to pass
 through one optional step.
+
+### Source evidence and playable media are different assets (V66)
+
+The former transcode contract kept one H.264/AAC mezzanine and deleted the bytes it was made from.
+Archive acquisition compounded that loss by selecting the smallest video derivative by default.
+That is adequate for immediate playback and the wrong foundation for deciding where one commercial
+ends, reading small print and logos, distinguishing an upload defect from source content, or
+reproducing a later model judgment. A convenient rendition is not source evidence.
+
+Every clip that reaches the transcode rung therefore has three explicit media roles:
+
+| Role | Authority and use | Mutation contract |
+| --- | --- | --- |
+| **source master** | Exact acquired or operator-supplied bytes; the authority for provenance, reprocessing, and recovery | Immutable. Full-file SHA-256 and byte length identify it. It is never replaced by a derivative. |
+| **evidence derivative** | Complete bounded A/V inspection, segmentation, OCR/frame extraction, transcription, and model input | Reproducible from the master under one versioned recipe. No playout loudness rewrite and no cosmetic restoration. |
+| **playback derivative** | The file registered with Tunarr or read by internal playout | H.264/yuv420p video, AAC stereo at 48 kHz, fast-start, and bounded GOP; optional measured loudness policy belongs here. |
+
+The source master is copied and fully hashed into the hidden content-addressed tree
+`.loomarr-media/masters/<sha[0:2]>/<sha[2:4]>/<sha><original-extension>` before any derivative may
+publish. Hidden media is beneath the same filler filesystem so staging and publication remain atomic,
+but the ordinary folder scan never treats it as playable. A full digest collision with different
+bytes, a non-regular object, an escaping path, or an incomplete copy fails closed. Removing the
+visible pre-transcode name after playback publication removes only that name; the master remains.
+Application-enforced immutability is the contract—read-only mode bits are defence in depth, not proof,
+so every reuse re-opens and verifies the exact bytes.
+
+The playable sidecar carries one closed, versioned media-asset manifest. It binds the source-master
+digest/path/length and each derivative's role, input digest, output digest/length/path, recipe id and
+recipe digest, exact media-tool identity, decoded duration, stream identities, and completed QC
+evidence. A derivative can be reused only when all of those facts match and its current regular-file
+bytes have been reverified against the recorded full SHA-256 and byte length; cached QC and sparse
+clip identity alone cannot authorize reuse. Paths are filler-root-relative: retained masters and
+evidence stay in their hidden role trees, while playback uses its visible catalog path. Paths are
+never accepted as identity. A catalog rebuild can
+therefore recover the relationship without trusting a database cache or re-running paid analysis.
+The hidden source also carries enough portable provenance to find its acquired source and original
+name when the playable rendition is absent.
+
+**Archive chooses a source representation, not the cheapest playback file.** Selection is a pure,
+stable ordering over Archive's declared file metadata. A recognized video original outranks a
+derivative; within the same source class Loomarr prefers complete positive duration and dimensions,
+then greater dimensions, a plausible greater encoded bitrate derived from declared bytes/duration,
+then positive byte length, with the normalized filename as the final tie-break. Unknown facts never
+satisfy a minimum or beat an observed fact, malformed and non-video entries are ineligible, and the
+chosen representation plus every observed ranking input travels in acquisition provenance. The
+planner's item-level quality floor still applies before download; representation selection cannot
+launder an item that failed it. This is a quality/evidence policy, not a claim that Archive's
+`original` label proves authenticity or redistribution rights.
+
+**Recipes say exactly what was changed.** The evidence recipe normalizes timestamp origin and selects
+one explicit video/audio stream while preserving measured display dimensions, aspect and cadence; it
+does not apply loudness, crop, scale, deinterlace, frame-rate conversion, denoise, sharpen, colorize,
+logo removal, or grain removal implicitly. An observed defect may justify one of those transforms only
+through a different recipe that records the before measurement, decision and exact parameters. The
+playback recipe likewise preserves dimensions, display aspect and cadence by default while making the
+codec/container changes above. Neither derivative is described as "improved" merely because it is
+newer or more compatible.
+
+Both derivatives are built from the retained master, never serially from one another. Publication is
+stage-then-verify-then-atomically-name: a candidate must completely decode and match the expected A/V
+stream presence and bounded duration before its final hidden or playable name can appear. QC records
+container/stream duration, exact cadence, interlace observation, display aspect, audio/video start and
+end skew, integrated loudness/true peak, corruption, black, silence and freeze evidence. Seekability,
+fast-start and bounded keyframe distance are additional playback checks. Unavailable required evidence,
+an unjustified timing/aspect change, failed decode, or mismatched digest holds the clip and preserves
+the master; it never promotes a partial derivative.
+
+Confirmed compilation children retain the reviewed parent hash and exact intended interval as today,
+and additionally bind the parent media-asset digest and the exact source role from which the cut was
+made. Boundary measurements compare the child with that immutable parent role. This prevents a future
+playback-recipe change from silently changing what the split decision meant. The actual boundary
+detection and commercial-versus-scene-change policy remain the following split rung's responsibility.
+
+There is deliberately no automatic master garbage collection in V66. A later recoverable GC may remove
+a master only after no playable clip, split lineage, audit record, inference evidence, acquisition
+authority, or retention obligation refers to it and after proving every remaining derivative is
+regenerable. Until that complete ownership graph exists, storage costs are visible and masters stay.
 
 **Conditioning measurement is evidence, never authority (V64).** The media-tools module can inspect
 one bounded local regular-file artifact and, optionally, compare it with one local regular-file
@@ -6465,7 +6543,7 @@ derived state, resets retry attempts/backoff, persists an explicit force-run mar
 existing row to `queued`. The worker bypasses that selected rung's ordinary applicability shortcut
 even after a restart, then clears the marker when the rung resolves; upstream measurements and
 operator-authored tags survive. A transcode rewind is exceptional and requires an explicit force
-flag because it may replace source bytes. This is deliberately a pipeline operation rather than a
+flag because it replaces derived playable bytes, although V66 retains the source master. This is deliberately a pipeline operation rather than a
 delete-and-rescan workaround: recovery must preserve identity, provenance, and operator decisions.
 
 **Lifecycle and recovery are domain answers, not UI guesses (V56).** The persisted row remains the
@@ -8747,7 +8825,7 @@ Notifications → Add provider**.
 | `INGEST_WHISPER_PATH` / `INGEST_WHISPER_MODEL` | vendored paths in the image — the whisper.cpp binary and its model file (§10, §14, V34). Unset/unrunnable ⇒ compilation splitting's transcript-rescue step is unavailable: over-long segments surface to the operator as **unsplittable** in the review UI rather than being guessed at (coarse splitting still works — it needs only ffmpeg). Overridable like the other tool paths |
 | `INGEST_TIMEOUT` | `30m` — per-item wall-clock ceiling so one wedged fetch cannot hold the pipeline forever. Ingest concurrency is pipeline-owned policy. |
 | `FILLER_AUTOFILE_ENABLED` / `FILLER_AUTOFILE_MIN_CONFIDENCE` | **`true` / `85`** (§10 V38). Whether a tagged clip is filed automatically, and the score it must reach. ⚠ **These keys were REMOVED from this table in V35's review** as declared-but-unconsumed — §15's own rule is that a setting not in the registry does not exist. They return **with their consumer, in the same PR**: the filing path reads them, and a test proves a clip below the threshold reaches Incoming instead of the catalog. ⚠ **ON by default means an existing install starts auto-filing on its first tagging run after upgrade** (maintainer, 2026-08-02) — a deliberate product call. What makes it safe is not the number but §10's grounding **cap**: an ungrounded era cannot reach any threshold, so the fabrication class stays with a human regardless |
-| `FILLER_PIPELINE_MAX_CLIPS` / `FILLER_TRANSCODE_MAX_PER_RUN` / `FILLER_PIPELINE_MAX_WHISPER` / `FILLER_PIPELINE_MAX_VISION` / `FILLER_PIPELINE_MAX_SPLITS` | **`25` / `3` / `10` / `5` / `3`** (§10 V51b). The ingest pipeline's per-run budget. Each bounds ONE PASS, not the catalog, so a backlog drains over cycles — the property the per-job batch constants they replace were chosen to defend, with the numbers carried forward unchanged. ⚠ **Zero means NONE, a distinct state from the default**: it is the only way to say "never do this kind of work on this box", which matters most for the transcode budget — the one rung that rewrites the operator's file. (⚠ `FILLER_SPLIT_EVERY` is retired: splitting is a rung every long recording reaches as it is ingested, so "how often do we go looking" stopped being a question with an answer.) |
+| `FILLER_PIPELINE_MAX_CLIPS` / `FILLER_TRANSCODE_MAX_PER_RUN` / `FILLER_PIPELINE_MAX_WHISPER` / `FILLER_PIPELINE_MAX_VISION` / `FILLER_PIPELINE_MAX_SPLITS` | **`25` / `3` / `10` / `5` / `3`** (§10 V51b). The ingest pipeline's per-run budget. Each bounds ONE PASS, not the catalog, so a backlog drains over cycles — the property the per-job batch constants they replace were chosen to defend, with the numbers carried forward unchanged. ⚠ **Zero means NONE, a distinct state from the default**: it is the only way to say "never do this kind of work on this box", which matters most for the transcode budget — the rung that creates V66's evidence and playback derivatives while retaining the source master. (⚠ `FILLER_SPLIT_EVERY` is retired: splitting is a rung every long recording reaches as it is ingested, so "how often do we go looking" stopped being a question with an answer.) |
 | `FILLER_REJECT_UNIDENTIFIED` | **`true`** (§10 V51b). Set aside a clip when every signal tier ran and grounded nothing — no era, audience, tag, brand, speech or on-screen text. ⚠ **The only reject an operator can switch off**, because "we could not identify it" is not the claim "it is not a commercial", and a wordless station ident is exactly that case. ⚠ It is also why the rejected list is not optional: every refusal carries a stable reason code plus the measured detail and is reversible in one click. The guard that makes the default safe lives in the score rung — a clip is only unidentified if something actually LOOKED, so a clip the tagger never reached falls through to review, never to a reject |
 | `FILLER_AUTOSPLIT_ENABLED` / `FILLER_AUTOSPLIT_MIN_CONFIDENCE` | **`true` / `85`** (§10 V43, default flipped in V51b). Whether an unambiguous split is confirmed without a human, and the score every remaining segment must reach. Known duplicates and below-`FILLER_MIN_DURATION` fragments are discarded first; they are deterministic non-clips, not review decisions, and the preserved composite is the recovery path. ⚠ **This was OFF, and the note here argued for it**: cutting is destructive in a way tagging is not — a mis-cut clip plays half an advert. That risk has not changed; the evidence has. The gate remains strict (the remaining reel qualifies as a whole or none of it does, an ungrounded era disqualifies at every threshold, and a segment the detector admits it could not resolve sends the reel to a human) and its measured failure mode is refusing GOOD reels, not admitting bad ones. Off by default meant every compilation waited for a click the design says should be unnecessary. ⚠ **A SEPARATE threshold from `FILLER_AUTOFILE_MIN_CONFIDENCE`, deliberately.** One dial would force the stricter of two different failure modes to govern both |
 | `FILLER_AUTOSPLIT_MAX_DURATION` | `120s` (§10 V43). The longest a segment may be and still count as advert-shaped. ⚠ Serves TWO jobs and that is why it is one key: it selects which catalog clips the split job even looks at (longer than this ⇒ a compilation worth detecting), and it is the ceiling every segment must clear for auto-confirm. A single number keeps those two answers from disagreeing — a clip the job considers too long to be an advert must not then auto-confirm as one |
