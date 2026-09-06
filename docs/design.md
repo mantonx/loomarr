@@ -191,6 +191,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns filesystem-backed executable test doubles without importing application packages.
 - **`testkit/httpfixture`**
   Shared no-network HTTP test seams without importing any application adapter.
+- **`testkit/operationfixture`**
+  Cycle-free function-backed recordings for testing durable operations without importing an application package.
 - **`testkit/postgresimage`** · 1 importer
   Owns the single image reference used by Postgres testcontainers and the Make pre-pull that runs before those tests.
 - **`testkit/recordfixture`**
