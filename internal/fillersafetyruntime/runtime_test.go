@@ -20,14 +20,15 @@ import (
 
 type runtimeRepository = operationfixture.Repository[fillersafety.LedgerRun, fillersafety.LedgerEvent, fillersafety.HostedCallReservation, fillersafety.HostedCallSettlement]
 
-type fixedSourceInspector struct {
-	inspection sourceInspection
-	calls      int
+type sourceInspectorAdapter func(context.Context, string, string, mediatools.MediaToolIdentity) (sourceInspection, error)
+
+func (inspect sourceInspectorAdapter) Inspect(ctx context.Context, path, ffmpegPath string, expected mediatools.MediaToolIdentity) (sourceInspection, error) {
+	return inspect(ctx, path, ffmpegPath, expected)
 }
 
-func (i *fixedSourceInspector) Inspect(context.Context, string, string, mediatools.MediaToolIdentity) (sourceInspection, error) {
-	i.calls++
-	return i.inspection, nil
+type sourceInspectionRequest struct {
+	path, ffmpegPath string
+	expected         mediatools.MediaToolIdentity
 }
 
 type operationEvaluator func(context.Context, fillersafety.EvaluationRequest) (fillersafety.EvaluationReport, error)
@@ -47,6 +48,11 @@ func TestRuntimeBuildsExactSourceAuthorityAndReusesDurableRunTime(t *testing.T) 
 	if report.Run.ID != fixture.request.OperationSHA256 || len(requests) != 1 || fixture.snapshotCalls != 1 {
 		t.Fatalf("report=%+v requests=%d snapshots=%d", report, len(requests), fixture.snapshotCalls)
 	}
+	inspections := fixture.inspector.Inputs()
+	if len(inspections) != 1 || inspections[0].path != fixture.request.EvidencePath ||
+		inspections[0].ffmpegPath != "ffmpeg" || inspections[0].expected != fixture.request.EvidenceTool {
+		t.Fatalf("inspection requests = %+v", inspections)
+	}
 	if len(fixture.operationConfigs) != 1 ||
 		fixture.operationConfigs[0].Audio.Model != fixture.authority.AudioRoute.RequestedModel ||
 		fixture.operationConfigs[0].Audio.ProviderSlug != fixture.authority.AudioRoute.UpstreamProviderSlug ||
@@ -65,7 +71,13 @@ func TestRuntimeBuildsExactSourceAuthorityAndReusesDurableRunTime(t *testing.T) 
 	}
 
 	durableAt := firstAt.Add(-time.Hour)
-	if _, err := fixture.repository.BeginSpokenSafetyRun(context.Background(), fillersafety.LedgerRun{ID: fixture.request.OperationSHA256, CreatedAt: durableAt}); err != nil {
+	if _, err := fixture.repository.BeginSpokenSafetyRun(context.Background(), fillersafety.LedgerRun{
+		ID: fixture.request.OperationSHA256, ClipHash: first.Source.Authority.SourceSHA256,
+		AuthoritySHA256: fixture.authoritySHA256, SourceSHA256: first.Source.Authority.SourceSHA256,
+		CertificationSHA256: first.CertificationSHA256, PolicySHA256: first.Source.Authority.PolicySHA256,
+		ProposerSHA256: fixture.profile.ProposerSHA256, Implementation: fixture.profile.EvaluationImplementation,
+		SourceBytes: first.Source.Authority.SourceBytes, DurationMS: first.Source.Authority.DurationMS, CreatedAt: durableAt,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	fixture.now = firstAt.Add(3 * time.Hour)
@@ -76,8 +88,8 @@ func TestRuntimeBuildsExactSourceAuthorityAndReusesDurableRunTime(t *testing.T) 
 	requests = fixture.operation.Inputs()
 	if len(requests) != 2 || fixture.snapshotCalls != 1 ||
 		requests[1].StartedAt != durableAt ||
-		requests[1].Source.Authority.MeasuredAt != durableAt || fixture.inspector.calls != 2 {
-		t.Fatalf("retry request=%+v snapshots=%d inspections=%d", requests[1], fixture.snapshotCalls, fixture.inspector.calls)
+		requests[1].Source.Authority.MeasuredAt != durableAt || fixture.inspector.Calls() != 2 {
+		t.Fatalf("retry request=%+v snapshots=%d inspections=%d", requests[1], fixture.snapshotCalls, fixture.inspector.Calls())
 	}
 }
 
@@ -95,7 +107,7 @@ func TestRuntimeRejectsRouteAndMediaDriftBeforeOperation(t *testing.T) {
 
 	t.Run("duration", func(t *testing.T) {
 		fixture := newRuntimeFixture(t)
-		fixture.inspector.inspection.Probe.DurationMs++
+		fixture.inspection.Probe.DurationMs++
 		if _, err := fixture.runtime.EvaluateSpokenSafety(context.Background(), fixture.request); err == nil {
 			t.Fatal("runtime accepted remeasured duration drift")
 		}
@@ -108,11 +120,13 @@ func TestRuntimeRejectsRouteAndMediaDriftBeforeOperation(t *testing.T) {
 type runtimeFixture struct {
 	runtime          *Runtime
 	repository       *runtimeRepository
-	inspector        *fixedSourceInspector
+	inspector        *recordfixture.Recorder[sourceInspectionRequest, sourceInspection]
+	inspection       sourceInspection
 	operation        *recordfixture.Recorder[fillersafety.EvaluationRequest, fillersafety.EvaluationReport]
 	request          filler.SpokenSafetyProducerRequest
 	authoritySHA256  string
 	authority        fillersafetycert.Authority
+	profile          fillersafety.RuntimeProfile
 	now              time.Time
 	snapshot         fillerbakeoff.OpenRouterSnapshot
 	snapshotCalls    int
@@ -180,10 +194,10 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 		t.Fatal(err)
 	}
 	tool := mediatools.MediaToolIdentity{Name: "ffmpeg", Version: "ffmpeg fixture", ExecutableSHA256: strings.Repeat("d", 64)}
-	inspector := &fixedSourceInspector{inspection: sourceInspection{
+	inspection := sourceInspection{
 		Probe: filler.Probed{DurationMs: 30_000}, FFmpeg: tool,
 		FFprobe: mediatools.MediaToolIdentity{Name: "ffprobe", Version: "ffprobe fixture", ExecutableSHA256: strings.Repeat("e", 64)},
-	}}
+	}
 	repository := &runtimeRepository{
 		State:         &operationfixture.State[fillersafety.LedgerRun, fillersafety.LedgerEvent]{},
 		RunMatches:    func(run fillersafety.LedgerRun, id string) bool { return run.ID == id },
@@ -204,9 +218,10 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 		return fillersafety.EvaluationReport{Run: fillersafety.LedgerRun{ID: request.RunID}}, nil
 	}}
 	fixture := &runtimeFixture{
-		repository: repository, inspector: inspector, operation: operation, authoritySHA256: authoritySHA,
+		repository: repository, operation: operation, authoritySHA256: authoritySHA,
 		authority: authority,
-		now:       now, snapshot: snapshot,
+		profile:   profile, inspection: inspection,
+		now: now, snapshot: snapshot,
 		request: filler.SpokenSafetyProducerRequest{
 			OperationSHA256: strings.Repeat("f", 64),
 			Subject: fillerairworthinessprojection.Subject{
@@ -215,6 +230,10 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 			EvidencePath: "/private/evidence.mp4", EvidenceTool: tool,
 		},
 	}
+	inspector := &recordfixture.Recorder[sourceInspectionRequest, sourceInspection]{Respond: func(sourceInspectionRequest) (sourceInspection, error) {
+		return fixture.inspection, nil
+	}}
+	fixture.inspector = inspector
 	config := Config{
 		Projection: projection, Policy: policy, Deployment: deployment, Repository: repository,
 		APIKey: "private", FFmpegPath: "ffmpeg", Client: http.DefaultClient,
@@ -224,7 +243,9 @@ func newRuntimeFixture(t *testing.T) *runtimeFixture {
 			return fixture.snapshot, nil
 		},
 	}
-	runtime, err := newRuntimeWithAuthority(config, authority, authoritySHA, inspector, "https://openrouter.example/api/v1")
+	runtime, err := newRuntimeWithAuthority(config, authority, authoritySHA, sourceInspectorAdapter(func(_ context.Context, path, ffmpegPath string, expected mediatools.MediaToolIdentity) (sourceInspection, error) {
+		return inspector.Call(sourceInspectionRequest{path: path, ffmpegPath: ffmpegPath, expected: expected})
+	}), "https://openrouter.example/api/v1")
 	if err != nil {
 		t.Fatal(err)
 	}
