@@ -16,6 +16,7 @@ const maxResponseBytes = 256 << 10
 
 // Config describes one already-authorized structured-media request.
 type Config struct {
+	Authority        RouteAuthority
 	APIKey           string
 	Model            string
 	ResolvedModel    string
@@ -66,6 +67,9 @@ type Result struct {
 // Call performs one fallback-disabled request after the caller durably
 // reserves the exact request hash.
 func Call(ctx context.Context, client *http.Client, baseURL string, config Config) (Result, error) {
+	if err := config.Authority.validateCall(baseURL, config); err != nil {
+		return Result{}, err
+	}
 	body, err := buildRequest(config)
 	if err != nil {
 		return Result{}, err

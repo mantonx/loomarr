@@ -206,7 +206,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns administrator admission decisions and their bearer grants (§11).
 - **`metrics`** · 8 importers · → `images/rustgen`, `provision`
   Owns Loomarr's generation-scoped Prometheus surface (design §7 /metrics, §17).
-- **`openroutermedia`** · 2 importers · → `fillereval`
+- **`openroutermedia`** · 3 importers · → `fillereval`
   Owns Loomarr's bounded OpenRouter structured-media transport.
 - **`prepared`** · 4 importers · → `diagnostics`, `media`
   Owns immutable, reusable playout publications.
@@ -224,7 +224,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 3**
 
-- **`fillerbakeoff`** · 3 importers · → `filleradmission`, `fillereval`, `httpx`
+- **`fillerbakeoff`** · 3 importers · → `filleradmission`, `fillereval`, `httpx`, `openroutermedia`
   Runs bounded, inference-spending filler admission comparisons.
 - **`llm`** · 6 importers · → `httpx`, `metrics`
   LLM provider abstraction (design §8): one provider-neutral Chat primitive with tool-use, implemented by exactly TWO wire kinds — Ollama (the homelab default) and OpenAI-compatible.

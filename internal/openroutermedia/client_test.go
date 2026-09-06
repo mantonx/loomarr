@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/loomarr/loomarr/internal/testkit/httpfixture"
 )
@@ -57,10 +58,9 @@ func TestCallReservesExactRequestBeforeHTTP(t *testing.T) {
 func TestCallRejectsInvalidAudioBeforeReservation(t *testing.T) {
 	t.Parallel()
 	reserved := false
-	_, err := Call(t.Context(), http.DefaultClient, "https://openrouter.ai/api/v1", Config{
-		Audios:  []Audio{{Format: "exe", Base64: "YWJj"}},
-		Reserve: func(string) error { reserved = true; return nil },
-	})
+	config := validConfig(func(string) error { reserved = true; return nil })
+	config.Audios = []Audio{{Format: "exe", Base64: "YWJj"}}
+	_, err := Call(t.Context(), http.DefaultClient, "https://openrouter.test/api/v1", config)
 	if err == nil || !strings.Contains(err.Error(), "invalid format") || reserved {
 		t.Fatalf("err=%v reserved=%t", err, reserved)
 	}
@@ -73,7 +73,7 @@ func TestCallRequiresReservationBeforeHTTP(t *testing.T) {
 		called = true
 		return nil, errors.New("unexpected request")
 	})}
-	result, err := Call(t.Context(), client, "https://openrouter.ai/api/v1", Config{})
+	result, err := Call(t.Context(), client, "https://openrouter.test/api/v1", validConfig(nil))
 	if err == nil || !strings.Contains(err.Error(), "durable reservation") || called || result.RequestSHA256 == "" {
 		t.Fatalf("result=%+v err=%v called=%t", result, err, called)
 	}
@@ -82,10 +82,9 @@ func TestCallRequiresReservationBeforeHTTP(t *testing.T) {
 func TestCallRejectsInvalidVideoBeforeReservation(t *testing.T) {
 	t.Parallel()
 	reserved := false
-	_, err := Call(t.Context(), http.DefaultClient, "https://openrouter.ai/api/v1", Config{
-		Videos:  []Video{{MIMEType: "application/octet-stream", Base64: "YWJj"}},
-		Reserve: func(string) error { reserved = true; return nil },
-	})
+	config := validConfig(func(string) error { reserved = true; return nil })
+	config.Videos = []Video{{MIMEType: "application/octet-stream", Base64: "YWJj"}}
+	_, err := Call(t.Context(), http.DefaultClient, "https://openrouter.test/api/v1", config)
 	if err == nil || !strings.Contains(err.Error(), "invalid MIME") || reserved {
 		t.Fatalf("err=%v reserved=%t", err, reserved)
 	}
@@ -221,8 +220,22 @@ func TestValidAttemptLedgerAcceptsOmittedOrExactOptionalDetail(t *testing.T) {
 }
 
 func validConfig(reserve func(string) error) Config {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	snapshot := CapabilitySnapshot{
+		SchemaVersion: CapabilitySnapshotSchemaVersion, SourceBaseURL: "https://openrouter.test/api/v1", RetrievedAt: now,
+		Requests: 3, ResponseBytes: 1, Models: []CapabilityModelSnapshot{{
+			ID: "vendor/model", CanonicalSlug: "vendor/model-2026", Name: "Model", Created: 1,
+			InputModalities: []string{"audio", "image", "text", "video"}, OutputModalities: []string{"text"},
+			Endpoints: []CapabilityEndpointSnapshot{{Name: "Pinned", ModelID: "vendor/model", ProviderName: "Pinned Provider", ProviderSlug: "pinned/provider", ContextLength: 4096, MaxCompletionTokens: 4096, SupportedParameters: []string{"response_format", "structured_outputs"}, Pricing: map[string]string{"completion": "0.000001", "prompt": "0.000001"}, ZDR: true}},
+		}},
+	}
+	authority, err := NewRouteAuthority(snapshot, CapabilitySnapshotSHA256(snapshot), RouteRequirements{BaseURL: snapshot.SourceBaseURL, RequestedModel: "vendor/model", CanonicalModel: "vendor/model-2026", UpstreamProvider: "Pinned Provider", ProviderSlug: "pinned/provider", RequiredInputModalities: []string{"audio", "image", "text", "video"}, MaxTokens: 32, Now: func() time.Time { return now }})
+	if err != nil {
+		panic(err)
+	}
 	return Config{
-		APIKey: "secret", Model: "vendor/model", ResolvedModel: "vendor/model-2026",
+		Authority: authority,
+		APIKey:    "secret", Model: "vendor/model", ResolvedModel: "vendor/model-2026",
 		UpstreamProvider: "Pinned Provider", ProviderSlug: "pinned/provider",
 		SchemaName: "contract", Schema: map[string]any{"type": "object"},
 		SystemPrompt: "system", Content: "content", MaxTokens: 32,

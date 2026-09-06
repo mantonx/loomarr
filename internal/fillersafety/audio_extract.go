@@ -16,6 +16,8 @@ type ffmpegCandidateAudioExtractor struct {
 	path string
 }
 
+var _ candidateAudioExtractor = ffmpegCandidateAudioExtractor{}.Extract
+
 func (e ffmpegCandidateAudioExtractor) Extract(ctx context.Context, plan *CompleteMediaPlan, candidate Candidate) ([]byte, error) {
 	if ctx == nil || ctx.Err() != nil || !validProposalPlan(plan) || candidate.StartMS < 0 || candidate.EndMS <= candidate.StartMS || candidate.EndMS > plan.Audio.EndMS || candidate.EndMS-candidate.StartMS > maxProposedIntervalMS {
 		return nil, fmt.Errorf("spoken-safety candidate extraction input is invalid")

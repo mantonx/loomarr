@@ -109,7 +109,7 @@ func runOpenRouterReview(ctx context.Context, config OpenRouterReviewConfig, bef
 		caseCtx, cancel := context.WithTimeout(ctx, config.PerCaseTimeout)
 		started := time.Now()
 		attemptNumber := nextOpenRouterAttempt(checkpoint, item.Alias)
-		labels, callResult, reviewErr := reviewOneOpenRouter(caseCtx, client, baseURL, config, manifest, item, transcripts, func(requestSHA256 string) error {
+		labels, callResult, reviewErr := reviewOneOpenRouter(caseCtx, client, baseURL, checkpoint.Identity.CapabilitySnapshotSHA256, config, manifest, item, transcripts, func(requestSHA256 string) error {
 			spent, err := openRouterCheckpointSpend(checkpoint)
 			if err != nil {
 				return err
@@ -261,13 +261,18 @@ func validateOpenRouterReviewSnapshotIdentity(config OpenRouterReviewConfig, bas
 	return fmt.Errorf("openrouter reviewer route is absent, non-ZDR, or lacks strict structured output")
 }
 
-func reviewOneOpenRouter(ctx context.Context, client *http.Client, baseURL string, config OpenRouterReviewConfig, manifest Package, item Case, transcripts map[string]fillerbakeoff.TranscriptArtifact, reserve func(string) error) (fillereval.Labels, openroutermedia.Result, error) {
+func reviewOneOpenRouter(ctx context.Context, client *http.Client, baseURL, expectedCapabilitySHA256 string, config OpenRouterReviewConfig, manifest Package, item Case, transcripts map[string]fillerbakeoff.TranscriptArtifact, reserve func(string) error) (fillereval.Labels, openroutermedia.Result, error) {
 	content, images, err := reviewerContent(config.PackageDir, manifest, item, transcripts)
 	if err != nil {
 		return fillereval.Labels{}, openroutermedia.Result{}, err
 	}
+	model := openRouterReviewModel(config.Snapshot, config.Model)
+	authority, err := openRouterRouteAuthority(config.Snapshot, expectedCapabilitySHA256, baseURL, config.Model, model.CanonicalSlug, config.UpstreamProvider, config.UpstreamProviderSlug, []string{"image", "text"}, 4096, false, config.Now)
+	if err != nil {
+		return fillereval.Labels{}, openroutermedia.Result{}, err
+	}
 	result, err := openroutermedia.Call(ctx, client, baseURL, openroutermedia.Config{
-		APIKey: config.APIKey, Model: config.Model, ResolvedModel: openRouterReviewModel(config.Snapshot, config.Model).CanonicalSlug,
+		Authority: authority, APIKey: config.APIKey, Model: config.Model, ResolvedModel: model.CanonicalSlug,
 		UpstreamProvider: config.UpstreamProvider, ProviderSlug: config.UpstreamProviderSlug,
 		SchemaName: "filler_blind_review", Schema: reviewLabelsSchema(item), SystemPrompt: reviewerSystemPrompt,
 		Content: content, Images: images, MaxTokens: 4096, MaxChargeNanoUSD: config.MaxChargeNanoUSD,

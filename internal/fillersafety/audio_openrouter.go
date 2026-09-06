@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/loomarr/loomarr/internal/openroutermedia"
 )
@@ -26,6 +27,8 @@ const audioUserPromptTemplate = "Private rule policy: <private-policy-json>. Dec
 
 type openRouterAudioConfig struct {
 	Client           *http.Client
+	Snapshot         openroutermedia.CapabilitySnapshot
+	Now              func() time.Time
 	BaseURL          string
 	APIKey           string
 	Model            string
@@ -71,8 +74,16 @@ func (a *openRouterAudioAdjudicator) adjudicate(ctx context.Context, candidate C
 		ruleIDs = append(ruleIDs, rule.ID)
 	}
 	schema := audioOutputSchema(ruleIDs)
+	authority, err := openroutermedia.NewRouteAuthority(a.config.Snapshot, a.config.CapabilitySHA256, openroutermedia.RouteRequirements{
+		BaseURL: a.config.BaseURL, RequestedModel: a.config.Model, CanonicalModel: a.config.ResolvedModel,
+		UpstreamProvider: a.config.UpstreamProvider, ProviderSlug: a.config.ProviderSlug,
+		RequiredInputModalities: []string{"audio", "text"}, MaxTokens: audioMaxTokens, Now: a.config.Now,
+	})
+	if err != nil {
+		return attempt, err
+	}
 	transport, err := openroutermedia.Call(ctx, a.config.Client, a.config.BaseURL, openroutermedia.Config{
-		APIKey: a.config.APIKey, Model: a.config.Model, ResolvedModel: a.config.ResolvedModel,
+		Authority: authority, APIKey: a.config.APIKey, Model: a.config.Model, ResolvedModel: a.config.ResolvedModel,
 		UpstreamProvider: a.config.UpstreamProvider, ProviderSlug: a.config.ProviderSlug,
 		SchemaName: "spoken_safety_adjudication", Schema: schema,
 		SystemPrompt: audioSystemPrompt,

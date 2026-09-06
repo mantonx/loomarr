@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/loomarr/loomarr/internal/openroutermedia"
 )
@@ -37,6 +38,8 @@ const videoUserPromptTemplate = "Duration milliseconds: <duration-ms>. Inspect t
 
 type openRouterVideoConfig struct {
 	Client           *http.Client
+	Snapshot         openroutermedia.CapabilitySnapshot
+	Now              func() time.Time
 	BaseURL          string
 	APIKey           string
 	Model            string
@@ -89,8 +92,16 @@ func (c *openRouterVideoCorroborator) corroborate(ctx context.Context, plan *Com
 		return attempt, fmt.Errorf("spoken-safety complete video bytes are unavailable")
 	}
 	schema := videoOutputSchema(plan.Video.EndMS)
+	authority, err := openroutermedia.NewRouteAuthority(c.config.Snapshot, c.config.CapabilitySHA256, openroutermedia.RouteRequirements{
+		BaseURL: c.config.BaseURL, RequestedModel: c.config.Model, CanonicalModel: c.config.ResolvedModel,
+		UpstreamProvider: c.config.UpstreamProvider, ProviderSlug: c.config.ProviderSlug,
+		RequiredInputModalities: []string{"text", "video"}, MaxTokens: videoMaxTokens, Now: c.config.Now,
+	})
+	if err != nil {
+		return attempt, err
+	}
 	transport, err := openroutermedia.Call(ctx, c.config.Client, c.config.BaseURL, openroutermedia.Config{
-		APIKey: c.config.APIKey, Model: c.config.Model, ResolvedModel: c.config.ResolvedModel,
+		Authority: authority, APIKey: c.config.APIKey, Model: c.config.Model, ResolvedModel: c.config.ResolvedModel,
 		UpstreamProvider: c.config.UpstreamProvider, ProviderSlug: c.config.ProviderSlug,
 		SchemaName: "filler_suitability", Schema: schema,
 		SystemPrompt: videoSystemPrompt,

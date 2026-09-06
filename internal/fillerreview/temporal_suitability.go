@@ -198,8 +198,12 @@ func assessOpenRouterSuitabilityCase(ctx context.Context, client *http.Client, b
 		return TemporalSuitabilityAssessment{}, fmt.Errorf("verified suitability video for alias %q is unavailable, drifted, or outside its byte ceiling", item.Alias)
 	}
 	started := time.Now()
+	authority, err := openRouterRouteAuthority(config.Snapshot, checkpoint.Identity.CapabilitySnapshotSHA256, baseURL, config.Model, checkpoint.Identity.ResolvedModel, config.UpstreamProvider, config.UpstreamProviderSlug, []string{"text", "video"}, temporalSuitabilityMaxTokens, config.ReasoningMode == TemporalSuitabilityReasoningRequired, now)
+	if err != nil {
+		return TemporalSuitabilityAssessment{}, err
+	}
 	callResult, callErr := openroutermedia.Call(caseCtx, client, baseURL, openroutermedia.Config{
-		APIKey: config.APIKey, Model: config.Model, ResolvedModel: checkpoint.Identity.ResolvedModel,
+		Authority: authority, APIKey: config.APIKey, Model: config.Model, ResolvedModel: checkpoint.Identity.ResolvedModel,
 		UpstreamProvider: config.UpstreamProvider, ProviderSlug: config.UpstreamProviderSlug,
 		SchemaName: "filler_suitability", Schema: temporalSuitabilitySchema(item.DurationMS),
 		SystemPrompt: temporalSuitabilitySystemPrompt, Content: temporalSuitabilityContent(item),

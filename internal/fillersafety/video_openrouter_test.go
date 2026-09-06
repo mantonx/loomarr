@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/loomarr/loomarr/internal/openroutermedia"
 	"github.com/loomarr/loomarr/internal/testkit/httpfixture"
 )
 
@@ -83,21 +85,38 @@ func TestOpenRouterVideoCorroboratorRejectsStaleAuthorityBeforeReservation(t *te
 	t.Parallel()
 	transport := httpfixture.NewScriptedTransport(httpfixture.Step{Response: openRouterResponse(t, `{"visualAssessment":"completed","spokenLanguageAssessment":"completed","flags":[]}`)})
 	config := validOpenRouterVideoConfig(&http.Client{Transport: transport})
-	config.PromptSHA256 = strings.Repeat("f", 64)
+	config.Snapshot.RetrievedAt = config.Snapshot.RetrievedAt.Add(-24*time.Hour - time.Nanosecond)
+	config.CapabilitySHA256 = openroutermedia.CapabilitySnapshotSHA256(config.Snapshot)
 	called := false
 	config.Reserve = func(string, string) error { called = true; return nil }
 	attempt, err := (&openRouterVideoCorroborator{config: config}).corroborate(t.Context(), proposalTestPlan(t))
-	if err == nil || called || attempt.State != VideoFailed {
-		t.Fatalf("stale authority reached reservation: attempt=%+v err=%v", attempt, err)
+	if err == nil || called || len(transport.Requests()) != 0 || attempt.State != VideoFailed {
+		t.Fatalf("stale authority reached use: attempt=%+v err=%v requests=%d", attempt, err, len(transport.Requests()))
+	}
+}
+
+func TestOpenRouterVideoCorroboratorRejectsMissingVideoCapabilityBeforeUse(t *testing.T) {
+	t.Parallel()
+	transport := httpfixture.NewScriptedTransport(httpfixture.Step{Response: openRouterResponse(t, `{"visualAssessment":"completed","spokenLanguageAssessment":"completed","flags":[]}`)})
+	config := validOpenRouterVideoConfig(&http.Client{Transport: transport})
+	config.Snapshot.Models[0].InputModalities = []string{"audio", "text"}
+	config.CapabilitySHA256 = openroutermedia.CapabilitySnapshotSHA256(config.Snapshot)
+	reserved := false
+	config.Reserve = func(string, string) error { reserved = true; return nil }
+	attempt, err := (&openRouterVideoCorroborator{config: config}).corroborate(t.Context(), proposalTestPlan(t))
+	if err == nil || reserved || len(transport.Requests()) != 0 || attempt.State != VideoFailed {
+		t.Fatalf("attempt=%+v err=%v reserved=%t requests=%d", attempt, err, reserved, len(transport.Requests()))
 	}
 }
 
 func validOpenRouterVideoConfig(client *http.Client) openRouterVideoConfig {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	snapshot := validOpenRouterSafetySnapshot(now)
 	return openRouterVideoConfig{
-		Client: client, BaseURL: "https://openrouter.test/api/v1", APIKey: "secret-key",
+		Client: client, Snapshot: snapshot, Now: func() time.Time { return now }, BaseURL: "https://openrouter.test/api/v1", APIKey: "secret-key",
 		Model: "vendor/model", ResolvedModel: "vendor/model-2026",
 		UpstreamProvider: "Pinned Provider", ProviderSlug: "pinned/provider",
-		CapabilitySHA256: strings.Repeat("b", 64), PromptSHA256: videoPromptSHA256(),
+		CapabilitySHA256: openroutermedia.CapabilitySnapshotSHA256(snapshot), PromptSHA256: videoPromptSHA256(),
 		MaxChargeNanoUSD: 2_000_000, DisableReasoning: true,
 		Reserve: func(string, string) error { return nil },
 	}

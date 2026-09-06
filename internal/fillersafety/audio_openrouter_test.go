@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/loomarr/loomarr/internal/openroutermedia"
 	"github.com/loomarr/loomarr/internal/testkit/httpfixture"
 )
 
@@ -87,12 +89,27 @@ func TestOpenRouterAudioAdjudicatorRejectsMalformedOutputAndAuthorityBeforeUse(t
 		t.Fatalf("attempt=%+v err=%v", attempt, err)
 	}
 
-	config.PromptSHA256 = strings.Repeat("f", 64)
+	config.CapabilitySHA256 = strings.Repeat("f", 64)
 	called := false
 	config.Reserve = func(string, string) error { called = true; return nil }
 	attempt, err = (&openRouterAudioAdjudicator{config: config}).adjudicate(t.Context(), Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}, validCandidateWAV())
 	if err == nil || called || attempt.Assessment.State != AudioFailed {
 		t.Fatalf("invalid authority reached reservation: attempt=%+v err=%v", attempt, err)
+	}
+}
+
+func TestOpenRouterAudioAdjudicatorRejectsMissingAudioCapabilityBeforeUse(t *testing.T) {
+	t.Parallel()
+	policy := audioPolicyFixture("private restricted phrase")
+	transport := httpfixture.NewScriptedTransport(httpfixture.Step{Response: openRouterResponse(t, `{"decision":"absent","audibility":"clear","matchedRuleIds":[]}`)})
+	config := validOpenRouterAudioConfig(&http.Client{Transport: transport}, policy)
+	config.Snapshot.Models[0].InputModalities = []string{"text", "video"}
+	config.CapabilitySHA256 = openroutermedia.CapabilitySnapshotSHA256(config.Snapshot)
+	reserved := false
+	config.Reserve = func(string, string) error { reserved = true; return nil }
+	attempt, err := (&openRouterAudioAdjudicator{config: config}).adjudicate(t.Context(), Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}, validCandidateWAV())
+	if err == nil || reserved || len(transport.Requests()) != 0 || attempt.Assessment.State != AudioFailed {
+		t.Fatalf("attempt=%+v err=%v reserved=%t requests=%d", attempt, err, reserved, len(transport.Requests()))
 	}
 }
 
@@ -107,14 +124,27 @@ func audioPolicyFixture(secret string) Policy {
 }
 
 func validOpenRouterAudioConfig(client *http.Client, policy Policy) openRouterAudioConfig {
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	snapshot := validOpenRouterSafetySnapshot(now)
 	return openRouterAudioConfig{
-		Client: client, BaseURL: "https://openrouter.test/api/v1", APIKey: "secret-key",
+		Client: client, Snapshot: snapshot, Now: func() time.Time { return now }, BaseURL: "https://openrouter.test/api/v1", APIKey: "secret-key",
 		Model: "vendor/model", ResolvedModel: "vendor/model-2026",
 		UpstreamProvider: "Pinned Provider", ProviderSlug: "pinned/provider",
-		CapabilitySHA256: strings.Repeat("a", 64), Policy: policy,
+		CapabilitySHA256: openroutermedia.CapabilitySnapshotSHA256(snapshot), Policy: policy,
 		PolicySHA256: policySHA256(policy), PromptSHA256: audioPromptSHA256(policy),
 		MaxChargeNanoUSD: 2_000_000, DisableReasoning: true,
 		Reserve: func(string, string) error { return nil },
+	}
+}
+
+func validOpenRouterSafetySnapshot(now time.Time) openroutermedia.CapabilitySnapshot {
+	return openroutermedia.CapabilitySnapshot{
+		SchemaVersion: openroutermedia.CapabilitySnapshotSchemaVersion, SourceBaseURL: "https://openrouter.test/api/v1", RetrievedAt: now,
+		Requests: 3, ResponseBytes: 1, Models: []openroutermedia.CapabilityModelSnapshot{{
+			ID: "vendor/model", CanonicalSlug: "vendor/model-2026", Name: "Model", Created: 1,
+			InputModalities: []string{"audio", "text", "video"}, OutputModalities: []string{"text"},
+			Endpoints: []openroutermedia.CapabilityEndpointSnapshot{{Name: "Pinned", ModelID: "vendor/model", ProviderName: "Pinned Provider", ProviderSlug: "pinned/provider", ContextLength: 4096, MaxCompletionTokens: 4096, SupportedParameters: []string{"response_format", "structured_outputs"}, Pricing: map[string]string{"completion": "0.000001", "prompt": "0.000001"}, ZDR: true}},
+		}},
 	}
 }
 

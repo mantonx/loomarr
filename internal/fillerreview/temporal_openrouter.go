@@ -252,8 +252,13 @@ func callOpenRouterTemporalClaim(ctx context.Context, client *http.Client, baseU
 	}
 	call.Axis, call.Attempt = axis, attemptNumber
 	started := time.Now()
+	model := openRouterTemporalModel(config.Snapshot, config.Model)
+	authority, err := openRouterRouteAuthority(config.Snapshot, checkpoint.Identity.CapabilitySnapshotSHA256, baseURL, config.Model, model.CanonicalSlug, config.UpstreamProvider, config.UpstreamProviderSlug, []string{"image", "text"}, 1024, false, now)
+	if err != nil {
+		return call, nil, err
+	}
 	result, err := openroutermedia.Call(ctx, client, baseURL, openroutermedia.Config{
-		APIKey: config.APIKey, Model: config.Model, ResolvedModel: openRouterTemporalModel(config.Snapshot, config.Model).CanonicalSlug,
+		Authority: authority, APIKey: config.APIKey, Model: config.Model, ResolvedModel: model.CanonicalSlug,
 		UpstreamProvider: config.UpstreamProvider, ProviderSlug: config.UpstreamProviderSlug,
 		SchemaName: schemaName, Schema: schema, SystemPrompt: prompt, Content: content, Images: images,
 		MaxTokens: 1024, MaxChargeNanoUSD: config.MaxChargeNanoUSD, DisableReasoning: true,
