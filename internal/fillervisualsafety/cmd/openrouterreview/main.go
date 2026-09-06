@@ -3,9 +3,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"flag"
 	"fmt"
@@ -119,15 +119,9 @@ func readPrivateJSON[T any](path string) (T, error) {
 	if err != nil || int64(len(raw)) != info.Size() {
 		return zero, errors.New("visual OpenRouter review input bytes drifted")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var value T
-	if err := decoder.Decode(&value); err != nil {
+	if err := jsonv2.Unmarshal(raw, &value, jsonv2.RejectUnknownMembers(true)); err != nil {
 		return zero, errors.New("visual OpenRouter review input is malformed")
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return zero, errors.New("visual OpenRouter review input has trailing content")
 	}
 	return value, nil
 }

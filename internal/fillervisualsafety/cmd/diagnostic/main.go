@@ -3,9 +3,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"flag"
 	"fmt"
@@ -110,15 +110,9 @@ func readRequest(path string) (diagnosticRequest, error) {
 	if err != nil || int64(len(raw)) != info.Size() {
 		return diagnosticRequest{}, errors.New("visual diagnostic request bytes drifted")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var request diagnosticRequest
-	if err := decoder.Decode(&request); err != nil {
+	if err := jsonv2.Unmarshal(raw, &request, jsonv2.RejectUnknownMembers(true)); err != nil {
 		return diagnosticRequest{}, errors.New("visual diagnostic request is malformed")
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return diagnosticRequest{}, errors.New("visual diagnostic request has trailing content")
 	}
 	return request, nil
 }

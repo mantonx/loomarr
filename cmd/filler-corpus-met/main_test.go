@@ -28,6 +28,25 @@ func TestReadTermSetRequiresOneStrictSchemaValue(t *testing.T) {
 	}
 }
 
+func TestReadTermSetRejectsDuplicateAliasInvalidUTF8AndTrailing(t *testing.T) {
+	for name, raw := range map[string][]byte{
+		"duplicate":    []byte(`{"schemaVersion":1,"schemaVersion":1,"terms":["venus"]}`),
+		"case alias":   []byte(`{"schemaVersion":1,"SchemaVersion":1,"terms":["venus"]}`),
+		"invalid utf8": {'{', '"', 's', 'c', 'h', 'e', 'm', 'a', 'V', 'e', 'r', 's', 'i', 'o', 'n', '"', ':', '1', ',', '"', 't', 'e', 'r', 'm', 's', '"', ':', '[', '"', 0xff, '"', ']', '}'},
+		"trailing":     []byte(`{"schemaVersion":1,"terms":["venus"]}{}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "terms.json")
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := readTermSet(path); err == nil {
+				t.Fatal("malformed input passed")
+			}
+		})
+	}
+}
+
 func TestRunRejectsUnboundedCaptureBeforeNetwork(t *testing.T) {
 	var stdout, stderr strings.Builder
 	code := run([]string{"--snapshot-at", "2026-09-04T12:00:00Z"}, &stdout, &stderr)

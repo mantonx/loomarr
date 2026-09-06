@@ -3,9 +3,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"flag"
 	"fmt"
 	"io"
@@ -116,13 +116,11 @@ func readTermSet(filename string) (termSet, error) {
 	if err != nil {
 		return termSet{}, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var value termSet
-	if err := decoder.Decode(&value); err != nil {
+	if err := jsonv2.Unmarshal(raw, &value, jsonv2.RejectUnknownMembers(true)); err != nil {
 		return termSet{}, err
 	}
-	if decoder.Decode(&struct{}{}) != io.EOF || value.SchemaVersion != termSetSchemaVersion || len(value.Terms) == 0 {
+	if value.SchemaVersion != termSetSchemaVersion || len(value.Terms) == 0 {
 		return termSet{}, fmt.Errorf("exactly one schema-1 term set is required")
 	}
 	return value, nil

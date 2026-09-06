@@ -3,9 +3,9 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"flag"
 	"fmt"
@@ -99,15 +99,9 @@ func readRequest(path string) (request, error) {
 	if err != nil || int64(len(raw)) != info.Size() {
 		return request{}, errors.New("visual review bundle request bytes drifted")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
 	var value request
-	if err := decoder.Decode(&value); err != nil {
+	if err := jsonv2.Unmarshal(raw, &value, jsonv2.RejectUnknownMembers(true)); err != nil {
 		return request{}, errors.New("visual review bundle request is malformed")
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return request{}, errors.New("visual review bundle request has trailing content")
 	}
 	return value, nil
 }
