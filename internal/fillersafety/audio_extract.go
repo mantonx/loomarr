@@ -10,6 +10,8 @@ import (
 	"github.com/loomarr/loomarr/internal/mediatools"
 )
 
+const candidateAudioContextMS int64 = 1_000
+
 type candidateAudioExtractor func(context.Context, *CompleteMediaPlan, Candidate) ([]byte, error)
 
 type ffmpegCandidateAudioExtractor struct {
@@ -28,7 +30,9 @@ func (e ffmpegCandidateAudioExtractor) Extract(ctx context.Context, plan *Comple
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	destination := filepath.Join(dir, "candidate.wav")
-	if err := mediatools.ExtractSpanWAV(ctx, e.path, plan.SourcePath, candidate.StartMS, candidate.EndMS, destination); err != nil {
+	startMS := max(int64(0), candidate.StartMS-candidateAudioContextMS)
+	endMS := min(plan.Audio.EndMS, candidate.EndMS+candidateAudioContextMS)
+	if err := mediatools.ExtractSpanWAV(ctx, e.path, plan.SourcePath, startMS, endMS, destination); err != nil {
 		return nil, fmt.Errorf("extract spoken-safety candidate audio")
 	}
 	file, err := os.Open(destination)

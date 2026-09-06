@@ -83,6 +83,60 @@ Pinned private artifacts:
 | `sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2` | 17,626,723 bytes | `f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a` |
 | private BPE keyword authority | private | `7ff508af8c51995a9ce9e9822ba44ae8159f9aa7638b9d4acb0eff0547e6e9d8` |
 
+The release-packaging audit narrows those archive identities to the bytes that
+actually affect inference:
+
+| Platform / member | SHA-256 |
+| --- | --- |
+| macOS arm64 `sherpa-onnx-keyword-spotter` | `f0f04f054b72d130b2f1991d369471e3989db3b82e2b3b238728adb223e3514b` |
+| macOS arm64 `libonnxruntime.dylib` | `59665a56e6a95118606bebe583efa8a3528362fc1078f69fc27f36def905bb2c` |
+| Linux amd64 `sherpa-onnx-keyword-spotter` | `282f4f878c67c59ea9305f9f54b77380269b87e24516da9f07d1a98efe5e931d` |
+| Linux amd64 `libonnxruntime.so` | `c85f471e1bd5059a4556038f7f5288fa41141647613688452ae7de4879150903` |
+| Linux arm64 `sherpa-onnx-keyword-spotter` | `b20bfb95be222864ea87330f0b14a9c8182c7dc5aa56ba59546999dafdd02724` |
+| Linux arm64 `libonnxruntime.so` | `d860f5968f5a1ed63533e9ed198aa747ca9fe289028129877f428556089f6874` |
+| int8 encoder | `1e721676515bcd42a186979733981213c66c80db680e1cc582dfedf3be76e678` |
+| FP32 decoder | `f61ebd3eed3773a44d088d53dfae92dbb6aec4839f4dcaee2d402414741663a3` |
+| int8 joiner | `eae9da0c7e1e6c6a3f4cc42d167899c388f6c6701b94cb96320e4f55df79624c` |
+| `tokens.txt` | `fd2ded4050a55d2b1578870ba8697d02371980217806b7558bd0a5cc60f3ba53` |
+| `bpe.model` | `c8a2a0129c4ab8e463164c142f82d25649661b122c8cd0b7aab5c9e80b90ad24` |
+| model archive `README.md` | `74e42d37d63acd2366b042151d576fcc0c4917a41de339414a37f1e79f4e80e2` |
+
+`ldd` in the pinned Debian image and `otool -L` on macOS show that the worker
+needs only ONNX Runtime beyond system libraries; sherpa itself is statically
+embedded in the executable. The Linux arm64 archive also contains TTS tools,
+so a future permitted image must extract a positive whitelist rather than copy
+the archive tree. All three official runtime archives contain no `LICENSE`,
+`NOTICE`, or third-party-notice file. The exact sherpa v1.13.7 tag is commit
+`917bed95c8e5c7c18aa4d69fea42e9ef8ef0a60e`; its Apache-2.0 `LICENSE` hashes to
+`cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`.
+The bundled library identifies itself as ONNX Runtime 1.28.1, whose exact tag is
+commit `5181af9bef60f46194ec30506855d74b6e6a96ff`; its `LICENSE` hashes to
+`2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c`
+and `ThirdPartyNotices.txt` to
+`0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2`.
+Those exact-tag files would have to accompany a permitted distribution.
+
+This closes the runtime-inventory question but not the weight-rights question.
+The model archive's metadata says Apache License 2.0, yet it contains no license
+or notice, and upstream issue #3802 specifically asks for this model's private,
+commercial, and redistribution terms and remains open. Loomarr therefore keeps
+the measured runtime and weights private and development-only. It does not add
+them to the Dockerfile, release manifest, settings, or production composition.
+
+The development Go adapter was then exercised against the hash-verified macOS
+arm64 runtime, exact model members, the model's known test WAV, and an ephemeral
+opaque-rule keyword authority. It reproduced a bounded hit through the actual
+worker after source WAV extraction. That proof also established an upstream
+result nuance: sherpa preserves the `@` opaque rule label and token cardinality,
+but normalizes boundary pieces in the returned `tokens` array rather than
+echoing keyword-file tokens byte-for-byte. The adapter therefore validates the
+opaque rule, expected cardinality, bounded UTF-8 tokens, and ordered timing; it
+captures and discards the normalized token strings and path-bearing stderr.
+Hermetic tests separately prove exact artifact staging, private file modes,
+strict JSON, output/runtime bounds, redacted failures, duplicate normalization,
+and the calibrated one-second adjudication context. This is execution evidence
+for the adapter only, not weight redistribution authority or certification.
+
 The runtime digest matches GitHub's release-asset digest. The model digest
 matches sherpa's published KWS checksum file. The extracted int8 model occupies
 19 MB and the macOS runtime 58 MB. All raw keyword, detection, and result files

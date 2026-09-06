@@ -23,10 +23,12 @@ type proposerIdentity struct {
 
 type proposalRequest struct {
 	AuthoritySHA256 string
+	PolicySHA256    string
 	SourceSHA256    string
 	SourceBytes     int64
 	SourcePath      string
 	DurationMS      int64
+	FFmpeg          ToolIdentity
 }
 
 type proposedInterval struct {
@@ -49,10 +51,12 @@ func runProposal(ctx context.Context, proposer acousticProposer, expected propos
 	}
 	output, err := proposer(ctx, proposalRequest{
 		AuthoritySHA256: plan.AuthoritySHA256,
+		PolicySHA256:    plan.PolicySHA256,
 		SourceSHA256:    plan.SourceSHA256,
 		SourceBytes:     plan.SourceBytes,
 		SourcePath:      plan.SourcePath,
 		DurationMS:      plan.Audio.EndMS,
+		FFmpeg:          plan.FFmpeg,
 	})
 	if err != nil || !output.Complete || output.Identity != expected || len(output.Candidates) > maxProposedCandidates {
 		return failed
