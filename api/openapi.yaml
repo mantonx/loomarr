@@ -52,6 +52,17 @@ components:
         - rejected
         - dismissed
       type: object
+    AcquisitionRepairSummaryDTO:
+      additionalProperties: false
+      properties:
+        count:
+          format: int64
+          type: integer
+        latestReason:
+          type: string
+      required:
+        - count
+      type: object
     ActiveRuleDTO:
       additionalProperties: false
       properties:
@@ -3326,6 +3337,8 @@ components:
           $ref: "#/components/schemas/PoolDTO"
         ready:
           type: boolean
+        repairs:
+          $ref: "#/components/schemas/AcquisitionRepairSummaryDTO"
       required:
         - ready
         - nextAction
@@ -3333,6 +3346,7 @@ components:
         - pipeline
         - pool
         - acquisitions
+        - repairs
       type: object
     FillerSelection:
       additionalProperties: false
