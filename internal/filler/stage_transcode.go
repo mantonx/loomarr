@@ -125,7 +125,7 @@ func (s *TranscodeStage) Cost() StageCost { return CostTranscode }
 //
 // It records the profile ID rather than a bare flag, so a future profile change re-encodes from
 // the operator's own file rather than being silently skipped as "already done".
-func (s *TranscodeStage) Applies(_ context.Context, c StoreClip) (bool, string) {
+func (s *TranscodeStage) Applies(ctx context.Context, c StoreClip) (bool, string) {
 	if c.Path == "" {
 		return false, "the clip has no file"
 	}
@@ -140,6 +140,9 @@ func (s *TranscodeStage) Applies(_ context.Context, c StoreClip) (bool, string) 
 		// failed hold/tombstone write can cheaply re-emit the same safety verdict next pass.
 		if verdict, _, _ := EvaluateMediaQuality(*tags.MediaQuality); verdict == VerdictContinue {
 			if s.evidenceTranscode != nil && (tags.MediaAssets == nil || tags.MediaAssets.Evidence == nil) {
+				return true, ""
+			}
+			if s.evidenceTranscode != nil && tags.MediaAssets.validateReuseFiles(ctx, s.clipDir, c.Path, c.Hash) != nil {
 				return true, ""
 			}
 			return false, "already encoded to the ingest profile"
@@ -295,7 +298,13 @@ func (s *TranscodeStage) Run(ctx context.Context, c StoreClip) (StageResult, err
 	// The inspection report is also the retry record for the airability gate. Re-emit its
 	// decision without decoding or encoding again if the previous pass could not hold the clip.
 	if hasTags && tags.Mezzanine == s.profile.ID() && tags.MediaQuality != nil {
-		if s.evidenceTranscode == nil || tags.MediaAssets != nil && tags.MediaAssets.Evidence != nil {
+		if s.evidenceTranscode == nil {
+			return mediaQualityResult(c, *tags.MediaQuality), nil
+		}
+		if tags.MediaAssets != nil && tags.MediaAssets.Evidence != nil {
+			if err := tags.MediaAssets.validateReuseFiles(ctx, s.clipDir, c.Path, c.Hash); err != nil {
+				return StageResult{}, fmt.Errorf("transcode %s: %w", oldRel, err)
+			}
 			return mediaQualityResult(c, *tags.MediaQuality), nil
 		}
 		input, err := s.probe(ctx, inputFull)

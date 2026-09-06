@@ -147,11 +147,7 @@ func (s *SplitStage) groundFromSource(ctx context.Context, c StoreClip, source S
 	if s.vision == nil {
 		return s.groundAt(ctx, c, "", segs)
 	}
-	resolveSource := resolveSplitSource
-	if s.splitter != nil && s.splitter.resolveSource != nil {
-		resolveSource = s.splitter.resolveSource
-	}
-	_, file, err := resolveSource(ctx, s.vision.ClipDir, c, source)
+	_, file, err := resolveSplitSource(ctx, s.vision.ClipDir, c, source)
 	if err != nil {
 		s.groundSkipped(ctx, c, "the proposal's evidence derivative is unavailable", "err", err)
 		return groundPass{Pending: countPendingGrounding(segs)}

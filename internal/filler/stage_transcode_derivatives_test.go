@@ -247,3 +247,211 @@ func TestTranscodeStage_BackfillsEvidenceWithoutReencodingExistingPlayback(t *te
 		t.Fatalf("completed evidence backfill still applies: %s", reason)
 	}
 }
+
+func TestTranscodeStage_DerivativeReuseVerifiesCurrentBytes(t *testing.T) {
+	for _, role := range []MediaAssetRole{MediaAssetEvidence, MediaAssetPlayback} {
+		t.Run(string(role), func(t *testing.T) {
+			dir := t.TempDir()
+			stage, counts, clip := derivativeReuseFixture(t, dir)
+			out, err := stage.Run(context.Background(), clip)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clip = out.Clip
+			if counts.evidence != 1 || counts.playback != 1 {
+				t.Fatalf("initial derivative builds = %+v, want one per role", counts)
+			}
+
+			full := derivativeAssetPath(t, dir, clip, role)
+			beforeSparse, err := ClipID(full)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeFull, size, err := FileSHA256(full)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutateDerivativeMiddleByte(t, full, size)
+			afterSparse, err := ClipID(full)
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterFull, afterSize, err := FileSHA256(full)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if afterSparse != beforeSparse {
+				t.Fatalf("sparse ClipID changed after middle-byte mutation: %s => %s", beforeSparse, afterSparse)
+			}
+			if afterFull == beforeFull || afterSize != size {
+				t.Fatalf("full identity after mutation = (%s, %d), want changed digest and size %d", afterFull, afterSize, size)
+			}
+
+			if applies, reason := stage.Applies(context.Background(), clip); !applies {
+				t.Fatalf("drifted %s derivative did not re-enter transcode: %s", role, reason)
+			}
+		})
+	}
+}
+
+func TestTranscodeStage_RunCannotReuseCachedQualityForDriftedDerivative(t *testing.T) {
+	for _, role := range []MediaAssetRole{MediaAssetEvidence, MediaAssetPlayback} {
+		t.Run(string(role), func(t *testing.T) {
+			dir := t.TempDir()
+			stage, counts, clip := derivativeReuseFixture(t, dir)
+			out, err := stage.Run(context.Background(), clip)
+			if err != nil {
+				t.Fatal(err)
+			}
+			clip = out.Clip
+			full := derivativeAssetPath(t, dir, clip, role)
+			_, size, err := FileSHA256(full)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutateDerivativeMiddleByte(t, full, size)
+
+			if _, err := stage.Run(context.Background(), clip); err == nil ||
+				!strings.Contains(err.Error(), string(role)+" derivative bytes do not match the manifest") {
+				t.Fatalf("drifted %s Run error = %v, want exact-byte rejection", role, err)
+			}
+			if counts.evidence != 1 || counts.playback != 1 {
+				t.Fatalf("drifted direct Run built or reused unverified derivatives: %+v", counts)
+			}
+		})
+	}
+}
+
+func TestTranscodeStage_UnchangedDerivativeRetryReusesCompletedQuality(t *testing.T) {
+	dir := t.TempDir()
+	stage, counts, clip := derivativeReuseFixture(t, dir)
+	out, err := stage.Run(context.Background(), clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clip = out.Clip
+	if applies, reason := stage.Applies(context.Background(), clip); applies || reason == "" {
+		t.Fatalf("unchanged retry applies=%v reason=%q", applies, reason)
+	}
+	if _, err := stage.Run(context.Background(), clip); err != nil {
+		t.Fatal(err)
+	}
+	if counts.evidence != 1 || counts.playback != 1 {
+		t.Fatalf("unchanged retry rebuilt derivatives: %+v", counts)
+	}
+}
+
+func TestTranscodeStage_DerivativeReuseRejectsPathSubstitution(t *testing.T) {
+	t.Run("relative escape", func(t *testing.T) {
+		dir := t.TempDir()
+		stage, _, clip := derivativeReuseFixture(t, dir)
+		out, err := stage.Run(context.Background(), clip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		full := filepath.Join(dir, filepath.FromSlash(out.Clip.Path))
+		tags, state := ReadSidecarTagsState(full)
+		if state != SidecarValid || tags.MediaAssets == nil || tags.MediaAssets.Evidence == nil {
+			t.Fatalf("completed derivative manifest = %+v state=%v", tags.MediaAssets, state)
+		}
+		tags.MediaAssets.Evidence.Asset.Path = "../escaped.mp4"
+		if err := tags.MediaAssets.validateReuseFiles(context.Background(), dir, out.Clip.Path, out.Clip.Hash); err == nil {
+			t.Fatal("relative evidence path escape was accepted")
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		stage, _, clip := derivativeReuseFixture(t, dir)
+		out, err := stage.Run(context.Background(), clip)
+		if err != nil {
+			t.Fatal(err)
+		}
+		clip = out.Clip
+		evidence := derivativeAssetPath(t, dir, clip, MediaAssetEvidence)
+		bytes, err := os.ReadFile(evidence)
+		if err != nil {
+			t.Fatal(err)
+		}
+		substitute := filepath.Join(t.TempDir(), "evidence.mp4")
+		if err := os.WriteFile(substitute, bytes, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(evidence); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(substitute, evidence); err != nil {
+			t.Fatal(err)
+		}
+		if applies, reason := stage.Applies(context.Background(), clip); !applies {
+			t.Fatalf("symlink-substituted evidence did not re-enter transcode: %s", reason)
+		}
+		if _, err := stage.Run(context.Background(), clip); err == nil || !strings.Contains(err.Error(), "evidence derivative bytes do not match the manifest") {
+			t.Fatalf("symlink-substituted evidence Run error = %v", err)
+		}
+	})
+}
+
+type derivativeBuildCounts struct {
+	evidence int
+	playback int
+}
+
+func derivativeReuseFixture(t *testing.T, dir string) (*TranscodeStage, *derivativeBuildCounts, StoreClip) {
+	t.Helper()
+	sourceHash := writeContentAddressedClip(t, dir, []byte(strings.Repeat("authoritative source master\n", 4096)), ".mkv")
+	clip := StoreClip{Clip: Clip{Hash: sourceHash, Path: filepath.ToSlash(ClipRelPath(sourceHash, ".mkv")), Name: "Fixture", Kind: Commercial}}
+	counts := new(derivativeBuildCounts)
+	stage := NewTranscodeStage(&transcodeStore{}, func(context.Context, string) (Probed, error) {
+		return Probed{DurationMs: 30_000, Height: 480}, nil
+	}, dir, mediatools.DefaultMezzanine(), nil, func() float64 { return -23 }, time.Now).WithMediaDerivatives()
+	stage.identifyFFmpeg = func(context.Context, string) (mediatools.MediaToolIdentity, error) {
+		return mediatools.MediaToolIdentity{Name: "ffmpeg", Version: "fixture", ExecutableSHA256: strings.Repeat("a", 64)}, nil
+	}
+	stage.verifyDerivative = func(_ context.Context, _, _ string, durationMs int64, keyframeSeconds int, hadAudio bool, targetLUFS float64) (mediatools.DerivativeQC, error) {
+		return fixtureDerivativeQC(durationMs, keyframeSeconds, hadAudio, targetLUFS), nil
+	}
+	stage.evidenceTranscode = func(_ context.Context, request mediatools.TranscodeRequest, _ func(int)) (MediaQuality, error) {
+		counts.evidence++
+		return MediaQuality{DurationMs: 30_000}, os.WriteFile(request.Out, []byte("evidence\n"+strings.Repeat("derivative-byte-", 200000)), 0o600)
+	}
+	stage.transcode = func(_ context.Context, request mediatools.TranscodeRequest, _ func(int)) (MediaQuality, error) {
+		counts.playback++
+		return MediaQuality{DurationMs: 30_000}, os.WriteFile(request.Out, []byte("playback\n"+strings.Repeat("derivative-byte-", 200000)), 0o600)
+	}
+	return stage, counts, clip
+}
+
+func derivativeAssetPath(t *testing.T, dir string, clip StoreClip, role MediaAssetRole) string {
+	t.Helper()
+	tags, state := ReadSidecarTagsState(filepath.Join(dir, filepath.FromSlash(clip.Path)))
+	if state != SidecarValid || tags.MediaAssets == nil || tags.MediaAssets.Evidence == nil || tags.MediaAssets.Playback == nil {
+		t.Fatalf("completed derivative manifest = %+v state=%v", tags.MediaAssets, state)
+	}
+	asset := tags.MediaAssets.Evidence.Asset
+	if role == MediaAssetPlayback {
+		asset = tags.MediaAssets.Playback.Asset
+	}
+	return filepath.Join(dir, filepath.FromSlash(asset.Path))
+}
+
+func mutateDerivativeMiddleByte(t *testing.T, path string, size int64) {
+	t.Helper()
+	if size <= 2*hashWindow {
+		t.Fatalf("derivative is %d bytes; need more than two sparse-hash windows", size)
+	}
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	offset := size / 2
+	var value [1]byte
+	if _, err := file.ReadAt(value[:], offset); err != nil {
+		t.Fatal(err)
+	}
+	value[0] ^= 0xff
+	if _, err := file.WriteAt(value[:], offset); err != nil {
+		t.Fatal(err)
+	}
+}

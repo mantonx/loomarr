@@ -124,7 +124,6 @@ type Splitter struct {
 	now             func() time.Time
 	newID           func() string
 	log             *slog.Logger
-	resolveSource   func(context.Context, string, StoreClip, SplitSourceAsset) (SplitSourceAsset, string, error)
 }
 
 // NewSplitter builds the splitter. dropDir is the filler drop-folder root. minClipDuration may be
@@ -133,16 +132,7 @@ func NewSplitter(store SplitStore, tools MediaTools, provider llm.Provider, drop
 	if now == nil {
 		now = time.Now
 	}
-	return &Splitter{store: store, tools: tools, provider: provider, dropDir: dropDir, minClipDuration: minClipDuration, newID: newID, now: now, log: log, resolveSource: resolveSplitSource}
-}
-
-// WithSplitSourceResolver replaces only the exact-byte lookup boundary. Production never calls
-// this; fixture stores use it because their synthetic clip identities deliberately have no media.
-func (sp *Splitter) WithSplitSourceResolver(resolve func(context.Context, string, StoreClip, SplitSourceAsset) (SplitSourceAsset, string, error)) *Splitter {
-	if sp != nil && resolve != nil {
-		sp.resolveSource = resolve
-	}
-	return sp
+	return &Splitter{store: store, tools: tools, provider: provider, dropDir: dropDir, minClipDuration: minClipDuration, newID: newID, now: now, log: log}
 }
 
 // Reground writes a grounding pass back onto an existing proposal WITHOUT re-detecting (§10 V54).
@@ -266,7 +256,7 @@ func (sp *Splitter) advanceProposal(ctx context.Context, clipHash string, p *Spl
 	if p != nil {
 		boundSource = p.Source
 	}
-	source, file, err := sp.resolveSource(ctx, sp.dropDir, clip, boundSource)
+	source, file, err := resolveSplitSource(ctx, sp.dropDir, clip, boundSource)
 	if err != nil {
 		return p, false, err
 	}
@@ -718,7 +708,7 @@ func (sp *Splitter) confirm(ctx context.Context, proposalID string, segments, ho
 	}
 	// V66 freezes the exact evidence location and full digest in the proposal. Pre-V66 proposals
 	// resolve once through the catalog row and are upgraded to the same bound source shape.
-	source, src, err := sp.resolveSource(ctx, sp.dropDir, clip, p.Source)
+	source, src, err := resolveSplitSource(ctx, sp.dropDir, clip, p.Source)
 	if err != nil {
 		return nil, fmt.Errorf("split confirm: %w", err)
 	}

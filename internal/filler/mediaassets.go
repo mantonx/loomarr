@@ -109,6 +109,75 @@ func validateMediaDerivative(derivative MediaDerivativeLineage, role MediaAssetR
 	return nil
 }
 
+// validateReuseFiles reopens every recorded rendition before completed work may be reused.
+// Manifest lineage and cached QC describe the bytes that passed verification; neither proves that
+// the same regular file still occupies the recorded path.
+func (m MediaAssetManifest) validateReuseFiles(ctx context.Context, clipDir, playbackPath, clipHash string) error {
+	if err := m.validate(); err != nil {
+		return err
+	}
+	if m.Evidence != nil {
+		if err := validateMediaAssetFile(ctx, clipDir, m.Evidence.Asset, MediaAssetEvidence, mediaEvidenceDirName); err != nil {
+			return err
+		}
+	}
+	if m.Playback != nil {
+		if filepath.Clean(filepath.FromSlash(m.Playback.Asset.Path)) != filepath.Clean(filepath.FromSlash(playbackPath)) ||
+			m.Playback.Asset.ClipHash != clipHash {
+			return errors.New("playback derivative identity does not match the catalog clip")
+		}
+		if err := validateMediaAssetFile(ctx, clipDir, m.Playback.Asset, MediaAssetPlayback, ""); err != nil {
+			return err
+		}
+	} else {
+		// A legacy mezzanine has no honestly reconstructable playback recipe/tool lineage. Its
+		// retained master is nevertheless the exact byte authority for the still-visible file.
+		legacyPlayback := m.SourceMaster
+		legacyPlayback.Role = MediaAssetPlayback
+		legacyPlayback.Path = playbackPath
+		if legacyPlayback.ClipHash != clipHash {
+			return errors.New("legacy playback identity does not match the catalog clip")
+		}
+		if err := validateMediaAssetFile(ctx, clipDir, legacyPlayback, MediaAssetPlayback, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateMediaAssetFile(ctx context.Context, clipDir string, asset MediaAssetIdentity, role MediaAssetRole, tree string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !filepath.IsAbs(clipDir) {
+		return fmt.Errorf("%s derivative root is not absolute", role)
+	}
+	if err := validateMediaAssetIdentity(asset, role, tree); err != nil {
+		return err
+	}
+	full := filepath.Join(clipDir, filepath.FromSlash(asset.Path))
+	info, err := os.Lstat(full)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() != asset.Bytes {
+		return fmt.Errorf("%s derivative bytes do not match the manifest", role)
+	}
+	resolvedRoot, rootErr := filepath.EvalSymlinks(clipDir)
+	resolvedFull, fileErr := filepath.EvalSymlinks(full)
+	resolvedInfo, statErr := os.Stat(resolvedFull)
+	if rootErr != nil || fileErr != nil || statErr != nil || !os.SameFile(info, resolvedInfo) ||
+		resolvedFull == resolvedRoot || !pathContains(resolvedRoot, resolvedFull) {
+		return fmt.Errorf("%s derivative path escapes the filler root", role)
+	}
+	digest, size, err := FileSHA256(resolvedFull)
+	if err != nil || digest != asset.SHA256 || size != asset.Bytes {
+		return fmt.Errorf("%s derivative bytes do not match the manifest", role)
+	}
+	sparse, err := ClipID(resolvedFull)
+	if err != nil || sparse != asset.ClipHash {
+		return fmt.Errorf("%s derivative sparse identity does not match the manifest", role)
+	}
+	return ctx.Err()
+}
+
 func validateMediaAssetIdentity(asset MediaAssetIdentity, role MediaAssetRole, tree string) error {
 	if asset.Role != role || !isContentHash(asset.SHA256) || !isContentHash(asset.ClipHash) || asset.Bytes <= 0 {
 		return fmt.Errorf("%s media asset identity is invalid", role)
