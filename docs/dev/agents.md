@@ -53,18 +53,31 @@ worker report. A worker waits for the supervisor to stop it or issue another bri
 its own backlog. This keeps ownership with the delivery agent while still providing fresh context.
 
 When the harness supports model and reasoning controls, select them by task shape and record the
-choice in the worker brief. The durable supervisor workflow uses capability classes so it remains
-provider-neutral; adapter-specific live model mappings belong outside this contract.
+choice in the worker brief. `AGENTS.md` owns the task-based model routing policy; the supervisor
+workflow applies it at each assignment boundary. Record external sessions as `uncontrolled` when
+their actual selection cannot be verified rather than assuming an equivalent model.
+
+For straightforward evidence collection—exact SHA/status and PR/issue collection, bounded
+inventories, artifact existence/hash/size checks, documented-command reproduction, and mechanical
+comparison against explicit acceptance criteria—use Luna at Low reasoning by default. Use Terra at
+Medium for ordinary implementation, multi-file behaviour analysis, or synthesis-heavy investigation.
+Use Sol only for complex integration or high-risk or ambiguous contract reasoning with a written
+need. A read-only assignment is not automatically Terra: check whether an explicit evidence checklist
+makes Luna sufficient first. Record model, reasoning, rationale, authority, output, budget, cutoff,
+and report reserve in every brief and verify actual settings. Escalate only after checkpointing the
+specific unresolved question or failed acceptance, preserving useful evidence, and starting a fresh
+bounded assignment. Budgets are limits, not targets; routing never changes authority, ownership,
+gates, or safety controls.
 
 | Task shape | Default execution |
 | --- | --- |
 | Small task, sequential reasoning, or shared mutable seam | One owning agent; no delegation |
-| Ordinary bounded worker assignment | Balanced capability at Medium reasoning |
-| Bounded search, triage, or repetitive mechanical work | Lower-cost capability when acceptance is objective |
-| Measured ambiguity, security, authorization, migration, integration, or final acceptance | Frontier capability or High reasoning only when the measured need justifies it |
+| Straightforward evidence collection or mechanical comparison | Luna at Low reasoning by default |
+| Ordinary implementation or synthesis-heavy analysis | Terra at Medium reasoning; justify higher-tier evidence collection |
+| Complex integration or high-risk, ambiguous contract reasoning | Sol only with a written need; choose reasoning for the bounded task |
 | External session without trustworthy controls | Record `uncontrolled`; verify through artifacts and evidence |
 
-Use Medium as the balanced default. Record the selected model/capability, reasoning, and rationale;
+Use the task-specific defaults above. Record the selected model/capability, reasoning, and rationale;
 do not switch model or reasoning during an active checkpoint. Change it only with the next bounded
 assignment after the worker returns. Record worker-scoped usage as `source`, `start`, `end`, and
 `delta` only when observable; use `unavailable` or `uncontrolled` otherwise, and never attribute an

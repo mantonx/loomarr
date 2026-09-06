@@ -32,6 +32,22 @@ they do not self-assign follow-up work. Record model and reasoning choices when 
 them. Change those choices only at assignment boundaries, and never let them expand the worker's
 authority, scope, claims, tools, or acceptance criteria.
 
+### Task-based model routing
+
+Use Luna at Low reasoning by default for straightforward evidence collection: exact SHA/status and
+PR/issue collection, bounded inventories, artifact existence/hash/size checks, documented-command
+reproduction, and mechanical comparison against explicit acceptance criteria. Use Terra at Medium
+for ordinary implementation, multi-file behaviour analysis, and investigations requiring synthesis.
+Use Sol only for complex integration or high-risk or ambiguous contract reasoning, with a written
+reason. A read-only assignment is not automatically a Terra assignment: first determine whether an
+explicit evidence checklist makes Luna sufficient. Every brief records the selected model/reasoning,
+rationale, authority, output, native budget, cutoff, and report reserve; verify the launched settings.
+Higher-tier evidence collection needs a concrete synthesis, ambiguity, or risk justification.
+Escalation checkpoints the specific unresolved question or failed acceptance, preserves useful
+evidence, and starts a fresh bounded assignment; never silently switches an active worker or repeats
+the whole scan. Budget ceilings are limits, not targets, and higher capability never broadens
+authority; preserve one-writer ownership, visible panes, gates, and safety controls.
+
 For genuinely independent bounded work, use visible worker panes freely when the maintainer asks
 for supervised coordination. After accepting a worker report, immediately reassign that pane to a
 ready independent task or close it; retain it only through report capture and acknowledgement.
