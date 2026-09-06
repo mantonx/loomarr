@@ -7,6 +7,7 @@ import { FillerOverview } from "./filler-overview";
 const readiness: FillerReadinessDTO = {
   ready: true,
   nextAction: "none",
+  repairs: { count: 0 },
   fetch: { enabled: true, catalogClips: 48 },
   pipeline: {
     runnable: 0,
