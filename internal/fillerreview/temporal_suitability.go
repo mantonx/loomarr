@@ -15,6 +15,7 @@ import (
 
 	"github.com/loomarr/loomarr/internal/fillerbakeoff"
 	"github.com/loomarr/loomarr/internal/fillereval"
+	"github.com/loomarr/loomarr/internal/openroutermedia"
 )
 
 const (
@@ -197,12 +198,16 @@ func assessOpenRouterSuitabilityCase(ctx context.Context, client *http.Client, b
 		return TemporalSuitabilityAssessment{}, fmt.Errorf("verified suitability video for alias %q is unavailable, drifted, or outside its byte ceiling", item.Alias)
 	}
 	started := time.Now()
-	callResult, callErr := callOpenRouterStructured(caseCtx, client, baseURL, openRouterStructuredCallConfig{
-		APIKey: config.APIKey, Model: config.Model, ResolvedModel: checkpoint.Identity.ResolvedModel,
+	authority, err := openRouterRouteAuthority(config.Snapshot, checkpoint.Identity.CapabilitySnapshotSHA256, baseURL, config.Model, checkpoint.Identity.ResolvedModel, config.UpstreamProvider, config.UpstreamProviderSlug, []string{"text", "video"}, temporalSuitabilityMaxTokens, config.ReasoningMode == TemporalSuitabilityReasoningRequired, now)
+	if err != nil {
+		return TemporalSuitabilityAssessment{}, err
+	}
+	callResult, callErr := openroutermedia.Call(caseCtx, client, baseURL, openroutermedia.Config{
+		Authority: authority, APIKey: config.APIKey, Model: config.Model, ResolvedModel: checkpoint.Identity.ResolvedModel,
 		UpstreamProvider: config.UpstreamProvider, ProviderSlug: config.UpstreamProviderSlug,
 		SchemaName: "filler_suitability", Schema: temporalSuitabilitySchema(item.DurationMS),
 		SystemPrompt: temporalSuitabilitySystemPrompt, Content: temporalSuitabilityContent(item),
-		Videos:    []openRouterStructuredVideo{{MIMEType: "video/mp4", Base64: base64.StdEncoding.EncodeToString(video)}},
+		Videos:    []openroutermedia.Video{{MIMEType: "video/mp4", Base64: base64.StdEncoding.EncodeToString(video)}},
 		MaxTokens: temporalSuitabilityMaxTokens, MaxChargeNanoUSD: config.MaxChargeNanoUSD, DisableReasoning: config.ReasoningMode == TemporalSuitabilityReasoningDisabled,
 		Title: temporalSuitabilityRequestTitle,
 		Reserve: func(requestSHA string) error {
@@ -223,7 +228,7 @@ func assessOpenRouterSuitabilityCase(ctx context.Context, client *http.Client, b
 	latency := max(int64(0), time.Since(started).Milliseconds())
 	call := fillereval.TemporalInferenceCall{
 		Axis: "suitability", Attempt: 1, ResponseSHA256: callResult.ResponseSHA256,
-		LatencyMS: latency, PromptTokens: callResult.Wire.Usage.PromptTokens, CompletionTokens: callResult.Wire.Usage.CompletionTokens,
+		LatencyMS: latency, PromptTokens: callResult.PromptTokens, CompletionTokens: callResult.CompletionTokens,
 	}
 	if callResult.ResponseSHA256 != "" {
 		relative, writeErr := writeTemporalSuitabilityRawResponse(config.CheckpointDir, item.Alias, callResult.RawResponse)
@@ -253,10 +258,10 @@ func assessOpenRouterSuitabilityCase(ctx context.Context, client *http.Client, b
 		return TemporalSuitabilityAssessment{}, fmt.Errorf("OpenRouter suitability call for alias %q did not acquire a durable reservation: %w", item.Alias, callErr)
 	}
 	attempt := &checkpoint.Attempts[len(checkpoint.Attempts)-1]
-	attempt.ResponseSHA256, attempt.GenerationID = callResult.ResponseSHA256, callResult.Wire.ID
+	attempt.ResponseSHA256, attempt.GenerationID = callResult.ResponseSHA256, callResult.GenerationID
 	attempt.LatencyMS, attempt.PromptTokens, attempt.CompletionTokens = latency, call.PromptTokens, call.CompletionTokens
 	if callResult.ChargeKnown {
-		attempt.ChargedAmountUSD, attempt.ChargedNanoUSD = callResult.Wire.Usage.Cost.String(), callResult.ChargedNanoUSD
+		attempt.ChargedAmountUSD, attempt.ChargedNanoUSD = callResult.ChargedAmountUSD, callResult.ChargedNanoUSD
 	}
 	if failure == nil {
 		attempt.State = temporalOpenRouterAttemptAccepted

@@ -123,12 +123,13 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 | `catalog` | 6 | `library`, `provision` |
 | `contact` | 5 | — |
 | `diagnostics` | 8 | — |
-| `filler` | 7 | `diagnostics`, `filleradmission`, `llm`, `taxonomy` |
+| `filler` | 7 | `diagnostics`, `filleradmission`, `llm`, `mediatools`, `taxonomy` |
 | `filleradmission` | 8 | — |
 | `httpx` | 9 | `metrics` |
 | `invitation` | 6 | `contact` |
 | `library` | 8 | `filler`, `httpx`, `metrics` |
 | `llm` | 6 | `httpx`, `metrics` |
+| `mediatools` | 5 | `diagnostics` |
 | `metrics` | 8 | `provision` |
 | `notifications` | 5 | `httpx` |
 | `provision` | 18 | — |
@@ -160,7 +161,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns the deterministic semantic boundary between versioned filler evidence and a catalog-admission decision.
 - **`fillercorpus`** · 2 importers
   Owns the source-neutral, non-authorizing inventory contract used to qualify certification corpus lanes.
-- **`fillereval`** · 3 importers
+- **`fillereval`** · 4 importers
   Owns the hermetic certification contract for filler admission.
 - **`images/rustgen`** · 4 importers
   Concrete adapter for Loomarr's required Rust image worker (§22).
@@ -205,6 +206,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns administrator admission decisions and their bearer grants (§11).
 - **`metrics`** · 8 importers · → `images/rustgen`, `provision`
   Owns Loomarr's generation-scoped Prometheus surface (design §7 /metrics, §17).
+- **`openroutermedia`** · 3 importers · → `fillereval`
+  Owns Loomarr's bounded OpenRouter structured-media transport.
 - **`prepared`** · 4 importers · → `diagnostics`, `media`
   Owns immutable, reusable playout publications.
 - **`quality`** · 7 importers · → `provision`
@@ -221,7 +224,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 3**
 
-- **`fillerbakeoff`** · 3 importers · → `filleradmission`, `fillereval`, `httpx`
+- **`fillerbakeoff`** · 3 importers · → `filleradmission`, `fillereval`, `httpx`, `openroutermedia`
   Runs bounded, inference-spending filler admission comparisons.
 - **`llm`** · 6 importers · → `httpx`, `metrics`
   LLM provider abstraction (design §8): one provider-neutral Chat primitive with tool-use, implemented by exactly TWO wire kinds — Ollama (the homelab default) and OpenAI-compatible.
@@ -236,7 +239,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 4**
 
-- **`mediatools`** · 4 importers · → `diagnostics`, `playout`, `proctree`
+- **`mediatools`** · 5 importers · → `diagnostics`, `playout`, `proctree`
   Ffmpeg / ffprobe / whisper layer (§10, §14.2): the exec calls, the parsers for what those binaries print, and the shapes they return.
 - **`recommend`** · → `llm`
   Defines inert Channel Concepts and the hermetic evaluator used to certify channel-recommendation models.
@@ -247,12 +250,14 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Commercials & filler domain (design §10): the clip catalog model and pod assembly.
 - **`fillerreference`** · 1 importer · → `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `mediatools`, `taxonomy`
   Owns the deterministic pre-screen for the production-ready filler reference cohort.
+- **`fillersafety`** · 1 importer · → `mediatools`, `openroutermedia`
+  Owns the fail-closed spoken-safety cascade and its shadow evidence.
 
 **Layer 6**
 
 - **`clipfetch`** · 1 importer · → `filler`, `proctree`
   Downloads filler clips into the drop-folder (design §10, §16).
-- **`fillerreview`** · → `filler`, `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `fillerreference`, `httpx`, `mediatools`
+- **`fillerreview`** · → `filler`, `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `fillerreference`, `fillersafety`, `httpx`, `mediatools`, `openroutermedia`
   Materializes identity-blind evidence for independent semantic review.
 - **`library`** · 8 importers · → `episodeevidence`, `filler`, `httpx`, `inventory`, `metrics`
   Library port (design §6, §2 boundaries): a shared Emby/Jellyfin adapter.
@@ -4793,8 +4798,8 @@ when reproducing an archived no-signal observation. This narrowly retained exter
 contract does not provide a general legacy-loader option or an admission fallback.
 
 Spoken-language safety is a separate complete-source evidence seam; neither the production catalog
-transcript nor a direct-video model's spoken-language answer can satisfy it. The catalog transcript
-is deliberately selective and normally samples only the `LanguageSpan` window, while the safety
+transcript nor a direct-video model's spoken-language answer can satisfy it alone. The catalog
+transcript is deliberately selective and normally samples only the `LanguageSpan` window, while the safety
 seam transcribes `[0, measured source duration)` for every source in the exact corpus manifest and
 every additional source named only by the construction authority. It validates the label-blind
 packet set and its external media bytes against that corpus manifest before evaluating transcripts,
@@ -4834,6 +4839,93 @@ case identities, counts, rates, authority digests, and outcomes. It never reprod
 transcript text, or policy phrases and grants no production permission even when the diagnostic
 challenge passes. Generated/TTS controls are permanently marked `development` and can produce only
 a diagnostic result; they cannot satisfy or be relabeled as the independent-source certification.
+
+The maintained transcript projection above remains deterministic diagnostic history: it loads and
+projects already-produced evidence and owns no network, process, retry, budget, or production-ingest
+behavior. Measured development controls supersede the assumption that it can become the production
+scanner by adding a decoder. Whisper-family transcripts missed prohibited positives; a stronger local
+acoustic proposer retained the known positive but generated an impractical candidate queue. A hosted
+native-audio adjudicator reduced that queue without earning negative authority, and a distinct
+complete-video/audio route corroborated the reduced set. Those observations establish the next
+production boundary, not a clean-source label or an admission certificate.
+
+The initial spoken-safety stage delivers a private cascade core and an ephemeral in-memory attempt
+record. Its evaluator and adapters remain unexported and unwired; this stage does not expose the
+external evaluation operation or claim an immutable durable ledger. The next stacked integration must
+deliver that operation and ledger before compatibility scoring or ingest wiring can consume the core.
+
+The completed production **spoken-safety evaluator** is one deep Go module with one external evaluation operation
+over an immutable source-authority document. It owns complete-source validation, bounded media planning,
+the ordered cascade, deterministic reduction, and canonical result validation. Local acoustic proposal,
+native-audio adjudication, complete-video/audio corroboration, and media extraction are private adapters;
+their provider, process, and tool details do not leak into callers. The module emits claim-specific
+evidence plus an immutable per-step ledger. It does not return or imply a filler-admission verdict, and
+`filleradmission.Evaluator` remains the only terminal semantic authority.
+
+The cascade validates exact source bytes, measured duration, transformations, tool identities, and
+complete modality coverage before inference. A certified local acoustic proposer emits source-relative
+candidate intervals. Each candidate is adjudicated by a pinned native-audio route. Only when every
+candidate receives a valid absent result may a distinct pinned route inspect the complete source video
+and audio. Calls are serial by default and retain the exact requested and canonical model, upstream
+route, snapshot, modalities, media bounds, response, cost, reservation, settlement, and failure identity
+required by the OpenRouter certification contract above.
+
+Reduction is deliberately asymmetric. One valid prohibited-presence observation quarantines the source;
+a negative observation never votes it away. An unclear or disagreeing result, incomplete modality,
+provider or local-runtime failure, stale identity, exceeded budget, or invalid schema holds
+operationally. A presence response with malformed timing is sufficient to hold but cannot be projected
+as a bounded fact. Two valid negative model observations produce only `candidate_rejected`: they never
+mean clean, suitable, ingestible, schedulable, or admitted. A proposer that emits no candidates likewise
+cannot establish clean coverage before the complete cascade is independently certified.
+
+The reusable OpenRouter multimedia transport is a separate concrete infrastructure module rather than
+part of the identity-blind review package or the generic text/tool LLM client. It hides capability-
+snapshot validation, canonical model and upstream binding, zero-data-retention and fallback-disabled
+routing, strict structured output, media ceilings, durable reservations, exact settlement, response
+metadata, and raw-response binding. Review, certification, and production safety modules may consume
+that behavior through private interfaces; none may weaken its route or accounting contract.
+
+Before reservation or HTTP, the transport requires validated route authority derived from the exact
+capability-snapshot bytes and expected digest. Validation binds freshness, requested and canonical
+model identities, upstream/provider route, required input modalities, structured-output support, and
+zero-data-retention eligibility. Unchecked strings or a syntactically valid digest cannot construct
+that authority; a missing or zero authority fails before any reservation or request.
+
+Subsequent production integration must be shadow-only. Its durable ledger is written before the compatibility score may
+run; failure to persist leaves the ingest parked and recoverable. The result grants no catalog filing,
+training, scheduling, or production-admission permission. An applied projection from certified
+spoken-safety evidence into the admission document is a later design and rollout change. Its identity
+must match the exact certification artifact; model, route, prompt/schema, media planner, policy, local
+runtime, weight, or implementation drift returns a hold until recertified.
+
+Restricted spoken language and broad visual suitability remain separate claims. Complete-video
+suitability must ultimately cover every source, including a source for which the acoustic proposer emits
+no interval; a video corroboration performed only on spoken candidates cannot satisfy that obligation.
+The admission evaluator combines independently certified claim evidence and never treats one no-signal
+lane as authority for another.
+
+The local proposer is not a production dependency until its runtime and exact model-weight artifacts have
+explicit redistribution and use authority recorded in §14. The selected 2024 GigaSpeech candidate now has
+artifact-level license evidence there; that resolves local development use, not release packaging. The
+runtime pin, companion-file notice inventory, and both-platform packaging proof remain separate gates. If
+those cannot be established, certification must select a legally usable proposer; a lower-recall decoder is
+not silently substituted.
+
+Production certification uses a locked, source-family-disjoint challenge of real speech, not generated
+or transformed copies pretending to be independent observations. Positive coverage includes distinct
+speakers and source families across the predeclared accents/locales, music and overlap, noise, speed and
+pitch, codec, clipping, and placement slices. With zero misses it still requires at least 59 independent
+positive source families for the one-sided 95% exact Clopper-Pearson recall lower bound to reach 95%.
+Clean and near-match controls report their observed false-positive rate for every locked locale/slice;
+any stronger confidence-bound target declares its sample population before the challenge is opened.
+Known-script, consented real-speaker recordings may supply positive truth when licensed pre-labeled media
+is unavailable, but two independent blind reviewer identities still verify audibility and timing and a
+third adjudicates disagreement. A model-backed reviewer requires the immutable attestation and candidate-
+family exclusion already specified above. The maintainer is not a required blind reviewer.
+
+No model is trained or fine-tuned for this lane until governed source-disjoint labels exist and the
+certified stock cascade demonstrably misses a locked gate. Existing unknown commercials and agreement
+between candidate models remain development observations and cannot be promoted into training truth.
 
 The temporal `unusable` answer is diagnostic history, not media-integrity truth. Media integrity,
 presentation/source defects, broadcast suitability, semantic unit/role, and rights are five
@@ -7604,6 +7696,7 @@ surface without a wire-format migration. The opt-in profiler also exposes Go 1.2
 
 ### Ingest tooling & CI
 - **Ingest is core Go code** (`internal/clipfetch` — named so it is never confused with `internal/ingest`, the Sonarr/Radarr *webhook* handler of §6), shelling out to **`yt-dlp`** + **`ffmpeg`** (CLI) for YouTube/playlists and plain `net/http` for Archive.org; it writes files + info-JSON sidecars into the drop-folder. Deliberately dumb. Those binaries — plus **`deno`** (modern yt-dlp requires it for YouTube extraction), **`ffprobe`**, and **`whisper-cli`** (below) — are the **only** vendored non-Go executables the project allows, and they are invoked via `exec`, never linked. **They ship in the single image** (§16); there is no variant that omits them, so the `ingest` feature is always available.
+  - **The 2024 GigaSpeech sherpa-onnx keyword-spotting model is an approved development candidate, not yet a shipped dependency.** The exact upstream release archive `sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2` has SHA-256 `f170013b4716e41b62b9bfd809687c207cef798ef9bc6534d524e17af9b6561a`; its included `README.md` declares Apache License 2.0, and the upstream sherpa-onnx framework is Apache-2.0. This is artifact-level authority for local development despite the GigaSpeech dataset's separate non-commercial dataset terms: the dataset card explicitly treats a trained model's license as independent. A release may not bundle or fetch the model until the exact sherpa-onnx runtime is pinned, the archive README plus Apache license and any required notices are preserved, every companion artifact is inventoried, and both release platforms pass the proposer certification. The newer 2025 zh-en archive is excluded because upstream issue #3802 still records missing model-license evidence for it. This is an engineering compliance record, not legal advice.
   - **`ffmpeg` is a core runtime dependency, not an ingest-only tool** (revised — §9.1). It serves two callers now: yt-dlp's stream merging, and **internal playout's encoder**. A Loomarr that can't encode can't play out, so the previous opt-in-variant model (below) no longer describes a coherent artifact.
   - **`ffprobe` is bundled** (revised — it was previously excluded to save ~99MB, on the grounds that *"Loomarr never probes media — Tunarr assigns duration during its `local`-source scan"*). Internal playout owns duration and cut points, so the premise is gone. Both reversals trace to the same root cause: §9.1.
   - **`whisper-cli` (whisper.cpp) transcribes filler audio for compilation splitting** (§10, V34 — a maintainer-approved §14 addition, 2026-07-31). The transcript is the only signal that sees an ad boundary with no black frame and no silence: measured, one 149s block defeated every A/V detector while holding three complete adverts whose cuts exist only in language (plan §6.4). It matches the vendored-binary pattern in the ways that matter — exec'd, no cgo, no service — and ships in the single image with its model file like the rest of the tooling. ⚠ **It is NOT self-contained the way `yt-dlp` is** (this line used to say it was): whisper-cli links `libwhisper` + `libggml`, so those ship beside it, and **ggml `dlopen()`s its compute backend from the executable's own directory** — hence the binary lives in `/usr/local/lib/whisper` with a symlink on `PATH`. Getting that layout wrong produces a binary where `--help` succeeds and the first real transcription aborts (`GGML_ASSERT(device) failed`), so the image proves whisper by **transcribing at build time**, never by `--help`. On amd64 upstream ships 15 `libggml-cpu-*` microarchitecture variants selected at run time; copy the whole set or it fails only on untested host CPUs. ⚠ **Model size is a correctness property, not a tuning preference:** verified against the vendored **v1.9.1** binary on a real 244s commercial break — `tiny.en` dropped a complete 20s advert at the file's average loudness and `base.en` dropped 7s of equally audible speech, while **`small.en`** had no gap over audible content (its only gap is true near-silence). `small.en` therefore ships, at **466MB** — the single largest item in the image. Full method and table: plan §6.4.

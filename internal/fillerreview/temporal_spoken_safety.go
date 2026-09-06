@@ -11,18 +11,19 @@ import (
 
 	"github.com/loomarr/loomarr/internal/fillerbakeoff"
 	"github.com/loomarr/loomarr/internal/fillereval"
+	"github.com/loomarr/loomarr/internal/fillersafety"
 )
 
 const (
 	TemporalSpokenSafetySchemaVersion         = 1
 	TemporalSpokenSafetyContractVersion       = "filler-temporal-spoken-safety-v1"
-	TemporalSpokenSafetyPolicySchemaVersion   = 1
-	TemporalSpokenSafetyPolicyContractVersion = "filler-spoken-safety-policy-v1"
+	TemporalSpokenSafetyPolicySchemaVersion   = fillersafety.PolicySchemaVersion
+	TemporalSpokenSafetyPolicyContractVersion = fillersafety.PolicyContractVersion
 
-	TemporalSpokenSafetyMatchProhibited = "prohibited"
-	TemporalSpokenSafetyMatchAmbiguous  = "ambiguous"
-	TemporalSpokenSafetyModeExactWords  = "exact_words"
-	TemporalSpokenSafetyModeTokenPrefix = "token_prefix"
+	TemporalSpokenSafetyMatchProhibited = fillersafety.PolicyClassProhibited
+	TemporalSpokenSafetyMatchAmbiguous  = fillersafety.PolicyClassAmbiguous
+	TemporalSpokenSafetyModeExactWords  = fillersafety.PolicyModeExactWords
+	TemporalSpokenSafetyModeTokenPrefix = fillersafety.PolicyModeTokenPrefix
 
 	TemporalSpokenSafetyDispositionProhibited = "prohibited_hold"
 	TemporalSpokenSafetyDispositionCoverage   = "coverage_hold"
@@ -36,21 +37,9 @@ const (
 	temporalSpokenSafetyDurationToleranceMS        = 1_000
 )
 
-type TemporalSpokenSafetyPolicy struct {
-	SchemaVersion            int                              `json:"schemaVersion"`
-	ContractVersion          string                           `json:"contractVersion"`
-	PolicyID                 string                           `json:"policyId"`
-	GeneratedAt              time.Time                        `json:"generatedAt"`
-	MaximumInterSegmentGapMS int64                            `json:"maximumInterSegmentGapMs"`
-	Rules                    []TemporalSpokenSafetyPolicyRule `json:"rules"`
-}
+type TemporalSpokenSafetyPolicy = fillersafety.Policy
 
-type TemporalSpokenSafetyPolicyRule struct {
-	ID        string   `json:"id"`
-	Class     string   `json:"class"`
-	MatchMode string   `json:"matchMode"`
-	Variants  []string `json:"variants"`
-}
+type TemporalSpokenSafetyPolicyRule = fillersafety.PolicyRule
 
 type TemporalSpokenSafetyPolicyBuildConfig struct {
 	PolicyID                 string

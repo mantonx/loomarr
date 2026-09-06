@@ -3,6 +3,8 @@ package mediatools
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -345,6 +347,12 @@ type conditioningInputSnapshots struct {
 	parent   string
 }
 
+type regularFileSnapshot struct {
+	path   string
+	sha256 string
+	bytes  int64
+}
+
 func snapshotConditioningInputs(ctx context.Context, artifact, parent string) (conditioningInputSnapshots, error) {
 	if err := ctx.Err(); err != nil {
 		return conditioningInputSnapshots{}, err
@@ -358,15 +366,17 @@ func snapshotConditioningInputs(ctx context.Context, artifact, parent string) (c
 		inputs.close()
 		return conditioningInputSnapshots{}, err
 	}
-	inputs.artifact, err = snapshotConditioningRegularFile(ctx, dir, "artifact", artifact)
+	artifactSnapshot, err := snapshotConditioningRegularFile(ctx, dir, "artifact", artifact)
 	if err != nil {
 		return fail(err)
 	}
+	inputs.artifact = artifactSnapshot.path
 	if parent != "" {
-		inputs.parent, err = snapshotConditioningRegularFile(ctx, dir, "parent", parent)
+		parentSnapshot, err := snapshotConditioningRegularFile(ctx, dir, "parent", parent)
 		if err != nil {
 			return fail(fmt.Errorf("conditioning parent: %w", err))
 		}
+		inputs.parent = parentSnapshot.path
 	}
 	return inputs, nil
 }
@@ -377,25 +387,25 @@ func (s conditioningInputSnapshots) close() {
 	}
 }
 
-func snapshotConditioningRegularFile(ctx context.Context, dir, name, path string) (string, error) {
+func snapshotConditioningRegularFile(ctx context.Context, dir, name, path string) (regularFileSnapshot, error) {
 	if strings.TrimSpace(path) == "" || path == "-" {
-		return "", fmt.Errorf("%w: local regular media path is required", ErrConditioningOutput)
+		return regularFileSnapshot{}, fmt.Errorf("%w: local regular media path is required", ErrConditioningOutput)
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return "", fmt.Errorf("%w: resolve local media path: %v", ErrConditioningOutput, err)
+		return regularFileSnapshot{}, fmt.Errorf("%w: resolve local media path: %v", ErrConditioningOutput, err)
 	}
 	file, err := openConditioningRegularFile(abs)
 	if err != nil {
-		return "", fmt.Errorf("%w: open local media path: %v", ErrConditioningOutput, err)
+		return regularFileSnapshot{}, fmt.Errorf("%w: open local media path: %v", ErrConditioningOutput, err)
 	}
 	defer func() { _ = file.Close() }()
 	opened, err := file.Stat()
 	if err != nil || !opened.Mode().IsRegular() {
-		return "", fmt.Errorf("%w: media path is not a regular file", ErrConditioningOutput)
+		return regularFileSnapshot{}, fmt.Errorf("%w: media path is not a regular file", ErrConditioningOutput)
 	}
 	if opened.Size() > ConditioningMaxSnapshotBytes {
-		return "", fmt.Errorf("%w: media snapshot is %d bytes; maximum is %d", ErrConditioningResourceLimit, opened.Size(), ConditioningMaxSnapshotBytes)
+		return regularFileSnapshot{}, fmt.Errorf("%w: media snapshot is %d bytes; maximum is %d", ErrConditioningResourceLimit, opened.Size(), ConditioningMaxSnapshotBytes)
 	}
 	// The opened descriptor is the authority. Independently cap bytes read so a concurrent append or
 	// stale size report cannot turn snapshot creation into an unbounded operation.
@@ -404,14 +414,19 @@ func snapshotConditioningRegularFile(ctx context.Context, dir, name, path string
 	destination := filepath.Join(dir, name+"-"+filepath.Base(abs))
 	out, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return "", fmt.Errorf("%w: create private media snapshot: %v", ErrConditioningOutput, err)
+		return regularFileSnapshot{}, fmt.Errorf("%w: create private media snapshot: %v", ErrConditioningOutput, err)
 	}
-	copyErr := copyConditioningSnapshot(ctx, out, file)
+	digest := sha256.New()
+	copyErr := copyConditioningSnapshot(ctx, io.MultiWriter(out, digest), file)
 	closeErr := out.Close()
 	if copyErr != nil || closeErr != nil {
-		return "", errors.Join(copyErr, closeErr)
+		return regularFileSnapshot{}, errors.Join(copyErr, closeErr)
 	}
-	return destination, nil
+	snapshotInfo, err := os.Stat(destination)
+	if err != nil {
+		return regularFileSnapshot{}, fmt.Errorf("%w: stat private media snapshot: %v", ErrConditioningOutput, err)
+	}
+	return regularFileSnapshot{path: destination, sha256: hex.EncodeToString(digest.Sum(nil)), bytes: snapshotInfo.Size()}, nil
 }
 
 func copyConditioningSnapshot(ctx context.Context, destination io.Writer, source io.Reader) error {

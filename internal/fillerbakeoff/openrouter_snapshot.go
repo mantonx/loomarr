@@ -3,8 +3,6 @@ package fillerbakeoff
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,10 +14,11 @@ import (
 
 	"github.com/loomarr/loomarr/internal/fillereval"
 	"github.com/loomarr/loomarr/internal/httpx"
+	"github.com/loomarr/loomarr/internal/openroutermedia"
 )
 
 const (
-	OpenRouterSnapshotSchemaVersion = 2
+	OpenRouterSnapshotSchemaVersion = openroutermedia.CapabilitySnapshotSchemaVersion
 	maxSnapshotModels               = 16
 	maxSnapshotEndpoints            = 256
 	maxSnapshotResponseBytes        = 8 << 20
@@ -29,40 +28,9 @@ const (
 
 // OpenRouterSnapshot is the immutable capability, endpoint-price, and ZDR
 // evidence used to bind one paid certification run.
-type OpenRouterSnapshot struct {
-	SchemaVersion int                       `json:"schemaVersion"`
-	SourceBaseURL string                    `json:"sourceBaseUrl"`
-	RetrievedAt   time.Time                 `json:"retrievedAt"`
-	Requests      int                       `json:"requests"`
-	ResponseBytes int64                     `json:"responseBytes"`
-	Models        []OpenRouterModelSnapshot `json:"models"`
-}
-
-type OpenRouterModelSnapshot struct {
-	ID               string                       `json:"id"`
-	CanonicalSlug    string                       `json:"canonicalSlug"`
-	Name             string                       `json:"name"`
-	Created          int64                        `json:"created"`
-	InputModalities  []string                     `json:"inputModalities"`
-	OutputModalities []string                     `json:"outputModalities"`
-	Endpoints        []OpenRouterEndpointSnapshot `json:"endpoints"`
-}
-
-type OpenRouterEndpointSnapshot struct {
-	Name                  string            `json:"name"`
-	ModelID               string            `json:"modelId"`
-	ProviderName          string            `json:"providerName"`
-	ProviderSlug          string            `json:"providerSlug"`
-	Quantization          string            `json:"quantization"`
-	ContextLength         int64             `json:"contextLength"`
-	MaxCompletionTokens   int64             `json:"maxCompletionTokens,omitempty"`
-	MaxPromptTokens       int64             `json:"maxPromptTokens,omitempty"`
-	SupportedParameters   []string          `json:"supportedParameters"`
-	Pricing               map[string]string `json:"pricing"`
-	Status                int               `json:"status"`
-	ZDR                   bool              `json:"zdr"`
-	SupportsImplicitCache bool              `json:"supportsImplicitCaching"`
-}
+type OpenRouterSnapshot = openroutermedia.CapabilitySnapshot
+type OpenRouterModelSnapshot = openroutermedia.CapabilityModelSnapshot
+type OpenRouterEndpointSnapshot = openroutermedia.CapabilityEndpointSnapshot
 
 type OpenRouterSnapshotConfig struct {
 	BaseURL              string
@@ -349,63 +317,11 @@ func sortedUnique(values []string) []string {
 }
 
 func OpenRouterSnapshotSHA256(snapshot OpenRouterSnapshot) string {
-	data, err := json.Marshal(snapshot)
-	if err != nil {
-		panic(err)
-	}
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	return openroutermedia.CapabilitySnapshotSHA256(snapshot)
 }
 
 func ValidateOpenRouterSnapshot(snapshot OpenRouterSnapshot) error {
-	parsedSource, sourceErr := url.Parse(snapshot.SourceBaseURL)
-	if snapshot.SchemaVersion != OpenRouterSnapshotSchemaVersion || sourceErr != nil || parsedSource.Host == "" || snapshot.RetrievedAt.IsZero() || snapshot.RetrievedAt.Location() != time.UTC {
-		return fmt.Errorf("OpenRouter snapshot requires schema %d and a UTC retrieval time", OpenRouterSnapshotSchemaVersion)
-	}
-	if len(snapshot.Models) == 0 || len(snapshot.Models) > maxSnapshotModels || snapshot.Requests != len(snapshot.Models)+2 || snapshot.ResponseBytes <= 0 || snapshot.ResponseBytes > maxSnapshotTotalBytes {
-		return fmt.Errorf("OpenRouter snapshot has invalid bounded request, response, or model counts")
-	}
-	modelIDs := make([]string, 0, len(snapshot.Models))
-	for _, model := range snapshot.Models {
-		modelIDs = append(modelIDs, model.ID)
-		canonicalOwner, canonicalName, canonical := strings.Cut(model.CanonicalSlug, "/")
-		if model.ID == "" || !canonical || canonicalOwner == "" || canonicalName == "" || strings.Contains(strings.ToLower(model.CanonicalSlug), "latest") || model.Name == "" || model.Created <= 0 || len(model.Endpoints) == 0 || len(model.Endpoints) > maxSnapshotEndpoints || !canonicalStrings(model.InputModalities) || !canonicalStrings(model.OutputModalities) || !validOpenRouterOutputModalities(model.OutputModalities) {
-			return fmt.Errorf("OpenRouter snapshot model %q has an invalid bounded identity or architecture", model.ID)
-		}
-		seenEndpoints := make(map[string]struct{}, len(model.Endpoints))
-		previousEndpoint := ""
-		requiresContext := slices.Contains(model.OutputModalities, "text")
-		for _, endpoint := range model.Endpoints {
-			key := endpoint.ProviderSlug + "\x00" + endpoint.Name
-			if key < previousEndpoint {
-				return fmt.Errorf("OpenRouter snapshot model %q endpoints are not canonical", model.ID)
-			}
-			previousEndpoint = key
-			if _, exists := seenEndpoints[key]; exists {
-				return fmt.Errorf("OpenRouter snapshot model %q repeats endpoint %q", model.ID, endpoint.ProviderSlug)
-			}
-			seenEndpoints[key] = struct{}{}
-			if endpoint.Name == "" || endpoint.ModelID != model.ID || endpoint.ProviderName == "" || endpoint.ProviderSlug == "" || requiresContext && endpoint.ContextLength <= 0 || !requiresContext && endpoint.ContextLength < 0 || endpoint.MaxCompletionTokens < 0 || endpoint.MaxPromptTokens < 0 || !canonicalStrings(endpoint.SupportedParameters) || len(endpoint.Pricing) == 0 || len(endpoint.Pricing) > 32 {
-				return fmt.Errorf("OpenRouter snapshot model %q has an invalid endpoint", model.ID)
-			}
-			for name, price := range endpoint.Pricing {
-				if name == "" || len(name) > maxFieldBytes || price == "" || len(price) > 128 {
-					return fmt.Errorf("OpenRouter snapshot endpoint %q has invalid bounded pricing", endpoint.ProviderSlug)
-				}
-				if _, err := fillereval.USDToNanoCeil(price); err != nil {
-					return fmt.Errorf("OpenRouter snapshot endpoint %q price %q: %w", endpoint.ProviderSlug, name, err)
-				}
-			}
-		}
-	}
-	if !canonicalStrings(modelIDs) {
-		return fmt.Errorf("OpenRouter snapshot models are not canonical")
-	}
-	return nil
-}
-
-func validOpenRouterOutputModalities(modalities []string) bool {
-	return slices.Contains(modalities, "text") || slices.Contains(modalities, "transcription")
+	return openroutermedia.ValidateCapabilitySnapshot(snapshot)
 }
 
 func ValidateOpenRouterRunSnapshot(run fillereval.RunIdentity, routes []Route, snapshot OpenRouterSnapshot) error {
@@ -451,18 +367,6 @@ func ValidateOpenRouterRunSnapshot(run fillereval.RunIdentity, routes []Route, s
 		}
 	}
 	return nil
-}
-
-func canonicalStrings(values []string) bool {
-	if len(values) == 0 || !slices.IsSorted(values) {
-		return false
-	}
-	for index, value := range values {
-		if value == "" || len(value) > maxFieldBytes || (index > 0 && values[index-1] == value) {
-			return false
-		}
-	}
-	return true
 }
 
 func snapshotModel(snapshot OpenRouterSnapshot, id string) (OpenRouterModelSnapshot, bool) {
