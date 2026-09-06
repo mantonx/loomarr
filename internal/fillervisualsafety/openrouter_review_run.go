@@ -21,7 +21,7 @@ import (
 const candidateBlindOpenRouterMaximumTokens = 2048
 
 func runCandidateBlindOpenRouterReview(ctx context.Context, config CandidateBlindOpenRouterConfig) (result CandidateBlindOpenRouterResult, err error) {
-	baseURL, client, now, model, err := validateCandidateBlindOpenRouterConfig(ctx, config)
+	baseURL, client, now, model, authority, err := validateCandidateBlindOpenRouterConfig(ctx, config)
 	if err != nil {
 		return CandidateBlindOpenRouterResult{}, err
 	}
@@ -88,7 +88,8 @@ func runCandidateBlindOpenRouterReview(ctx context.Context, config CandidateBlin
 	defer cancel()
 	started := time.Now()
 	callResult, callErr := openroutermedia.Call(requestCtx, client, baseURL, openroutermedia.Config{
-		APIKey: config.APIKey, Model: config.Model, ResolvedModel: model.CanonicalSlug,
+		Authority: authority,
+		APIKey:    config.APIKey, Model: config.Model, ResolvedModel: model.CanonicalSlug,
 		UpstreamProvider: config.UpstreamProvider, ProviderSlug: config.UpstreamProviderSlug,
 		SchemaName: "filler_visual_policy_review", Schema: schema,
 		SystemPrompt: candidateBlindOpenRouterSystemPrompt,
@@ -196,9 +197,9 @@ func runCandidateBlindOpenRouterReview(ctx context.Context, config CandidateBlin
 	return result, nil
 }
 
-func validateCandidateBlindOpenRouterConfig(ctx context.Context, config CandidateBlindOpenRouterConfig) (string, *http.Client, func() time.Time, fillerbakeoff.OpenRouterModelSnapshot, error) {
+func validateCandidateBlindOpenRouterConfig(ctx context.Context, config CandidateBlindOpenRouterConfig) (string, *http.Client, func() time.Time, fillerbakeoff.OpenRouterModelSnapshot, openroutermedia.RouteAuthority, error) {
 	if ctx == nil || ctx.Err() != nil {
-		return "", nil, nil, fillerbakeoff.OpenRouterModelSnapshot{}, errors.New("candidate-blind OpenRouter review context is invalid")
+		return "", nil, nil, fillerbakeoff.OpenRouterModelSnapshot{}, openroutermedia.RouteAuthority{}, errors.New("candidate-blind OpenRouter review context is invalid")
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
 	if baseURL == "" {
@@ -208,7 +209,7 @@ func validateCandidateBlindOpenRouterConfig(ctx context.Context, config Candidat
 	loopback := err == nil && config.AllowInsecureTestURL && (parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "localhost" || parsed.Hostname() == "::1")
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" ||
 		(!loopback && (parsed.Scheme != "https" || parsed.Hostname() != "openrouter.ai" || parsed.Path != "/api/v1")) {
-		return "", nil, nil, fillerbakeoff.OpenRouterModelSnapshot{}, errors.New("candidate-blind OpenRouter review requires the canonical HTTPS API base")
+		return "", nil, nil, fillerbakeoff.OpenRouterModelSnapshot{}, openroutermedia.RouteAuthority{}, errors.New("candidate-blind OpenRouter review requires the canonical HTTPS API base")
 	}
 	if strings.TrimSpace(config.APIKey) == "" || !cleanAbsoluteReviewPath(config.BundlePath) ||
 		!cleanAbsoluteReviewPath(config.OutputDir) || config.BundlePath == config.OutputDir ||
@@ -218,10 +219,10 @@ func validateCandidateBlindOpenRouterConfig(ctx context.Context, config Candidat
 		!validIdentity(config.ModelFamily) || !validIdentity(config.UpstreamProvider) || !validIdentity(config.UpstreamProviderSlug) ||
 		!validIdentity(config.ReviewerID) || config.PerRequestTimeout <= 0 || config.PerRequestTimeout > 30*time.Minute ||
 		config.MaxChargeNanoUSD <= 0 {
-		return "", nil, nil, fillerbakeoff.OpenRouterModelSnapshot{}, errors.New("candidate-blind OpenRouter review configuration is invalid")
+		return "", nil, nil, fillerbakeoff.OpenRouterModelSnapshot{}, openroutermedia.RouteAuthority{}, errors.New("candidate-blind OpenRouter review configuration is invalid")
 	}
 	if reviewPathsOverlap(config.BundlePath, config.OutputDir) {
-		return "", nil, nil, fillerbakeoff.OpenRouterModelSnapshot{}, errors.New("candidate-blind OpenRouter review output overlaps its source bundle")
+		return "", nil, nil, fillerbakeoff.OpenRouterModelSnapshot{}, openroutermedia.RouteAuthority{}, errors.New("candidate-blind OpenRouter review output overlaps its source bundle")
 	}
 	now := config.Now
 	if now == nil {
@@ -229,7 +230,16 @@ func validateCandidateBlindOpenRouterConfig(ctx context.Context, config Candidat
 	}
 	model, _, err := fillerbakeoff.ValidateOpenRouterVideoRoute(config.Snapshot, config.Model, config.UpstreamProvider, config.UpstreamProviderSlug, now().UTC(), candidateBlindOpenRouterMaximumTokens)
 	if err != nil || !slices.Contains(model.InputModalities, "image") {
-		return "", nil, nil, fillerbakeoff.OpenRouterModelSnapshot{}, errors.New("candidate-blind OpenRouter route lacks a fresh ZDR text/image/video structured-output capability")
+		return "", nil, nil, fillerbakeoff.OpenRouterModelSnapshot{}, openroutermedia.RouteAuthority{}, errors.New("candidate-blind OpenRouter review route lacks a fresh ZDR text/image/video structured-output capability")
+	}
+	authority, err := openroutermedia.NewRouteAuthority(config.Snapshot, fillerbakeoff.OpenRouterSnapshotSHA256(config.Snapshot), openroutermedia.RouteRequirements{
+		BaseURL: baseURL, RequestedModel: config.Model, CanonicalModel: model.CanonicalSlug,
+		UpstreamProvider: config.UpstreamProvider, ProviderSlug: config.UpstreamProviderSlug,
+		RequiredInputModalities: []string{"image", "text", "video"}, MaxTokens: candidateBlindOpenRouterMaximumTokens,
+		RequireReasoning: config.ReasoningEnabled, Now: now,
+	})
+	if err != nil {
+		return "", nil, nil, fillerbakeoff.OpenRouterModelSnapshot{}, openroutermedia.RouteAuthority{}, fmt.Errorf("candidate-blind OpenRouter route authority: %w", err)
 	}
 	client := config.Client
 	if client == nil {
@@ -238,7 +248,7 @@ func validateCandidateBlindOpenRouterConfig(ctx context.Context, config Candidat
 	copy := *client
 	copy.Timeout = 0
 	copy.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
-	return baseURL, &copy, now, model, nil
+	return baseURL, &copy, now, model, authority, nil
 }
 
 func reviewPathsOverlap(left, right string) bool {

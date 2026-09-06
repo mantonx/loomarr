@@ -1,16 +1,19 @@
 package fillercorpus
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type metSearchResponse struct {
@@ -49,7 +52,7 @@ func discoverMetObjectIDs(ctx context.Context, client *SourceClient, terms []str
 			return nil, "", time.Time{}, fmt.Errorf("capture Met search %q: %w", term, err)
 		}
 		var response metSearchResponse
-		if err := json.Unmarshal(raw, &response); err != nil || response.Total < 0 || response.Total != len(response.ObjectIDs) {
+		if err := decodeMetJSON(raw, &response); err != nil || response.Total < 0 || response.Total != len(response.ObjectIDs) {
 			return nil, "", time.Time{}, fmt.Errorf("capture Met search %q: incomplete response", term)
 		}
 		_, _ = searchHash.Write([]byte(strconv.Itoa(len(term))))
@@ -82,13 +85,93 @@ func discoverMetObjectIDs(ctx context.Context, client *SourceClient, terms []str
 
 func decodeMetObject(raw []byte, expectedID int64, requiredSubjectTerms, excludedSubjectTerms []string) (metObject, bool) {
 	var object metObject
-	if json.Unmarshal(raw, &object) != nil || object.ObjectID != expectedID || !object.IsPublicDomain ||
+	if decodeMetJSON(raw, &object) != nil || object.ObjectID != expectedID || !object.IsPublicDomain ||
 		strings.TrimSpace(object.Title) == "" || strings.TrimSpace(object.ArtistDisplayName) == "" ||
 		!exactMetURL(object.PrimaryImage, metImageHost, "") || !metObjectPassesSubjectFilter(object, requiredSubjectTerms, excludedSubjectTerms) ||
 		!exactMetURL(object.ObjectURL, metWebHost, "/art/collection/search/"+strconv.FormatInt(expectedID, 10)) {
 		return metObject{}, false
 	}
 	return object, true
+}
+
+// decodeMetJSON preserves Met's forward-compatible partial response projection while
+// refusing ambiguous object members that encoding/json would otherwise resolve last.
+func decodeMetJSON(raw []byte, destination any) error {
+	if err := rejectAmbiguousJSONKeys(raw); err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, destination)
+}
+
+func rejectAmbiguousJSONKeys(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := scanMetJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("ambiguous Met JSON: trailing value")
+		}
+		return err
+	}
+	return nil
+}
+
+func scanMetJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		keys := make(map[string]struct{})
+		for decoder.More() {
+			token, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := token.(string)
+			if !ok {
+				return fmt.Errorf("ambiguous Met JSON: non-string object key")
+			}
+			canonicalKey := canonicalJSONKey(key)
+			if _, duplicate := keys[canonicalKey]; duplicate {
+				return fmt.Errorf("ambiguous Met JSON: duplicate object key %q", key)
+			}
+			keys[canonicalKey] = struct{}{}
+			if err := scanMetJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		_, err := decoder.Token()
+		return err
+	case '[':
+		for decoder.More() {
+			if err := scanMetJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+		_, err := decoder.Token()
+		return err
+	default:
+		return fmt.Errorf("ambiguous Met JSON: invalid delimiter %q", delimiter)
+	}
+}
+
+func canonicalJSONKey(key string) string {
+	return strings.Map(func(r rune) rune {
+		representative := r
+		for folded := unicode.SimpleFold(r); folded != r; folded = unicode.SimpleFold(folded) {
+			if folded < representative {
+				representative = folded
+			}
+		}
+		return representative
+	}, key)
 }
 
 func metObjectPassesSubjectFilter(object metObject, required, excluded []string) bool {

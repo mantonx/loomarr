@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/loomarr/loomarr/internal/fillerbakeoff"
 	"github.com/loomarr/loomarr/internal/fillervisualsafety"
+	"github.com/loomarr/loomarr/internal/testkit/httpfixture"
 )
 
 func TestRunCandidateBlindOpenRouterReviewBindsCompleteBlindInputAndOneRoute(t *testing.T) {
@@ -40,12 +42,12 @@ func TestRunCandidateBlindOpenRouterReviewBindsCompleteBlindInputAndOneRoute(t *
 	result, err := fillervisualsafety.RunCandidateBlindOpenRouterReview(context.Background(), fillervisualsafety.CandidateBlindOpenRouterConfig{
 		BundlePath: bundle, ExpectedPackageSHA256: packageSHA, ExpectedOwnerMapSHA256: ownerSHA,
 		ExpectedSelectionOrigin: fillervisualsafety.ReviewSelectionTargetedDiagnostic,
-		OutputDir:               output, FFmpegPath: carrierFFmpeg, BaseURL: server.URL, APIKey: "secret",
+		OutputDir:               output, FFmpegPath: carrierFFmpeg, BaseURL: fillerbakeoff.OpenRouterBaseURL, APIKey: "secret",
 		Snapshot: candidateBlindOpenRouterSnapshot(now.Add(-time.Hour)),
 		Model:    "vendor/model", ModelFamily: "vendor-family", UpstreamProvider: "Pinned Provider",
 		UpstreamProviderSlug: "pinned-provider/fp8", ReviewerID: "reviewer-001",
 		PerRequestTimeout: time.Minute, MaxChargeNanoUSD: 2_000_000,
-		AllowInsecureTestURL: true, Client: server.Client(), Now: func() time.Time { return now },
+		Client: candidateBlindOpenRouterTestClient(t, server), Now: func() time.Time { return now },
 	})
 	if err != nil {
 		t.Fatalf("RunCandidateBlindOpenRouterReview() error = %v", err)
@@ -118,12 +120,12 @@ func TestRunCandidateBlindOpenRouterReviewPreservesUnsettledStatusFailure(t *tes
 	_, err := fillervisualsafety.RunCandidateBlindOpenRouterReview(context.Background(), fillervisualsafety.CandidateBlindOpenRouterConfig{
 		BundlePath: bundle, ExpectedPackageSHA256: packageSHA, ExpectedOwnerMapSHA256: ownerSHA,
 		ExpectedSelectionOrigin: fillervisualsafety.ReviewSelectionTargetedDiagnostic,
-		OutputDir:               output, FFmpegPath: carrierFFmpeg, BaseURL: server.URL, APIKey: "secret",
+		OutputDir:               output, FFmpegPath: carrierFFmpeg, BaseURL: fillerbakeoff.OpenRouterBaseURL, APIKey: "secret",
 		Snapshot: candidateBlindOpenRouterSnapshot(now.Add(-time.Hour)),
 		Model:    "vendor/model", ModelFamily: "vendor-family", UpstreamProvider: "Pinned Provider",
 		UpstreamProviderSlug: "pinned-provider/fp8", ReviewerID: "reviewer-001",
 		PerRequestTimeout: time.Minute, MaxChargeNanoUSD: 2_000_000,
-		AllowInsecureTestURL: true, Client: server.Client(), Now: func() time.Time { return now },
+		Client: candidateBlindOpenRouterTestClient(t, server), Now: func() time.Time { return now },
 	})
 	if err == nil {
 		t.Fatal("expected provider status failure")
@@ -143,6 +145,30 @@ func TestRunCandidateBlindOpenRouterReviewPreservesUnsettledStatusFailure(t *tes
 	}
 }
 
+func TestRunCandidateBlindOpenRouterReviewRejectsInvalidRouteBeforeHTTP(t *testing.T) {
+	t.Parallel()
+	bundle, packageSHA, ownerSHA, carrierFFmpeg := candidateBlindOpenRouterFixture(t)
+	now := time.Date(2026, time.September, 4, 20, 0, 0, 0, time.UTC)
+	snapshot := candidateBlindOpenRouterSnapshot(now.Add(-time.Hour))
+	snapshot.Models[0].InputModalities = []string{"image", "text"}
+	requests := 0
+	client := &http.Client{Transport: httpfixture.RoundTripperFunc(func(*http.Request) (*http.Response, error) {
+		requests++
+		return nil, io.ErrUnexpectedEOF
+	})}
+	_, err := fillervisualsafety.RunCandidateBlindOpenRouterReview(context.Background(), fillervisualsafety.CandidateBlindOpenRouterConfig{
+		BundlePath: bundle, ExpectedPackageSHA256: packageSHA, ExpectedOwnerMapSHA256: ownerSHA,
+		ExpectedSelectionOrigin: fillervisualsafety.ReviewSelectionTargetedDiagnostic,
+		OutputDir:               filepath.Join(t.TempDir(), "hosted-review"), FFmpegPath: carrierFFmpeg, BaseURL: fillerbakeoff.OpenRouterBaseURL, APIKey: "secret",
+		Snapshot: snapshot, Model: "vendor/model", ModelFamily: "vendor-family", UpstreamProvider: "Pinned Provider",
+		UpstreamProviderSlug: "pinned-provider/fp8", ReviewerID: "reviewer-001", PerRequestTimeout: time.Minute,
+		MaxChargeNanoUSD: 2_000_000, Client: client, Now: func() time.Time { return now },
+	})
+	if err == nil || requests != 0 {
+		t.Fatalf("invalid route result: err=%v requests=%d", err, requests)
+	}
+}
+
 func TestRunCandidateBlindOpenRouterReviewNamesUnknownResponseAccounting(t *testing.T) {
 	t.Parallel()
 
@@ -156,12 +182,12 @@ func TestRunCandidateBlindOpenRouterReviewNamesUnknownResponseAccounting(t *test
 	_, err := fillervisualsafety.RunCandidateBlindOpenRouterReview(context.Background(), fillervisualsafety.CandidateBlindOpenRouterConfig{
 		BundlePath: bundle, ExpectedPackageSHA256: packageSHA, ExpectedOwnerMapSHA256: ownerSHA,
 		ExpectedSelectionOrigin: fillervisualsafety.ReviewSelectionTargetedDiagnostic,
-		OutputDir:               output, FFmpegPath: carrierFFmpeg, BaseURL: server.URL, APIKey: "secret",
+		OutputDir:               output, FFmpegPath: carrierFFmpeg, BaseURL: fillerbakeoff.OpenRouterBaseURL, APIKey: "secret",
 		Snapshot: candidateBlindOpenRouterSnapshot(now.Add(-time.Hour)),
 		Model:    "vendor/model", ModelFamily: "vendor-family", UpstreamProvider: "Pinned Provider",
 		UpstreamProviderSlug: "pinned-provider/fp8", ReviewerID: "reviewer-001",
 		PerRequestTimeout: time.Minute, MaxChargeNanoUSD: 2_000_000,
-		AllowInsecureTestURL: true, Client: server.Client(), Now: func() time.Time { return now },
+		Client: candidateBlindOpenRouterTestClient(t, server), Now: func() time.Time { return now },
 	})
 	if err == nil {
 		t.Fatal("expected missing accounting failure")
@@ -214,4 +240,19 @@ func candidateBlindOpenRouterSnapshot(retrieved time.Time) fillerbakeoff.OpenRou
 			}},
 		}},
 	}
+}
+
+func candidateBlindOpenRouterTestClient(t *testing.T, server *httptest.Server) *http.Client {
+	t.Helper()
+	target, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Client{Transport: httpfixture.RoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		copy := request.Clone(request.Context())
+		urlCopy := *request.URL
+		urlCopy.Scheme, urlCopy.Host = target.Scheme, target.Host
+		copy.URL, copy.Host = &urlCopy, ""
+		return http.DefaultTransport.RoundTrip(copy)
+	})}
 }

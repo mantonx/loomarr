@@ -64,7 +64,7 @@ func TestVisualCorpusNominationReviewBoardEnablesBoundedCleanReviewOnlyForCanoni
 		`filler-frontier-audience-review-record-v1`, `frontierAudienceReviewLedgerSha256`,
 		`canonicalJSON(manifest.suitabilityVocabulary) !== canonicalJSON(suitabilityVocabulary)`,
 		`await sealedDigest(record) !== record.sha256`, `await sha256Hex(ledgerRaw)`,
-		`await sealedDigest(manifest) !== manifest.sha256`, `proposed.controlEligibility !== expectedEligibility`,
+		`if (cleanReviewMode && await sealedDigest(manifest) !== manifest.sha256)`, `proposed.controlEligibility !== expectedEligibility`,
 		`proposed.suitabilityObservations.length > 0`, `Suitability: `,
 		`manifest.leftModel === manifest.rightModel`,
 		`OCR text detected`,

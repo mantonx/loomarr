@@ -520,7 +520,7 @@ async function validateAssistance(manifest) {
   }
   const countKeys = new Set([...Object.keys(manifest.counts), ...Object.keys(observedCounts)]);
   for (const key of countKeys) if (!allowedActions.has(key) || manifest.counts[key] !== (observedCounts[key] || 0)) throw new Error("manifest counts are invalid");
-  if (cleanV2 && await sealedDigest(manifest) !== manifest.sha256) throw new Error("manifest sealed digest is invalid");
+  if (cleanReviewMode && await sealedDigest(manifest) !== manifest.sha256) throw new Error("manifest sealed digest is invalid");
   return manifest.proposals;
 }
 async function loadAssistance(event) {

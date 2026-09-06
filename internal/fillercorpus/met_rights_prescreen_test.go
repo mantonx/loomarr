@@ -53,6 +53,13 @@ func TestPrepareMetRightsPrescreenHoldsMetadataAnomalies(t *testing.T) {
 		{name: "public domain false", rightsJSON: `"rightsAndReproduction":"",`, mutate: func(t *testing.T, fixture *metRightsPrescreenFixture) {
 			fixture.rewriteMetadata(t, strings.Replace(string(fixture.metadata), `"isPublicDomain":true`, `"isPublicDomain":false`, 1))
 		}, reasons: []string{"public_domain_not_asserted"}},
+		{name: "contradictory public domain aliases", rightsJSON: `"rightsAndReproduction":"",`, mutate: func(t *testing.T, fixture *metRightsPrescreenFixture) {
+			fixture.rewriteMetadata(t, strings.Replace(string(fixture.metadata), `"isPublicDomain":true`, `"isPublicDomain":false,"IsPublicDomain":true`, 1))
+		}, reasons: []string{"metadata_malformed"}},
+		{name: "contradictory Unicode public domain aliases", rightsJSON: `"rightsAndReproduction":"",`, mutate: func(t *testing.T, fixture *metRightsPrescreenFixture) {
+			fixture.rewriteMetadata(t, strings.Replace(string(fixture.metadata), `"isPublicDomain":true`, `"isPublicDomain":false,"iſPublicDomain":true`, 1))
+		}, reasons: []string{"metadata_malformed"}},
+		{name: "contradictory rights fields", rightsJSON: `"rightsAndReproduction":"Copyright notice","rightsAndReproduction":"",`, reasons: []string{"metadata_malformed"}},
 		{name: "changed cache bytes", rightsJSON: `"rightsAndReproduction":"",`, mutate: func(t *testing.T, fixture *metRightsPrescreenFixture) {
 			if err := os.WriteFile(fixture.metadataPath(), append(slices.Clone(fixture.metadata), ' '), 0o600); err != nil {
 				t.Fatal(err)
@@ -76,6 +83,21 @@ func TestPrepareMetRightsPrescreenHoldsMetadataAnomalies(t *testing.T) {
 				t.Fatalf("case = %+v", report.Cases[0])
 			}
 		})
+	}
+}
+
+func TestDecodeMetObjectRejectsAmbiguousFieldsAndAllowsExtensions(t *testing.T) {
+	valid := []byte(`{"objectID":195733,"isPublicDomain":true,"primaryImage":"https://images.metmuseum.org/valid.jpg","title":"Valid work","artistDisplayName":"Valid Creator","objectURL":"https://www.metmuseum.org/art/collection/search/195733","tags":[{"term":"Female Nudes"}],"providerExtension":{"opaque":true}}`)
+	if _, ok := decodeMetObject(valid, 195733, []string{"Female Nudes"}, nil); !ok {
+		t.Fatal("unknown provider extension rejected")
+	}
+	for _, raw := range [][]byte{
+		append(append([]byte(nil), valid[:len(valid)-1]...), []byte(`,"objectID":195733}`)...),
+		append(append([]byte(nil), valid[:len(valid)-1]...), []byte(`,"ObjectID":195733}`)...),
+	} {
+		if _, ok := decodeMetObject(raw, 195733, nil, nil); ok {
+			t.Fatalf("ambiguous object accepted: %s", raw)
+		}
 	}
 }
 

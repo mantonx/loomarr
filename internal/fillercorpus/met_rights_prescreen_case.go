@@ -3,7 +3,6 @@ package fillercorpus
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -85,7 +84,7 @@ func prescreenMetRightsCase(root string, item InventoryCase) MetRightsPrescreenC
 		return finishMetRightsCase(result)
 	}
 	var object metObject
-	if err := json.Unmarshal(raw, &object); err != nil {
+	if err := decodeMetJSON(raw, &object); err != nil {
 		result.ReasonCodes = append(result.ReasonCodes, "metadata_malformed")
 		return finishMetRightsCase(result)
 	}

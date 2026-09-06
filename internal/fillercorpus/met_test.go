@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/loomarr/loomarr/internal/testkit/httpfixture"
 )
 
 func TestCaptureMetInventoryFreezesOnlyObjectValidatedPublicDomainCandidate(t *testing.T) {
@@ -68,6 +70,20 @@ func TestCaptureMetInventoryFreezesOnlyObjectValidatedPublicDomainCandidate(t *t
 		item.Representation.MIMEType != "image/jpeg" || item.Representation.Bytes != 1156190 ||
 		item.Representation.URL != "https://images.metmuseum.org/CRDImages/es/original/DP-919-001.jpg?loomarr="+item.MetadataSHA256 {
 		t.Fatalf("case = %+v", item)
+	}
+}
+
+func TestCaptureMetInventoryRejectsAmbiguousSearchResponse(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodGet || request.URL.Path != "/public/collection/v1/search" {
+			t.Fatalf("unexpected request %s %s", request.Method, request.URL)
+		}
+		_, _ = w.Write([]byte(`{"total":1,"Total":1,"objectIDs":[195733]}`))
+	}))
+	defer server.Close()
+
+	if _, err := CaptureMetInventory(context.Background(), metTestConfig(t, server)); err == nil {
+		t.Fatal("ambiguous search response accepted")
 	}
 }
 
@@ -376,7 +392,7 @@ func metTestHTTPClient(t *testing.T, server *httptest.Server) *http.Client {
 		t.Fatal(err)
 	}
 	transport := server.Client().Transport
-	return &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	return &http.Client{Transport: httpfixture.RoundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		clone := request.Clone(request.Context())
 		clone.URL = cloneURL(request.URL)
 		clone.Header = request.Header.Clone()
@@ -385,12 +401,6 @@ func metTestHTTPClient(t *testing.T, server *httptest.Server) *http.Client {
 		clone.URL.Host = serverURL.Host
 		return transport.RoundTrip(clone)
 	})}
-}
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
-	return function(request)
 }
 
 func cloneURL(source *url.URL) *url.URL {

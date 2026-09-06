@@ -70,6 +70,71 @@ func TestReduceInvalidPositiveCannotCreateQuarantine(t *testing.T) {
 	}
 }
 
+func TestReduceDuplicateFamilyCannotSuppressAValidPositive(t *testing.T) {
+	authority, plan, coverage := visualEvidenceFixture(t)
+	validPositive := visualObservation(t, authority, coverage, fillervisualsafety.ProducerAppleSCA, fillervisualsafety.ObservationProhibited)
+	validNegative := visualObservation(t, authority, coverage, fillervisualsafety.ProducerAppleSCA, fillervisualsafety.ObservationNoSignal)
+	invalidPositive := validPositive
+	invalidPositive.SourceSHA256 = strings.Repeat("f", 64)
+	invalidPositive.SHA256 = fillervisualsafety.ObservationSHA256(invalidPositive)
+	portable := visualObservation(t, authority, coverage, fillervisualsafety.ProducerPortable, fillervisualsafety.ObservationNoSignal)
+
+	for name, observations := range map[string][]fillervisualsafety.Observation{
+		"invalid first":        {portable, invalidPositive, validPositive},
+		"valid negative first": {portable, validNegative, validPositive},
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := fillervisualsafety.Reduce(authority, coverage, plan, observations)
+			if err := fillervisualsafety.ValidateResult(result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Outcome != fillervisualsafety.OutcomeQuarantine || !result.QuarantineRequired ||
+				!slices.Contains(result.Reasons, fillervisualsafety.ReasonAppleProhibited) || result.ProductionAdmissionAllowed {
+				t.Fatalf("valid positive was suppressed: %#v", result)
+			}
+		})
+	}
+}
+
+func TestReduceValidEvidenceIdentityIsPermutationInvariant(t *testing.T) {
+	authority, plan, coverage := visualEvidenceFixture(t)
+	negative := visualObservation(t, authority, coverage, fillervisualsafety.ProducerAppleSCA, fillervisualsafety.ObservationNoSignal)
+	positive := visualObservation(t, authority, coverage, fillervisualsafety.ProducerAppleSCA, fillervisualsafety.ObservationProhibited)
+	invalid := positive
+	invalid.SourceSHA256 = strings.Repeat("f", 64)
+	invalid.SHA256 = fillervisualsafety.ObservationSHA256(invalid)
+	portable := visualObservation(t, authority, coverage, fillervisualsafety.ProducerPortable, fillervisualsafety.ObservationNoSignal)
+
+	var first fillervisualsafety.Result
+	for index, observations := range [][]fillervisualsafety.Observation{
+		{portable, negative, positive, invalid},
+		{invalid, positive, portable, negative},
+		{positive, invalid, negative, portable},
+	} {
+		result := fillervisualsafety.Reduce(authority, coverage, plan, observations)
+		if err := fillervisualsafety.ValidateResult(result); err != nil {
+			t.Fatal(err)
+		}
+		if index == 0 {
+			first = result
+		} else if result.SHA256 != first.SHA256 {
+			t.Fatalf("permutation %d changed result identity: %s != %s", index, result.SHA256, first.SHA256)
+		}
+	}
+	if !slices.Contains(first.ObservationSHA256s, positive.SHA256) || slices.Contains(first.ObservationSHA256s, invalid.SHA256) {
+		t.Fatalf("valid evidence identity was not retained exclusively: %#v", first.ObservationSHA256s)
+	}
+
+	repeatedPositive := fillervisualsafety.Reduce(authority, coverage, plan, []fillervisualsafety.Observation{portable, positive, positive})
+	if repeatedPositive.Outcome != fillervisualsafety.OutcomeQuarantine || len(repeatedPositive.ObservationSHA256s) != 2 {
+		t.Fatalf("repeated positive was not compacted while quarantining: %#v", repeatedPositive)
+	}
+	repeatedNegative := fillervisualsafety.Reduce(authority, coverage, plan, []fillervisualsafety.Observation{portable, negative, negative})
+	if repeatedNegative.Outcome != fillervisualsafety.OutcomeHold || len(repeatedNegative.ObservationSHA256s) != 2 {
+		t.Fatalf("repeated negative did not hold with compacted identity: %#v", repeatedNegative)
+	}
+}
+
 func TestReduceRejectsSourceRelativeTimingOutsideTheAuthority(t *testing.T) {
 	authority, plan, coverage := visualEvidenceFixture(t)
 	portable := visualObservation(t, authority, coverage, fillervisualsafety.ProducerPortable, fillervisualsafety.ObservationNoSignal)

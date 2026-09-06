@@ -69,20 +69,26 @@ func Reduce(authority SourceAuthority, coverage CoverageEvidence, plan CoverageP
 			observation.SourceAuthoritySHA256 == authority.SHA256 && observation.SourceSHA256 == authority.SourceSHA256 &&
 			observation.PolicySHA256 == authority.PolicySHA256 && !observation.AssessedAt.Before(authority.MeasuredAt) &&
 			observationFitsDuration(observation, authority.DurationMS)
-		if _, duplicate := seen[observation.Profile.Family]; duplicate {
-			valid = false
-		} else {
-			seen[observation.Profile.Family] = struct{}{}
-		}
 		if observation.Profile.Family == ProducerPortable {
 			valid = valid && coverageValid && observation.CoverageEvidenceSHA256 == coverage.SHA256
-			portableValid = valid
+		}
+		duplicate := false
+		if valid {
+			if _, duplicate = seen[observation.Profile.Family]; !duplicate {
+				seen[observation.Profile.Family] = struct{}{}
+			}
+			if observation.Profile.Family == ProducerPortable {
+				portableValid = true
+			}
 		}
 		if !valid {
 			result.Reasons = append(result.Reasons, ReasonInvalidEvidence)
 			continue
 		}
 		result.ObservationSHA256s = append(result.ObservationSHA256s, observation.SHA256)
+		if duplicate {
+			result.Reasons = append(result.Reasons, ReasonInvalidEvidence)
+		}
 		switch observation.State {
 		case ObservationProhibited:
 			validPositive = true
@@ -107,6 +113,7 @@ func Reduce(authority SourceAuthority, coverage CoverageEvidence, plan CoverageP
 		result.Reasons = append(result.Reasons, ReasonPortableMissing)
 	}
 	slices.Sort(result.ObservationSHA256s)
+	result.ObservationSHA256s = slices.Compact(result.ObservationSHA256s)
 	slices.Sort(result.Reasons)
 	result.Reasons = slices.Compact(result.Reasons)
 	if validPositive {
