@@ -20,6 +20,9 @@ func buildTemporalStructureChallengeCase(ctx context.Context, config TemporalStr
 	if len(rendered.Parts) != len(item.segments) || rendered.Video.DurationMS <= 0 || rendered.Video.Width <= 0 || rendered.Video.Height <= 0 {
 		return TemporalStructureChallengePublicCase{}, TemporalStructureChallengeAuthorityCase{}, fmt.Errorf("media adapter returned incomplete render authority")
 	}
+	if err := validateTemporalStructureVideoProfile(rendered.Video); err != nil {
+		return TemporalStructureChallengePublicCase{}, TemporalStructureChallengeAuthorityCase{}, err
+	}
 	digest, err := hashFile(videoPath)
 	if err != nil {
 		return TemporalStructureChallengePublicCase{}, TemporalStructureChallengeAuthorityCase{}, err
@@ -31,7 +34,7 @@ func buildTemporalStructureChallengeCase(ctx context.Context, config TemporalStr
 	publicCase := TemporalStructureChallengePublicCase{Alias: item.alias, Video: TemporalTruthEvidenceFile{
 		Path: filepath.ToSlash(filepath.Join("cases", item.alias, "video.mp4")), SHA256: digest, Bytes: info.Size(),
 		DurationMS: rendered.Video.DurationMS, Width: rendered.Video.Width, Height: rendered.Video.Height,
-	}}
+	}, Profile: rendered.Video.Profile}
 	authorityCase := TemporalStructureChallengeAuthorityCase{Alias: item.alias, CaseID: item.spec.ID, Unit: item.spec.Unit, Role: item.spec.Role, VideoSHA256: digest}
 	outputStart := int64(0)
 	for index, part := range rendered.Parts {

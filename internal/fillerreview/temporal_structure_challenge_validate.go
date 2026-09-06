@@ -109,6 +109,12 @@ func validateTemporalStructureChallengePublic(publicRoot string, manifest Tempor
 		if err := verifyTemporalTruthEvidenceFile(publicRoot, item.Video, TemporalTruthMaximumVideoBytes); err != nil {
 			return nil, fmt.Errorf("public challenge case %d: %w", index, err)
 		}
+		if err := validateTemporalStructureVideoProfile(TemporalTruthVideoInfo{
+			Width: item.Video.Width, Height: item.Video.Height,
+			HasAudio: item.Profile.AudioStreams > 0, Profile: item.Profile,
+		}); err != nil {
+			return nil, fmt.Errorf("public challenge case %d: %w", index, err)
+		}
 		publicByAlias[item.Alias] = item
 	}
 	return publicByAlias, nil

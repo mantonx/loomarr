@@ -54,6 +54,18 @@ type TemporalTruthVideoInfo struct {
 	Width      int
 	Height     int
 	HasAudio   bool
+	Profile    TemporalTruthVideoProfile
+}
+
+// TemporalTruthVideoProfile contains measured stream facts, not encoder requests.
+type TemporalTruthVideoProfile struct {
+	VideoCodec   string `json:"videoCodec"`
+	PixelFormat  string `json:"pixelFormat"`
+	FrameRate    string `json:"frameRate"`
+	AudioCodec   string `json:"audioCodec"`
+	SampleRate   int    `json:"sampleRate"`
+	Channels     int    `json:"channels"`
+	AudioStreams int    `json:"audioStreams"`
 }
 
 type TemporalTruthEvidenceOCR interface {

@@ -14,7 +14,7 @@ import (
 
 const (
 	TemporalStructureChallengeSchemaVersion   = 1
-	TemporalStructureChallengeContractVersion = "filler-temporal-structure-challenge-v2"
+	TemporalStructureChallengeContractVersion = "filler-temporal-structure-challenge-v3"
 
 	TemporalStructureSourceBoundedItem     = "independently_bounded_item"
 	TemporalStructureSourceProgrammeParent = "programme_parent"
@@ -107,8 +107,9 @@ type TemporalStructureChallengeManifest struct {
 }
 
 type TemporalStructureChallengePublicCase struct {
-	Alias string                    `json:"alias"`
-	Video TemporalTruthEvidenceFile `json:"video"`
+	Alias   string                    `json:"alias"`
+	Video   TemporalTruthEvidenceFile `json:"video"`
+	Profile TemporalTruthVideoProfile `json:"profile"`
 }
 
 type TemporalStructureChallengeAuthority struct {

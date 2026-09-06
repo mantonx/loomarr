@@ -4707,6 +4707,12 @@ because otherwise qualifying CoreWeave structured-output routes reject the gramm
 must have an audio stream. Before concatenation,
 every segment is encoded deterministically to a common 960-by-720, 30-frame-per-second video and
 48 kHz stereo AAC audio profile with aspect-preserving padding and a fixed video track time base;
+The renderer probes each normalized part and the concatenated output, rejecting any departure
+from 960-by-720 H.264/yuv420p at 30 fps with exactly one 48 kHz stereo AAC stream. The builder
+independently validates the returned measured profile before publication. Challenge contract v3
+binds those stream facts alongside each public video's dimensions and byte hash, and its loader
+rejects missing or nonconforming profiles. These uniform technical facts disclose no source or
+semantic labels. Historical challenge artifacts are not rewritten or upgraded by inference;
 the measured part durations, rather than requested timestamps, remain the join
 authority. Coverage-only suitability holds may remain as evaluation material;
 prohibited and operational holds cannot be selected. The constructed truth can test unit boundaries

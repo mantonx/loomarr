@@ -304,9 +304,10 @@ func (fixture temporalStructureFixture) writeAuthoring(t *testing.T) {
 }
 
 type fakeTemporalStructureMedia struct {
-	durationByPath   map[string]int64
-	missingAudioPath string
-	probeCalls       int
+	durationByPath     map[string]int64
+	missingAudioPath   string
+	probeCalls         int
+	renderVideoMutator func(*TemporalTruthVideoInfo)
 }
 
 func (media *fakeTemporalStructureMedia) Identity() TemporalTruthMediaIdentity {
@@ -327,7 +328,7 @@ func (media *fakeTemporalStructureMedia) Probe(_ context.Context, path string) (
 
 func (media *fakeTemporalStructureMedia) Render(_ context.Context, segments []TemporalStructureRenderSegment, output string) (TemporalStructureRenderResult, error) {
 	hasher := sha256.New()
-	result := TemporalStructureRenderResult{Video: TemporalTruthVideoInfo{Width: 640, Height: 360, HasAudio: true}}
+	result := TemporalStructureRenderResult{Video: TemporalTruthVideoInfo{Width: 960, Height: 720, HasAudio: true, Profile: temporalStructureTestProfile()}}
 	for _, segment := range segments {
 		digest, err := hashFile(segment.SourcePath)
 		if err != nil {
@@ -339,6 +340,9 @@ func (media *fakeTemporalStructureMedia) Render(_ context.Context, segments []Te
 	}
 	if err := os.WriteFile(output, []byte(hex.EncodeToString(hasher.Sum(nil))), 0o640); err != nil {
 		return TemporalStructureRenderResult{}, err
+	}
+	if media.renderVideoMutator != nil {
+		media.renderVideoMutator(&result.Video)
 	}
 	return result, nil
 }
