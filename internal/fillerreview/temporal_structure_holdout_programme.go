@@ -16,7 +16,7 @@ import (
 const (
 	TemporalStructureHoldoutProgrammeInventorySchemaVersion = 1
 	TemporalStructureHoldoutProgrammeInventoryContract      = "filler-temporal-structure-programme-inventory-v2"
-	temporalStructureProgrammeEvidenceMaxBytes               = 16 << 20
+	temporalStructureProgrammeEvidenceMaxBytes              = 16 << 20
 )
 
 func loadTemporalStructureHoldoutProgrammeInventory(path, sourceRoot string, ledger fillerreference.DownloadLedger, plannedAt time.Time) (TemporalStructureHoldoutProgrammeInventory, string, error) {
