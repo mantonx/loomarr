@@ -66,6 +66,138 @@ func TestPublishTemporalSuitabilityProjectionQuarantinesSourceAcrossDerivatives(
 	}
 }
 
+func TestPublishTemporalSuitabilityProjectionAcceptsImmutableArchivedV1Challenge(t *testing.T) {
+	fixture := newTemporalSuitabilityProjectionFixture(t)
+	convertTemporalSuitabilityProjectionFixtureToArchivedV1(t, fixture)
+
+	report, _, err := PublishTemporalSuitabilityProjection(fixture.config(filepath.Join(t.TempDir(), "projection.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.TrainingAllowed || report.IngestionAllowed || report.SchedulingAllowed || report.ProductionAdmissionAllowed {
+		t.Fatalf("archived evidence granted permissions: %+v", report)
+	}
+}
+
+func TestPublishTemporalSuitabilityProjectionRejectsArchivedV1ContractDriftBeforeOutput(t *testing.T) {
+	tests := map[string]func(*testing.T, temporalSuitabilityProjectionFixture){
+		"missing production disposition": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			manifest := readStrictTestJSON[map[string]any](t, fixture.manifest)
+			delete(manifest, "productionAdmissionAllowed")
+			writeTemporalSuitabilityProjectionJSON(t, fixture.manifest, manifest)
+		},
+		"true production disposition": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			manifest := readStrictTestJSON[map[string]any](t, fixture.manifest)
+			manifest["productionAdmissionAllowed"] = true
+			writeTemporalSuitabilityProjectionJSON(t, fixture.manifest, manifest)
+		},
+		"later public profile even empty": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			manifest := readStrictTestJSON[map[string]any](t, fixture.manifest)
+			manifest["cases"].([]any)[0].(map[string]any)["profile"] = map[string]any{}
+			writeTemporalSuitabilityProjectionJSON(t, fixture.manifest, manifest)
+		},
+		"later plan binding even null": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			authority := readStrictTestJSON[map[string]any](t, fixture.authority)
+			authority["planReceiptSha256"] = nil
+			writeTemporalSuitabilityProjectionJSON(t, fixture.authority, authority)
+		},
+		"duplicate alias": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			manifest := readStrictTestJSON[map[string]any](t, fixture.manifest)
+			cases := manifest["cases"].([]any)
+			cases[1].(map[string]any)["alias"] = cases[0].(map[string]any)["alias"]
+			writeTemporalSuitabilityProjectionJSON(t, fixture.manifest, manifest)
+		},
+		"noncanonical alias": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			manifest := readStrictTestJSON[map[string]any](t, fixture.manifest)
+			manifest["cases"].([]any)[0].(map[string]any)["alias"] = "CASE-not-canonical"
+			writeTemporalSuitabilityProjectionJSON(t, fixture.manifest, manifest)
+		},
+		"ambiguous source mapping": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			authority := readStrictTestJSON[map[string]any](t, fixture.authority)
+			for _, rawCase := range authority["cases"].([]any) {
+				parts := rawCase.(map[string]any)["segments"].([]any)
+				if len(parts) > 1 && parts[0].(map[string]any)["sourceId"] == "bounded-commercial-secret" {
+					parts[0].(map[string]any)["sourceSha256"] = strings.Repeat("f", 64)
+				}
+			}
+			writeTemporalSuitabilityProjectionJSON(t, fixture.authority, authority)
+		},
+		"segment drift": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			authority := readStrictTestJSON[map[string]any](t, fixture.authority)
+			part := authority["cases"].([]any)[0].(map[string]any)["segments"].([]any)[0].(map[string]any)
+			part["outputEndMs"] = part["outputEndMs"].(float64) + 2_000
+			writeTemporalSuitabilityProjectionJSON(t, fixture.authority, authority)
+		},
+		"trailing authority value": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			raw, err := os.ReadFile(fixture.authority)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(fixture.authority, append(raw, []byte("{}\n")...), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			fixture := newTemporalSuitabilityProjectionFixture(t)
+			convertTemporalSuitabilityProjectionFixtureToArchivedV1(t, fixture)
+			mutate(t, fixture)
+			output := filepath.Join(t.TempDir(), "projection.json")
+			if _, _, err := PublishTemporalSuitabilityProjection(fixture.config(output)); err == nil {
+				t.Fatal("archived contract drift was accepted")
+			}
+			if _, err := os.Stat(output); !os.IsNotExist(err) {
+				t.Fatalf("output exists after rejection: %v", err)
+			}
+		})
+	}
+}
+
+func TestPublishTemporalSuitabilityProjectionRejectsArchivedV1DuplicateObjectKeysBeforeOutput(t *testing.T) {
+	tests := map[string]func(*testing.T, temporalSuitabilityProjectionFixture){
+		"manifest top-level escaped equivalent": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			injectDuplicateTemporalSuitabilityProjectionJSONKey(t, fixture.manifest, "challengeId", "challenge\\u0049d")
+			fixture.rebindArchivedV1Projection(t)
+		},
+		"manifest nested escaped equivalent": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			injectDuplicateTemporalSuitabilityProjectionJSONKey(t, fixture.manifest, "alias", "\\u0061lias")
+			fixture.rebindArchivedV1Projection(t)
+		},
+		"authority top-level escaped equivalent": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			injectDuplicateTemporalSuitabilityProjectionJSONKey(t, fixture.authority, "challengeId", "challenge\\u0049d")
+		},
+		"authority nested escaped equivalent": func(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+			injectDuplicateTemporalSuitabilityProjectionJSONKey(t, fixture.authority, "alias", "\\u0061lias")
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			fixture := newTemporalSuitabilityProjectionFixture(t)
+			convertTemporalSuitabilityProjectionFixtureToArchivedV1(t, fixture)
+			mutate(t, fixture)
+			output := filepath.Join(t.TempDir(), "projection.json")
+			if _, _, err := PublishTemporalSuitabilityProjection(fixture.config(output)); err == nil || !strings.Contains(err.Error(), "duplicate JSON object key") {
+				t.Fatalf("duplicate archived evidence error = %v", err)
+			}
+			if _, err := os.Stat(output); !os.IsNotExist(err) {
+				t.Fatalf("output exists after rejection: %v", err)
+			}
+		})
+	}
+}
+
+func TestGeneralTemporalStructureLoadersRejectArchivedV1Challenge(t *testing.T) {
+	fixture := newTemporalSuitabilityProjectionFixture(t)
+	convertTemporalSuitabilityProjectionFixtureToArchivedV1(t, fixture)
+	if _, _, _, _, err := LoadTemporalStructureChallenge(fixture.manifest, fixture.authority, 3); err == nil {
+		t.Fatal("general challenge loader accepted archived v1 evidence")
+	}
+	if _, _, err := LoadTemporalStructureChallengePublic(fixture.manifest, 3); err == nil {
+		t.Fatal("public challenge loader accepted archived v1 evidence")
+	}
+}
+
 func TestProjectTemporalSuitabilityObservationSplitsCrossSegmentRange(t *testing.T) {
 	item := TemporalStructureChallengeAuthorityCase{
 		Alias: "case-cross", Segments: []TemporalStructureChallengeAuthorityPart{
@@ -210,6 +342,71 @@ func (fixture temporalSuitabilityProjectionFixture) rebuildComparison(t *testing
 		ComparedAt: fixture.projectedAt.Add(-time.Hour), ExpectedCases: 3, OutputPath: fixture.comparison,
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func convertTemporalSuitabilityProjectionFixtureToArchivedV1(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
+	t.Helper()
+	manifest := readStrictTestJSON[map[string]any](t, fixture.manifest)
+	manifest["contractVersion"] = "filler-temporal-structure-challenge-v1"
+	for _, raw := range manifest["cases"].([]any) {
+		delete(raw.(map[string]any), "profile")
+	}
+	writeTemporalSuitabilityProjectionJSON(t, fixture.manifest, manifest)
+	fixture.rebindArchivedV1Projection(t)
+}
+
+func (fixture temporalSuitabilityProjectionFixture) rebindArchivedV1Projection(t *testing.T) {
+	t.Helper()
+	manifestSHA, err := hashFile(fixture.manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := readStrictTestJSON[map[string]any](t, fixture.authority)
+	authority["contractVersion"] = "filler-temporal-structure-challenge-v1"
+	authority["publicManifestSha256"] = manifestSHA
+	delete(authority, "planContractVersion")
+	delete(authority, "planReceiptSha256")
+	writeTemporalSuitabilityProjectionJSON(t, fixture.authority, authority)
+
+	first := readStrictTestJSON[TemporalSuitabilityResult](t, fixture.first)
+	second := readStrictTestJSON[TemporalSuitabilityResult](t, fixture.second)
+	first.EvidenceManifestSHA256 = manifestSHA
+	second.EvidenceManifestSHA256 = manifestSHA
+	writeTemporalSuitabilityProjectionResultFile(t, fixture.first, first)
+	writeTemporalSuitabilityProjectionResultFile(t, fixture.second, second)
+	firstSHA, err := hashFile(fixture.first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSHA, err := hashFile(fixture.second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	comparison, err := CompareTemporalSuitabilityResults(first, second, manifestSHA, first.SelectionSHA256, firstSHA, secondSHA, fixture.projectedAt.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(fixture.comparison); err != nil {
+		t.Fatal(err)
+	}
+	writeTemporalSuitabilityProjectionJSON(t, fixture.comparison, comparison)
+}
+
+func injectDuplicateTemporalSuitabilityProjectionJSONKey(t *testing.T, path, key, escapedKey string) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	needle := `"` + key + `":`
+	duplicate := `"` + escapedKey + `":"duplicate","` + key + `":`
+	updated := strings.Replace(string(raw), needle, duplicate, 1)
+	if updated == string(raw) {
+		t.Fatalf("missing JSON key %q in %s", key, path)
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

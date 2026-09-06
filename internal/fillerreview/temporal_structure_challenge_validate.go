@@ -26,7 +26,7 @@ func LoadTemporalStructureChallenge(publicManifestPath, authorityPath string, ex
 		return TemporalStructureChallengeManifest{}, TemporalStructureChallengeAuthority{}, "", "", fmt.Errorf("decode private challenge authority: %w", err)
 	}
 	authoritySHA := hashBytes(authorityRaw)
-	if err := validateTemporalStructureChallenge(filepath.Dir(publicManifestPath), manifest, authority, manifestSHA, expectedCases); err != nil {
+	if err := validateTemporalStructureChallenge(filepath.Dir(publicManifestPath), manifest, authority, manifestSHA, expectedCases, TemporalStructureChallengeContractVersion, true); err != nil {
 		return TemporalStructureChallengeManifest{}, TemporalStructureChallengeAuthority{}, "", "", err
 	}
 	return manifest, authority, manifestSHA, authoritySHA, nil
@@ -45,20 +45,23 @@ func LoadTemporalStructureChallengePublic(publicManifestPath string, expectedCas
 		return TemporalStructureChallengeManifest{}, "", fmt.Errorf("decode public challenge manifest: %w", err)
 	}
 	manifestSHA := hashBytes(manifestRaw)
-	if _, err := validateTemporalStructureChallengePublic(filepath.Dir(publicManifestPath), manifest, expectedCases); err != nil {
+	if _, err := validateTemporalStructureChallengePublic(filepath.Dir(publicManifestPath), manifest, expectedCases, TemporalStructureChallengeContractVersion, true); err != nil {
 		return TemporalStructureChallengeManifest{}, "", err
 	}
 	return manifest, manifestSHA, nil
 }
 
-func validateTemporalStructureChallenge(publicRoot string, manifest TemporalStructureChallengeManifest, authority TemporalStructureChallengeAuthority, manifestSHA string, expectedCases int) error {
-	publicByAlias, err := validateTemporalStructureChallengePublic(publicRoot, manifest, expectedCases)
+func validateTemporalStructureChallenge(publicRoot string, manifest TemporalStructureChallengeManifest, authority TemporalStructureChallengeAuthority, manifestSHA string, expectedCases int, contractVersion string, requireCurrentFields bool) error {
+	publicByAlias, err := validateTemporalStructureChallengePublic(publicRoot, manifest, expectedCases, contractVersion, requireCurrentFields)
 	if err != nil {
 		return err
 	}
 
-	if authority.SchemaVersion != manifest.SchemaVersion || authority.ContractVersion != manifest.ContractVersion || authority.ChallengeID != manifest.ChallengeID || !authority.GeneratedAt.Equal(manifest.GeneratedAt) || !reviewSHA256(authority.AuthoringSHA256) || authority.PlanContractVersion != TemporalStructureHoldoutContractVersion || !reviewSHA256(authority.PlanReceiptSHA256) || !reviewSHA256(authority.SeedSHA256) || authority.PublicManifestSHA256 != manifestSHA || len(authority.Cases) != expectedCases {
+	if authority.SchemaVersion != manifest.SchemaVersion || authority.ContractVersion != manifest.ContractVersion || authority.ChallengeID != manifest.ChallengeID || !authority.GeneratedAt.Equal(manifest.GeneratedAt) || !reviewSHA256(authority.AuthoringSHA256) || !reviewSHA256(authority.SeedSHA256) || authority.PublicManifestSHA256 != manifestSHA || len(authority.Cases) != expectedCases {
 		return fmt.Errorf("private challenge authority does not bind the public manifest")
+	}
+	if requireCurrentFields && (authority.PlanContractVersion != TemporalStructureHoldoutContractVersion || !reviewSHA256(authority.PlanReceiptSHA256)) || !requireCurrentFields && (authority.PlanContractVersion != "" || authority.PlanReceiptSHA256 != "") {
+		return fmt.Errorf("private challenge authority has invalid plan binding")
 	}
 	for name, identity := range map[string]TemporalTruthToolIdentity{"ffmpeg": authority.MediaTools.FFmpeg, "ffprobe": authority.MediaTools.FFprobe} {
 		if strings.TrimSpace(identity.Path) == "" || strings.TrimSpace(identity.Version) == "" || !reviewSHA256(identity.BinarySHA256) {
@@ -90,8 +93,8 @@ func validateTemporalStructureChallenge(publicRoot string, manifest TemporalStru
 	return nil
 }
 
-func validateTemporalStructureChallengePublic(publicRoot string, manifest TemporalStructureChallengeManifest, expectedCases int) (map[string]TemporalStructureChallengePublicCase, error) {
-	if expectedCases <= 0 || manifest.SchemaVersion != TemporalStructureChallengeSchemaVersion || manifest.ContractVersion != TemporalStructureChallengeContractVersion || manifest.ChallengeID == "" || manifest.GeneratedAt.IsZero() || manifest.ProductionAdmissionAllowed || len(manifest.Cases) != expectedCases {
+func validateTemporalStructureChallengePublic(publicRoot string, manifest TemporalStructureChallengeManifest, expectedCases int, contractVersion string, requireCurrentFields bool) (map[string]TemporalStructureChallengePublicCase, error) {
+	if expectedCases <= 0 || manifest.SchemaVersion != TemporalStructureChallengeSchemaVersion || manifest.ContractVersion != contractVersion || manifest.ChallengeID == "" || manifest.GeneratedAt.IsZero() || manifest.ProductionAdmissionAllowed || len(manifest.Cases) != expectedCases {
 		return nil, fmt.Errorf("public challenge identity, count, or production disposition is invalid")
 	}
 	publicByAlias := make(map[string]TemporalStructureChallengePublicCase, expectedCases)
@@ -109,11 +112,12 @@ func validateTemporalStructureChallengePublic(publicRoot string, manifest Tempor
 		if err := verifyTemporalTruthEvidenceFile(publicRoot, item.Video, TemporalTruthMaximumVideoBytes); err != nil {
 			return nil, fmt.Errorf("public challenge case %d: %w", index, err)
 		}
-		if err := validateTemporalStructureVideoProfile(TemporalTruthVideoInfo{
-			Width: item.Video.Width, Height: item.Video.Height,
-			HasAudio: item.Profile.AudioStreams > 0, Profile: item.Profile,
-		}); err != nil {
-			return nil, fmt.Errorf("public challenge case %d: %w", index, err)
+		if requireCurrentFields {
+			if err := validateTemporalStructureVideoProfile(TemporalTruthVideoInfo{Width: item.Video.Width, Height: item.Video.Height, HasAudio: item.Profile.AudioStreams > 0, Profile: item.Profile}); err != nil {
+				return nil, fmt.Errorf("public challenge case %d: %w", index, err)
+			}
+		} else if item.Profile != (TemporalTruthVideoProfile{}) {
+			return nil, fmt.Errorf("archived public challenge case %d has unexpected current profile", index)
 		}
 		publicByAlias[item.Alias] = item
 	}
