@@ -75,12 +75,12 @@ type videoAttempt struct {
 	Transport openroutermedia.Result
 }
 
-func (c *openRouterVideoCorroborator) identity(durationMS int64) hostedCallIdentity {
+func (c *openRouterVideoCorroborator) identity(_ int64) hostedCallIdentity {
 	return hostedCallIdentity{
 		RequestedProvider: "openrouter", RequestedModel: c.config.Model,
 		ResolvedProvider: "openrouter", ResolvedModel: c.config.ResolvedModel,
 		UpstreamProvider: c.config.UpstreamProvider, CapabilitySHA256: c.config.CapabilitySHA256,
-		PromptSHA256: c.config.PromptSHA256, SchemaSHA256: videoSchemaSHA256(durationMS),
+		PromptSHA256: c.config.PromptSHA256, SchemaSHA256: videoSchemaContractSHA256(),
 		MaxChargeNanoUSD: c.config.MaxChargeNanoUSD,
 	}
 }
@@ -146,8 +146,17 @@ func (c *openRouterVideoCorroborator) corroborate(
 	return attempt, err
 }
 
-func videoSchemaSHA256(durationMS int64) string {
-	return canonicalJSONSHA256(videoOutputSchema(durationMS))
+// videoSchemaContractSHA256 is stable across source durations. The exact duration-bounded schema
+// remains part of each request hash; certification binds this template and its maximum domain.
+func videoSchemaContractSHA256() string {
+	return canonicalJSONSHA256(struct {
+		Version           string         `json:"version"`
+		MaximumDurationMS int64          `json:"maximumDurationMs"`
+		Schema            map[string]any `json:"schema"`
+	}{
+		Version: videoPromptVersion, MaximumDurationMS: maxCompleteAudioWindowMS,
+		Schema: videoOutputSchema(maxCompleteAudioWindowMS),
+	})
 }
 
 func readBoundedCompleteVideo(path string) ([]byte, error) {

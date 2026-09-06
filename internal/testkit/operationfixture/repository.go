@@ -58,6 +58,7 @@ type Repository[Run, Event, Reservation, Settlement any] struct {
 	State         *State[Run, Event]
 	ValidateRun   func(Run) error
 	ValidateEvent func(Event) error
+	RunMatches    func(Run, string) bool
 	ConflictError error
 	ReserveFunc   func(context.Context, Reservation) (Event, error)
 	SettleFunc    func(context.Context, Settlement) (Event, error)
@@ -67,6 +68,19 @@ type Repository[Run, Event, Reservation, Settlement any] struct {
 	appendInputs  []Event
 	reserveInputs []Reservation
 	settleInputs  []Settlement
+}
+
+// FindSpokenSafetyRun returns the accepted run only if its supplied identity
+// matches. The caller owns that domain-specific comparison, keeping this
+// fixture cycle-free.
+func (r *Repository[Run, Event, Reservation, Settlement]) FindSpokenSafetyRun(_ context.Context, id string) (Run, bool, error) {
+	r.State.mu.Lock()
+	defer r.State.mu.Unlock()
+	if !r.State.begun || r.RunMatches == nil || !r.RunMatches(r.State.run, id) {
+		var zero Run
+		return zero, false, nil
+	}
+	return r.State.run, true, nil
 }
 
 func (r *Repository[Run, Event, Reservation, Settlement]) BeginSpokenSafetyRun(ctx context.Context, run Run) (bool, error) {

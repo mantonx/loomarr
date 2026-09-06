@@ -123,19 +123,19 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 | `catalog` | 6 | `library`, `provision` |
 | `contact` | 5 | — |
 | `diagnostics` | 8 | — |
-| `filler` | 10 | `diagnostics`, `filleradmission`, `fillersafety`, `fillerstructure`, `fillerstructurewindow`, `fillervisualsafety`, `llm`, `mediatools`, `taxonomy` |
+| `filler` | 11 | `diagnostics`, `filleradmission`, `fillersafety`, `fillerstructure`, `fillerstructurewindow`, `fillervisualsafety`, `llm`, `mediatools`, `taxonomy` |
 | `filleradmission` | 8 | — |
-| `fillerbakeoff` | 7 | `filleradmission`, `fillereval`, `httpx`, `openroutermedia` |
+| `fillerbakeoff` | 8 | `filleradmission`, `fillereval`, `httpx`, `openroutermedia` |
 | `fillereval` | 6 | — |
-| `fillersafety` | 7 | `mediatools`, `openroutermedia` |
+| `fillersafety` | 8 | `mediatools`, `openroutermedia` |
 | `fillerstructure` | 8 | — |
 | `fillerstructurewindow` | 6 | `fillerstructure` |
 | `fillervisualsafety` | 6 | `fillerbakeoff`, `fillereval`, `httpx`, `mediatools`, `openroutermedia` |
-| `httpx` | 12 | `metrics` |
+| `httpx` | 13 | `metrics` |
 | `invitation` | 6 | `contact` |
 | `library` | 8 | `filler`, `httpx`, `metrics` |
 | `llm` | 6 | `httpx`, `metrics` |
-| `mediatools` | 8 | `diagnostics` |
+| `mediatools` | 9 | `diagnostics` |
 | `metrics` | 8 | `provision` |
 | `notifications` | 5 | `httpx` |
 | `openroutermedia` | 7 | `fillereval` |
@@ -232,7 +232,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 2**
 
-- **`httpx`** · 12 importers · → `metrics`
+- **`httpx`** · 13 importers · → `metrics`
   Shared outbound HTTP client factory (design §6, §21 phase 1).
 - **`plannerreference`** · → `quality`
   Binds a planner scorecard to the exact local model, runtime, host, and cold/warm protocol used to produce it.
@@ -241,7 +241,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 3**
 
-- **`fillerbakeoff`** · 7 importers · → `filleradmission`, `fillereval`, `httpx`, `openroutermedia`
+- **`fillerbakeoff`** · 8 importers · → `filleradmission`, `fillereval`, `httpx`, `openroutermedia`
   Runs bounded, inference-spending filler admission comparisons.
 - **`llm`** · 6 importers · → `httpx`, `metrics`
   LLM provider abstraction (design §8): one provider-neutral Chat primitive with tool-use, implemented by exactly TWO wire kinds — Ollama (the homelab default) and OpenAI-compatible.
@@ -256,7 +256,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 4**
 
-- **`mediatools`** · 8 importers · → `diagnostics`, `playout`, `proctree`
+- **`mediatools`** · 9 importers · → `diagnostics`, `playout`, `proctree`
   Ffmpeg / ffprobe / whisper layer (§10, §14.2): the exec calls, the parsers for what those binaries print, and the shapes they return.
 - **`recommend`** · → `llm`
   Defines inert Channel Concepts and the hermetic evaluator used to certify channel-recommendation models.
@@ -265,7 +265,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 - **`fillerreference`** · 1 importer · → `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `mediatools`, `taxonomy`
   Owns the deterministic pre-screen for the production-ready filler reference cohort.
-- **`fillersafety`** · 7 importers · → `mediatools`, `openroutermedia`, `proctree`
+- **`fillersafety`** · 8 importers · → `mediatools`, `openroutermedia`, `proctree`
   Owns the fail-closed spoken-safety cascade and its shadow evidence.
 - **`fillerstructuremedia`** · 4 importers · → `fillerstructure`, `mediatools`
   Owns the exact media contract shared by complete-timeline structure qualification and production assessment.
@@ -274,9 +274,9 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 6**
 
-- **`fillerairworthinessprojection`** · 1 importer · → `fillerairworthiness`, `fillersafety`, `fillervisualsafety`
+- **`fillerairworthinessprojection`** · 2 importers · → `fillerairworthiness`, `fillersafety`, `fillervisualsafety`
   Authenticates safety-producer output and translates opaque certified matches into closed Airworthiness evidence.
-- **`fillersafetycert`** · 2 importers · → `fillersafety`
+- **`fillersafetycert`** · 3 importers · → `fillersafety`
   Owns deterministic, non-authorizing certification of the durable spoken-safety cascade.
 - **`fillerstructurewindow`** · 6 importers · → `fillerstructure`, `fillerstructuremedia`
   Owns the complete-coverage plan used to assess long filler reels without pretending that independently processed windows are independent model votes.
@@ -291,7 +291,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 7**
 
-- **`filler`** · 10 importers · → `diagnostics`, `filleradmission`, `fillerairworthiness`, `fillerairworthinessprojection`, `fillerdecision`, `fillersafety`, `fillerstructure`, `fillerstructuremedia`, `fillerstructurewindow`, `fillervisualsafety`, `llm`, `mediatools`, `taxonomy`
+- **`filler`** · 11 importers · → `diagnostics`, `filleradmission`, `fillerairworthiness`, `fillerairworthinessprojection`, `fillerdecision`, `fillersafety`, `fillerstructure`, `fillerstructuremedia`, `fillerstructurewindow`, `fillervisualsafety`, `llm`, `mediatools`, `taxonomy`
   Commercials & filler domain (design §10): the clip catalog model and pod assembly.
 - **`fillersafetycorpus`** · 1 importer · → `fillercorpus`, `fillersafety`, `fillersafetycert`
   Prepares private real-speech cohorts for later spoken-safety authority assembly without assigning certification truth.
@@ -304,6 +304,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Downloads filler clips into the drop-folder (design §10, §16).
 - **`fillersafetyreview`** · → `fillerbakeoff`, `fillereval`, `fillersafety`, `fillersafetycert`, `fillersafetycorpus`, `httpx`, `mediatools`, `openroutermedia`
   Runs one independent, exhaustive model review of an assembled spoken-safety certification draft.
+- **`fillersafetyruntime`** · → `filler`, `fillerairworthinessprojection`, `fillerbakeoff`, `fillersafety`, `fillersafetycert`, `httpx`, `mediatools`
+  Owns authority-driven construction of the production spoken-safety evidence producer.
 - **`fillerstructureopenrouter`** · 1 importer · → `filler`, `fillerstructure`, `fillerstructuremedia`, `openroutermedia`
   Adapts the bounded OpenRouter media transport to the provider-neutral complete-timeline assessor port.
 - **`fillerstructurewindowopenrouter`** · 2 importers · → `filler`, `fillerbakeoff`, `fillerstructure`, `fillerstructurewindow`, `httpx`, `openroutermedia`
@@ -5897,6 +5899,33 @@ candidate receives a valid absent result may a distinct pinned route inspect the
 and audio. Calls are serial by default and retain the exact requested and canonical model, upstream
 route, snapshot, modalities, media bounds, response, cost, reservation, settlement, and failure identity
 required by the OpenRouter certification contract above.
+
+Concrete runtime construction consumes the exact private certification-authority bytes, a reproduced
+passing certification report, the private restricted-language policy, and the public spoken projection
+authority as one joined deployment input. Callers do not select independent model, prompt, schema,
+proposer, or capability strings: the factory reproduces their identities from those authorities and
+refuses any disagreement before opening media, reserving spend, or contacting a provider. It refreshes
+the bounded OpenRouter route snapshot before a new run, requires the same canonical model and ZDR,
+fallback-disabled upstream capabilities used by certification, and refuses a current price ceiling above
+the deployment reservation. Credentials, the configured ffmpeg location, storage adapters, and current
+time remain runtime-only inputs and do not enter the portable authority.
+
+The concrete factory does not by itself activate production execution. No spoken-safety boot setting or
+default deployment exists until a real category corpus produces a passing report and an operator seals its
+exact execution envelope. The activation change must declare those artifact paths in the settings registry,
+load them once at boot with private-file checks, and fail closed to the existing qualification hold when any
+artifact is absent or stale. Shipping a constructor against synthetic fixtures is never permission to spend,
+project a complete axis, or admit a rendered child.
+
+The rendered-child producer builds one source authority from the already content-verified evidence
+derivative. It remeasures complete audio/video presence and duration with the ffprobe executable adjacent
+to the configured ffmpeg, identifies both executable byte digests and banners, and requires the derivative
+manifest's ffmpeg identity to match before the cascade can run. The first durable run time is also the
+source measurement time. If screening crashes after the cascade settles but before the axis projection is
+written, retry reuses that durable first-run time, reopens and remeasures the current exact bytes, and
+replays the existing terminal run without another hosted request. A changed source, toolchain, policy,
+certification, route, or operation identity conflicts or holds; a fresh timestamp may never turn the same
+screening operation into a second billable run.
 
 Reduction is deliberately asymmetric. One valid prohibited-presence observation quarantines the source;
 a negative observation never votes it away. An unclear or disagreeing result, incomplete modality,

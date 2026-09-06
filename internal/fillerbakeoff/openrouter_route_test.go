@@ -87,3 +87,22 @@ func TestValidateOpenRouterSnapshotRejectsNonCanonicalPricingTiers(t *testing.T)
 		t.Fatalf("tier validation error=%v", err)
 	}
 }
+
+func TestValidateOpenRouterAudioRouteRequiresNativeAudio(t *testing.T) {
+	t.Parallel()
+	snapshot := validOpenRouterSnapshot()
+	snapshot.Models[0].InputModalities = []string{"audio", "text"}
+	snapshot.Models[0].Endpoints[0].SupportedParameters = []string{"reasoning", "response_format", "structured_outputs"}
+	if _, _, err := ValidateOpenRouterAudioRoute(
+		snapshot, "vendor/model-1", "Pinned Provider", "pinned-provider/variant",
+		snapshot.RetrievedAt, 1024,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ValidateOpenRouterVideoRoute(
+		snapshot, "vendor/model-1", "Pinned Provider", "pinned-provider/variant",
+		snapshot.RetrievedAt, 1024,
+	); err == nil || !strings.Contains(err.Error(), "text/video") {
+		t.Fatalf("video route accepted an audio-only model: %v", err)
+	}
+}

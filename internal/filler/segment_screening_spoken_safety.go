@@ -7,6 +7,7 @@ import (
 
 	"github.com/loomarr/loomarr/internal/fillerairworthinessprojection"
 	"github.com/loomarr/loomarr/internal/fillersafety"
+	"github.com/loomarr/loomarr/internal/mediatools"
 )
 
 // SpokenSafetyProducerRequest gives the execution adapter one stable operation identity and the
@@ -15,6 +16,7 @@ type SpokenSafetyProducerRequest struct {
 	OperationSHA256 string
 	Subject         fillerairworthinessprojection.Subject
 	EvidencePath    string
+	EvidenceTool    mediatools.MediaToolIdentity
 }
 
 // SpokenSafetyProducer is the execution seam. A production adapter must durably replay the same
@@ -58,6 +60,7 @@ func (e *SpokenSafetyEvaluator) Evaluate(ctx context.Context, media SegmentScree
 	subject := projectedSafetySubject(media.Subject)
 	report, err := e.producer.EvaluateSpokenSafety(ctx, SpokenSafetyProducerRequest{
 		OperationSHA256: operationSHA256, Subject: subject, EvidencePath: media.EvidencePath,
+		EvidenceTool: media.Manifest.Evidence.Tool,
 	})
 	if err != nil {
 		return RecordedSegmentScreeningAxisEvidence{}, fmt.Errorf("produce spoken safety evidence: %w", err)

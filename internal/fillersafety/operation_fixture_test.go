@@ -118,6 +118,7 @@ func recordedRepository(state *operationRepositoryState) *recordedExecutionRepos
 	repository = &recordedExecutionRepository{
 		State:         &operationfixture.State[LedgerRun, LedgerEvent]{},
 		ValidateRun:   ValidateLedgerRun,
+		RunMatches:    func(run LedgerRun, id string) bool { return run.ID == id },
 		ConflictError: ErrLedgerConflict,
 		ValidateEvent: func(event LedgerEvent) error {
 			_, err := CanonicalLedgerEvent(event)

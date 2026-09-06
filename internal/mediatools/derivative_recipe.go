@@ -130,7 +130,13 @@ type MediaToolIdentity struct {
 }
 
 func (t MediaToolIdentity) Validate() error {
-	if t.Name != "ffmpeg" || t.Version == "" || len(t.ExecutableSHA256) != 64 ||
+	return t.ValidateName("ffmpeg")
+}
+
+// ValidateName validates a general media executable identity while keeping Validate's derivative
+// contract ffmpeg-specific.
+func (t MediaToolIdentity) ValidateName(name string) error {
+	if t.Name != name || t.Version == "" || len(t.ExecutableSHA256) != 64 ||
 		strings.Trim(t.ExecutableSHA256, "0123456789abcdef") != "" {
 		return errors.New("media tool identity is incomplete")
 	}
@@ -140,22 +146,32 @@ func (t MediaToolIdentity) Validate() error {
 // IdentifyFFmpeg records both the banner and complete executable digest. The path itself is not
 // portable provenance and is intentionally omitted from the returned identity.
 func IdentifyFFmpeg(ctx context.Context, configured string) (MediaToolIdentity, error) {
-	path, err := exec.LookPath(FFmpegOr(configured))
+	return identifyMediaExecutable(ctx, FFmpegOr(configured), "ffmpeg")
+}
+
+// IdentifyFFprobe records the adjacent ffprobe executable used to measure an artifact. The
+// configured value is the ffmpeg path by design; one toolchain must not split across locations.
+func IdentifyFFprobe(ctx context.Context, configuredFFmpeg string) (MediaToolIdentity, error) {
+	return identifyMediaExecutable(ctx, FFprobePathNextTo(FFmpegOr(configuredFFmpeg)), "ffprobe")
+}
+
+func identifyMediaExecutable(ctx context.Context, configured, name string) (MediaToolIdentity, error) {
+	path, err := exec.LookPath(configured)
 	if err != nil {
-		return MediaToolIdentity{}, fmt.Errorf("identify ffmpeg: %w", err)
+		return MediaToolIdentity{}, fmt.Errorf("identify %s: %w", name, err)
 	}
 	path, err = filepath.EvalSymlinks(path)
 	if err != nil {
-		return MediaToolIdentity{}, fmt.Errorf("identify ffmpeg symlink: %w", err)
+		return MediaToolIdentity{}, fmt.Errorf("identify %s symlink: %w", name, err)
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return MediaToolIdentity{}, fmt.Errorf("identify ffmpeg executable: %w", err)
+		return MediaToolIdentity{}, fmt.Errorf("identify %s executable: %w", name, err)
 	}
 	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > ConditioningMaxSnapshotBytes {
-		return MediaToolIdentity{}, errors.New("identify ffmpeg: executable is not a bounded regular file")
+		return MediaToolIdentity{}, fmt.Errorf("identify %s: executable is not a bounded regular file", name)
 	}
 	digest := sha256.New()
 	buffer := make([]byte, 128<<10)
@@ -171,21 +187,21 @@ func IdentifyFFmpeg(ctx context.Context, configured string) (MediaToolIdentity, 
 			break
 		}
 		if readErr != nil {
-			return MediaToolIdentity{}, fmt.Errorf("identify ffmpeg digest: %w", readErr)
+			return MediaToolIdentity{}, fmt.Errorf("identify %s digest: %w", name, readErr)
 		}
 	}
 	versionCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	output, err := runDerivativeCommand(versionCtx, path, false, "-version")
 	if err != nil {
-		return MediaToolIdentity{}, fmt.Errorf("identify ffmpeg version: %w", err)
+		return MediaToolIdentity{}, fmt.Errorf("identify %s version: %w", name, err)
 	}
 	if len(output) > 256<<10 {
-		return MediaToolIdentity{}, errors.New("identify ffmpeg version: output exceeds 256 KiB")
+		return MediaToolIdentity{}, fmt.Errorf("identify %s version: output exceeds 256 KiB", name)
 	}
 	version, _, _ := strings.Cut(strings.TrimSpace(string(output)), "\n")
-	identity := MediaToolIdentity{Name: "ffmpeg", Version: version, ExecutableSHA256: hex.EncodeToString(digest.Sum(nil))}
-	if err := identity.Validate(); err != nil {
+	identity := MediaToolIdentity{Name: name, Version: version, ExecutableSHA256: hex.EncodeToString(digest.Sum(nil))}
+	if err := identity.ValidateName(name); err != nil {
 		return MediaToolIdentity{}, err
 	}
 	return identity, nil

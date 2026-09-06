@@ -56,7 +56,8 @@ func fixtureRoute(modalities []string, rung string, seed int) RouteAuthority {
 		Role: "spoken-safety", Rung: rung, Modalities: modalities,
 		RequestedProvider: "openrouter", RequestedModel: "vendor/model",
 		ResolvedProvider: "openrouter", ResolvedModel: "vendor/model-2026",
-		UpstreamProvider: "provider", ModelFamily: "vendor-family-" + rung,
+		UpstreamProvider: "provider", UpstreamProviderSlug: "provider/slug",
+		ReasoningMode: ReasoningDisabled, ModelFamily: "vendor-family-" + rung,
 		CapabilitySHA256: fixtureSHA(seed), PromptSHA256: fixtureSHA(seed + 1), SchemaSHA256: fixtureSHA(seed + 2),
 	}
 }
