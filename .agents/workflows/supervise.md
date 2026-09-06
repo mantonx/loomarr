@@ -56,24 +56,19 @@ control when its brief is complete and does not choose its own next task. The su
 stop it or issue a new brief with a different role. This rotation keeps specialized context bounded
 without creating long-lived ownership silos.
 
-Choose model capability and reasoning effort for the task when the harness exposes those controls:
+At each assignment boundary, apply the canonical
+[task-based model routing](../../AGENTS.md#task-based-model-routing) policy. Keep Luna-first mechanical
+evidence collection; do not infer Astra from a supervisor role, review label, or available pane.
+Select model and reasoning independently, record the expected benefit and required justification,
+and verify support and effective settings in the actual harness. Repair brief, evidence, or
+permission defects as workflow issues before considering a capability escalation.
 
-- use Luna at Low reasoning by default for straightforward evidence collection: exact SHA/status
-  and PR/issue collection, bounded inventories, artifact existence/hash/size checks,
-  documented-command reproduction, and mechanical comparisons against explicit acceptance criteria;
-- use Terra at Medium for ordinary implementation, multi-file behaviour analysis, and
-  investigations requiring synthesis; higher-tier evidence collection needs a concrete reason why
-  an explicit checklist is insufficient;
-- use Sol for complex integration or high-risk or ambiguous contract reasoning only with a written
-  need; neither a review label nor an available pane justifies escalation; and
-- compare speed or cost only among runs that satisfy the same acceptance criteria.
-
-A read-only assignment is not automatically a Terra assignment. Follow the task-based routing in
-`AGENTS.md`, record the model, reasoning, rationale, authority, output, native budget, cutoff, and
-report reserve in the brief, and verify actual launched settings. Escalation checkpoints the specific
-unresolved question or failed acceptance, preserves useful evidence, and starts a fresh bounded
-assignment; never silently upgrade an active worker or repeat the whole scan. Budget ceilings are
-limits, not targets. Routing never changes ownership, safety controls, or acceptance gates.
+Record model, reasoning, rationale, authority, output, native budget, cutoff, and report reserve in
+the brief. Escalation checkpoints the specific unresolved question or failed acceptance, preserves
+useful evidence, and starts a fresh bounded assignment; never silently upgrade an active worker or
+repeat the whole scan. Compare speed or cost only among runs that satisfy the same acceptance
+criteria. Budget ceilings are limits, not targets. Routing never changes ownership, safety controls,
+or acceptance gates.
 
 Record the selection and rationale in the brief. Model choice never changes scope, authority, claims,
 tools, stop points, or acceptance. Do not switch a model or reasoning setting during an active

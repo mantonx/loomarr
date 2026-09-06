@@ -57,27 +57,15 @@ choice in the worker brief. `AGENTS.md` owns the task-based model routing policy
 workflow applies it at each assignment boundary. Record external sessions as `uncontrolled` when
 their actual selection cannot be verified rather than assuming an equivalent model.
 
-For straightforward evidence collection—exact SHA/status and PR/issue collection, bounded
-inventories, artifact existence/hash/size checks, documented-command reproduction, and mechanical
-comparison against explicit acceptance criteria—use Luna at Low reasoning by default. Use Terra at
-Medium for ordinary implementation, multi-file behaviour analysis, or synthesis-heavy investigation.
-Use Sol only for complex integration or high-risk or ambiguous contract reasoning with a written
-need. A read-only assignment is not automatically Terra: check whether an explicit evidence checklist
-makes Luna sufficient first. Record model, reasoning, rationale, authority, output, budget, cutoff,
-and report reserve in every brief and verify actual settings. Escalate only after checkpointing the
-specific unresolved question or failed acceptance, preserving useful evidence, and starting a fresh
-bounded assignment. Budgets are limits, not targets; routing never changes authority, ownership,
-gates, or safety controls.
+Follow [the canonical routing policy](../../AGENTS.md#task-based-model-routing): Luna-first mechanical
+evidence, Terra for ordinary implementation or synthesis, and justified Sol or Astra for increasingly
+demanding reasoning. Model and reasoning are independent choices, not a mandatory escalation ladder.
+Verify actual supported settings. Repair brief, evidence, and permission problems as workflow issues;
+an escalation preserves useful evidence and addresses a specific unresolved quality or capability gap
+at a fresh bounded checkpoint. Record authority, expected output, budget, cutoff, and report reserve
+alongside the selection; routing never broadens authority or changes ownership, gates, or safety.
 
-| Task shape | Default execution |
-| --- | --- |
-| Small task, sequential reasoning, or shared mutable seam | One owning agent; no delegation |
-| Straightforward evidence collection or mechanical comparison | Luna at Low reasoning by default |
-| Ordinary implementation or synthesis-heavy analysis | Terra at Medium reasoning; justify higher-tier evidence collection |
-| Complex integration or high-risk, ambiguous contract reasoning | Sol only with a written need; choose reasoning for the bounded task |
-| External session without trustworthy controls | Record `uncontrolled`; verify through artifacts and evidence |
-
-Use the task-specific defaults above. Record the selected model/capability, reasoning, and rationale;
+Record the selected model/capability, reasoning, and rationale;
 do not switch model or reasoning during an active checkpoint. Change it only with the next bounded
 assignment after the worker returns. Record worker-scoped usage as `source`, `start`, `end`, and
 `delta` only when observable; use `unavailable` or `uncontrolled` otherwise, and never attribute an
