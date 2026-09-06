@@ -9042,6 +9042,13 @@ outside scope.
 
 Every "pick one" in this doc is now picked. The agent builds with this stack; deviations require a doc update first.
 
+**Offline review documents.** The private visual-corpus review board specified in §10 is a
+self-contained frontend document rendered by Go's `html/template`. Its embedded HTML, CSS, and
+JavaScript execute in the reviewer's existing browser, with no additional application service,
+package dependency, or provider runtime. Go owns source reopening, artifact validation, rights
+locking, and publication; browser interactions record candidate review choices and confer no
+production authority. This frontend boundary is separate from the shipped client bundles above.
+
 **Installed dependency versions are exact, reviewed pins.** Installed-dependency manifest sections
 use one concrete version rather than a semver range, container images and remote CI actions use
 immutable digests or commit SHAs, and Renovate proposes the next exact pin for the repository gates
