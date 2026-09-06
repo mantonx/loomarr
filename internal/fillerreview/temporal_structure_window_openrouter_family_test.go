@@ -29,7 +29,7 @@ func TestNewTemporalStructureWindowOpenRouterFamilyPinsSnapshotPriceAndProductio
 	if family.Runtime == nil || family.Profile != family.Runtime.Profile() ||
 		family.Profile.PromptVersion != fillerstructurewindow.DirectVideoPromptVersion ||
 		family.Profile.EvidenceContract != fillerstructurewindow.CallRecordContractVersion ||
-		family.EstimatedMaximumChargeNanoUSD != 3_048_000 {
+		family.EstimatedMaximumChargeNanoUSD != 5_096_000 {
 		t.Fatalf("family=%+v", family)
 	}
 }

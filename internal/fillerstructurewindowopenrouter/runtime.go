@@ -16,6 +16,7 @@ import (
 	"github.com/loomarr/loomarr/internal/fillerstructure"
 	"github.com/loomarr/loomarr/internal/fillerstructurewindow"
 	"github.com/loomarr/loomarr/internal/httpx"
+	"github.com/loomarr/loomarr/internal/openroutermedia"
 )
 
 const (
@@ -202,8 +203,17 @@ func (r *CertifiedRuntime) assessors(snapshot fillerbakeoff.OpenRouterSnapshot, 
 		if maximumCharge > family.ReservationNanoUSD {
 			return nil, fmt.Errorf("OpenRouter structure reservation %d is below current price bound %d", family.ReservationNanoUSD, maximumCharge)
 		}
+		authority, err := openroutermedia.NewRouteAuthority(snapshot, snapshotSHA, openroutermedia.RouteRequirements{
+			BaseURL: fillerbakeoff.OpenRouterBaseURL, RequestedModel: family.Model, CanonicalModel: model.CanonicalSlug,
+			UpstreamProvider: family.UpstreamProvider, ProviderSlug: family.UpstreamProviderSlug,
+			RequiredInputModalities: []string{"text", "video"}, MaxTokens: MaximumOutputTokens,
+			RequireReasoning: family.ReasoningMode == ReasoningProviderRequired, Now: r.config.Now,
+		})
+		if err != nil {
+			return nil, err
+		}
 		assessor, err := New(Config{
-			Profile: profile, MetadataSnapshotSHA256: snapshotSHA,
+			RouteAuthority: authority, Profile: profile, MetadataSnapshotSHA256: snapshotSHA,
 			APIKey: r.config.APIKey, BaseURL: fillerbakeoff.OpenRouterBaseURL, Model: family.Model,
 			ResolvedModel: model.CanonicalSlug, UpstreamProvider: family.UpstreamProvider,
 			UpstreamProviderSlug: family.UpstreamProviderSlug, ReservationNanoUSD: family.ReservationNanoUSD,

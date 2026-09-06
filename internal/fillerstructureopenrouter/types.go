@@ -9,6 +9,7 @@ import (
 
 	"github.com/loomarr/loomarr/internal/fillerstructure"
 	"github.com/loomarr/loomarr/internal/fillerstructuremedia"
+	"github.com/loomarr/loomarr/internal/openroutermedia"
 )
 
 const MaximumVideoBytes int64 = fillerstructuremedia.MaximumVideoBytes
@@ -21,6 +22,7 @@ type Ledger interface {
 }
 
 type Config struct {
+	RouteAuthority         openroutermedia.RouteAuthority
 	Profile                fillerstructure.AssessorProfile
 	MetadataSnapshotSHA256 string
 	APIKey                 string

@@ -17,6 +17,7 @@ import (
 
 	"github.com/loomarr/loomarr/internal/filler"
 	"github.com/loomarr/loomarr/internal/fillerstructure"
+	"github.com/loomarr/loomarr/internal/openroutermedia"
 )
 
 type capturedLedger struct {
@@ -45,7 +46,7 @@ func TestAssessorReturnsAcceptedReplayableAssessmentAfterDurableReservation(t *t
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		ledger.order = append(ledger.order, "call")
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(successResponse(`{"segments":[{"endMs":5000,"role":"commercial","decisiveAtMs":[1000],"reason":"offer"},{"endMs":10000,"role":"promo","decisiveAtMs":[7000],"reason":"promotion"}]}`, "resolved-model")))
+		_, _ = response.Write([]byte(successResponse(`{"segments":[{"endMs":5000,"role":"commercial","decisiveAtMs":[1000],"reason":"offer"},{"endMs":10000,"role":"promo","decisiveAtMs":[7000],"reason":"promotion"}]}`, "provider/resolved-model")))
 	}))
 	defer server.Close()
 	media := assessorMediaFixture(t)
@@ -62,7 +63,7 @@ func TestAssessorReturnsAcceptedReplayableAssessmentAfterDurableReservation(t *t
 		recorded.Record.State != fillerstructure.AssessmentRecordAccepted || candidate.Unit != fillerstructure.UnitCompilation || len(candidate.Segments) != 2 ||
 		recorded.Record.RequestSHA256 != ledger.reservations[0].RequestSHA256 || recorded.Record.SHA256 != ledger.settlements[0].SHA256 ||
 		ledger.reservations[0].Source.SHA256 != media.Source.SHA256 || ledger.reservations[0].Media != media.Assessment ||
-		ledger.reservations[0].MaximumChargeNanoUSD != 1_500 || ledger.reservations[0].ExpectedResolvedModel != "resolved-model" ||
+		ledger.reservations[0].MaximumChargeNanoUSD != 2_000 || ledger.reservations[0].ExpectedResolvedModel != "provider/resolved-model" ||
 		ledger.reservations[0].PromptSHA256 != recorded.Record.PromptSHA256 || ledger.reservations[0].SchemaSHA256 != recorded.Record.SchemaSHA256 {
 		t.Fatalf("order=%v record=%+v candidate=%+v", ledger.order, recorded.Record, candidate)
 	}
@@ -97,7 +98,7 @@ func TestAssessorFailsClosedAcrossProviderOutcomes(t *testing.T) {
 		wantFail  string
 	}{
 		{
-			name: "invalid structured output", response: successResponse(`{"segments":[]}`, "resolved-model"),
+			name: "invalid structured output", response: successResponse(`{"segments":[]}`, "provider/resolved-model"),
 			wantState: fillerstructure.AssessmentRecordFailed, wantFail: fillerstructure.AssessmentFailureInvalidResponse,
 		},
 		{
@@ -137,7 +138,7 @@ func TestAssessorDoesNotReturnEvidenceWhenSettlementFails(t *testing.T) {
 	want := errors.New("ledger unavailable")
 	ledger := &capturedLedger{state: fillerstructure.AssessmentReservationAccepted, settleErr: want}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		_, _ = response.Write([]byte(successResponse(`{"segments":[{"endMs":10000,"role":"commercial","decisiveAtMs":[1000],"reason":"offer"}]}`, "resolved-model")))
+		_, _ = response.Write([]byte(successResponse(`{"segments":[{"endMs":10000,"role":"commercial","decisiveAtMs":[1000],"reason":"offer"}]}`, "provider/resolved-model")))
 	}))
 	defer server.Close()
 	assessor := assessorFixture(t, server.URL, server.Client(), ledger)
@@ -167,7 +168,7 @@ func TestAssessorRejectsAssessmentMediaByteDriftBeforeReservationOrCall(t *testi
 func TestAssessorRetainsKnownOverReservationAsUnusableEvidence(t *testing.T) {
 	ledger := &capturedLedger{state: fillerstructure.AssessmentReservationAccepted}
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
-		raw := strings.Replace(successResponse(`{"segments":[{"endMs":10000,"role":"commercial","decisiveAtMs":[1000],"reason":"offer"}]}`, "resolved-model"), `"cost":0.000001`, `"cost":0.000003`, 1)
+		raw := strings.Replace(successResponse(`{"segments":[{"endMs":10000,"role":"commercial","decisiveAtMs":[1000],"reason":"offer"}]}`, "provider/resolved-model"), `"cost":0.000001`, `"cost":0.000003`, 1)
 		_, _ = response.Write([]byte(raw))
 	}))
 	defer server.Close()
@@ -206,19 +207,34 @@ func assessorFixture(t *testing.T, baseURL string, client *http.Client, ledger L
 }
 
 func assessorConfig(baseURL string, client *http.Client, ledger Ledger) Config {
+	now := time.Date(2026, time.September, 10, 5, 0, 0, 0, time.UTC)
 	return Config{
+		RouteAuthority: assessorRouteAuthority(baseURL, now),
 		Profile: fillerstructure.AssessorProfile{
 			ID: "openrouter-a", ModelFamily: "family-a", Provider: "openrouter", Model: "requested-model",
 			ModelDigest: strings.Repeat("a", 64), CapabilitySHA256: strings.Repeat("b", 64),
 			PromptVersion: fillerstructure.DirectVideoPromptVersion, EvidenceContract: fillerstructure.AssessmentRecordContractVersion,
 		},
 		MetadataSnapshotSHA256: strings.Repeat("c", 64),
-		APIKey:                 "test-key", BaseURL: baseURL, Model: "requested-model", ResolvedModel: "resolved-model",
+		APIKey:                 "test-key", BaseURL: baseURL, Model: "requested-model", ResolvedModel: "provider/resolved-model",
 		UpstreamProvider: "Provider", UpstreamProviderSlug: "provider", ReservationNanoUSD: 2_000,
-		MaximumChargeNanoUSD: 1_500, MaxTokens: 1024, DisableReasoning: true,
+		MaximumChargeNanoUSD: 2_000, MaxTokens: 1024, DisableReasoning: true,
 		AllowInsecureTestURL: true, Client: client, Ledger: ledger,
-		Now: func() time.Time { return time.Date(2026, time.September, 10, 5, 0, 0, 0, time.UTC) },
+		Now: func() time.Time { return now },
 	}
+}
+
+func assessorRouteAuthority(baseURL string, now time.Time) openroutermedia.RouteAuthority {
+	snapshot := openroutermedia.CapabilitySnapshot{SchemaVersion: openroutermedia.CapabilitySnapshotSchemaVersion, SourceBaseURL: baseURL, RetrievedAt: now, Requests: 3, ResponseBytes: 1, Models: []openroutermedia.CapabilityModelSnapshot{{
+		ID: "requested-model", CanonicalSlug: "provider/resolved-model", Name: "Test model", Created: 1,
+		InputModalities: []string{"text", "video"}, OutputModalities: []string{"text"},
+		Endpoints: []openroutermedia.CapabilityEndpointSnapshot{{Name: "Test route", ModelID: "requested-model", ProviderName: "Provider", ProviderSlug: "provider", ContextLength: 4096, MaxCompletionTokens: 4096, SupportedParameters: []string{"response_format", "structured_outputs"}, Pricing: map[string]string{"prompt": "0.000001", "completion": "0.000001"}, ZDR: true}},
+	}}}
+	authority, err := openroutermedia.NewRouteAuthority(snapshot, openroutermedia.CapabilitySnapshotSHA256(snapshot), openroutermedia.RouteRequirements{BaseURL: baseURL, RequestedModel: "requested-model", CanonicalModel: "provider/resolved-model", UpstreamProvider: "Provider", ProviderSlug: "provider", RequiredInputModalities: []string{"text", "video"}, MaxTokens: 1024, Now: func() time.Time { return now }})
+	if err != nil {
+		panic(err)
+	}
+	return authority
 }
 
 func assessorMediaFixture(t *testing.T) filler.StructureAssessmentMedia {

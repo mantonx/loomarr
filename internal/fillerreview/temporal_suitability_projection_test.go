@@ -348,12 +348,16 @@ func (fixture temporalSuitabilityProjectionFixture) rebuildComparison(t *testing
 
 func convertTemporalSuitabilityProjectionFixtureToArchivedV1(t *testing.T, fixture temporalSuitabilityProjectionFixture) {
 	t.Helper()
-	manifest := readStrictTestJSON[map[string]any](t, fixture.manifest)
-	manifest["contractVersion"] = "filler-temporal-structure-challenge-v1"
-	for _, raw := range manifest["cases"].([]any) {
-		delete(raw.(map[string]any), "profile")
+	manifest := readStrictTestJSON[TemporalStructureChallengeManifest](t, fixture.manifest)
+	productionAllowed := false
+	archivedManifest := temporalStructureChallengeArchiveV1Manifest{
+		SchemaVersion: manifest.SchemaVersion, ContractVersion: temporalStructureChallengeArchiveV1Contract,
+		ChallengeID: manifest.ChallengeID, GeneratedAt: manifest.GeneratedAt, ProductionAdmissionAllowed: &productionAllowed,
 	}
-	writeTemporalSuitabilityProjectionJSON(t, fixture.manifest, manifest)
+	for _, item := range manifest.Cases {
+		archivedManifest.Cases = append(archivedManifest.Cases, temporalStructureChallengeArchiveV1PublicCase{Alias: item.Alias, Video: item.Video})
+	}
+	writeTemporalSuitabilityProjectionJSON(t, fixture.manifest, archivedManifest)
 	fixture.rebindArchivedV1Projection(t)
 }
 
@@ -363,12 +367,14 @@ func (fixture temporalSuitabilityProjectionFixture) rebindArchivedV1Projection(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	authority := readStrictTestJSON[map[string]any](t, fixture.authority)
-	authority["contractVersion"] = "filler-temporal-structure-challenge-v1"
-	authority["publicManifestSha256"] = manifestSHA
-	delete(authority, "planContractVersion")
-	delete(authority, "planReceiptSha256")
-	writeTemporalSuitabilityProjectionJSON(t, fixture.authority, authority)
+	authority := readStrictTestJSON[TemporalStructureChallengeAuthority](t, fixture.authority)
+	archivedAuthority := temporalStructureChallengeArchiveV1Authority{
+		SchemaVersion: authority.SchemaVersion, ContractVersion: temporalStructureChallengeArchiveV1Contract,
+		ChallengeID: authority.ChallengeID, GeneratedAt: authority.GeneratedAt,
+		AuthoringSHA256: authority.AuthoringSHA256, SeedSHA256: authority.SeedSHA256,
+		PublicManifestSHA256: manifestSHA, MediaTools: authority.MediaTools, Cases: authority.Cases,
+	}
+	writeTemporalSuitabilityProjectionJSON(t, fixture.authority, archivedAuthority)
 
 	first := readStrictTestJSON[TemporalSuitabilityResult](t, fixture.first)
 	second := readStrictTestJSON[TemporalSuitabilityResult](t, fixture.second)

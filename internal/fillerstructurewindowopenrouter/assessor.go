@@ -51,7 +51,8 @@ func (a *Assessor) AssessWindow(ctx context.Context, set fillerstructurewindow.M
 	requestedAt := a.config.Now().UTC().Round(0)
 	var reservationState fillerstructurewindow.CallReservationState
 	callResult, callErr := openroutermedia.Call(ctx, a.config.Client, a.config.BaseURL, openroutermedia.Config{
-		APIKey: a.config.APIKey, Model: a.config.Model, ResolvedModel: a.config.ResolvedModel,
+		Authority: a.config.RouteAuthority,
+		APIKey:    a.config.APIKey, Model: a.config.Model, ResolvedModel: a.config.ResolvedModel,
 		UpstreamProvider: a.config.UpstreamProvider, ProviderSlug: a.config.UpstreamProviderSlug,
 		SchemaName: structureSchemaName, Schema: fillerstructurewindow.DirectVideoSchema(durationMS),
 		SystemPrompt: fillerstructurewindow.DirectVideoSystemPrompt, Content: fillerstructurewindow.DirectVideoContent(durationMS),

@@ -75,7 +75,7 @@ func TestRunOpenRouterTemporalStructureBindsOneAtomicVideoAssessment(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.PublicManifestSHA256 != challenge.PublicManifestSHA256 || result.ReasoningMode != TemporalStructureOpenRouterReasoningDisabled || result.MaximumInputTokens != 20_000 || result.EstimatedMaximumChargeNanoUSD != 22_048_000 || result.Requests != 1 || len(result.Assessments) != 1 || result.ProductionAdmissionAllowed || result.Assessments[0].Unit.Kind != fillereval.UnitStandalone || result.Assessments[0].Role.Kind != fillereval.TemporalRoleCommercial || len(result.Assessments[0].Inference.Calls) != 1 || result.Assessments[0].Inference.Calls[0].Axis != "structure" {
+	if result.PublicManifestSHA256 != challenge.PublicManifestSHA256 || result.ReasoningMode != TemporalStructureOpenRouterReasoningDisabled || result.MaximumInputTokens != 20_000 || result.EstimatedMaximumChargeNanoUSD != 24_096_000 || result.Requests != 1 || len(result.Assessments) != 1 || result.ProductionAdmissionAllowed || result.Assessments[0].Unit.Kind != fillereval.UnitStandalone || result.Assessments[0].Role.Kind != fillereval.TemporalRoleCommercial || len(result.Assessments[0].Inference.Calls) != 1 || result.Assessments[0].Inference.Calls[0].Axis != "structure" {
 		t.Fatalf("result = %+v", result)
 	}
 	parts := request.Messages[1].Content

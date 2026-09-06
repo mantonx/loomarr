@@ -92,7 +92,7 @@ func TestBuildTemporalStructureChallengeSupportsProgrammeWithInsertedSpot(t *tes
 	fixture.secrets = append(fixture.secrets, "programme-spots-case-secret", string(fillereval.UnitProgrammeSpots))
 	fixture.writeAuthoring(t)
 	output := filepath.Join(t.TempDir(), "challenge")
-	result, err := BuildTemporalStructureChallenge(context.Background(), fixture.config(output, "programme-spots"))
+	result, err := buildFixtureTemporalStructureChallenge(context.Background(), fixture.config(output, "programme-spots"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestBuildTemporalStructureChallengeReportsObservedOversizedMedia(t *testing
 	fixture := newTemporalStructureFixture(t)
 	fixture.media.renderBytes = TemporalTruthMaximumVideoBytes + 1
 	output := filepath.Join(fixture.root, "oversized")
-	_, err := BuildTemporalStructureChallenge(context.Background(), fixture.config(output, "oversized"))
+	_, err := buildFixtureTemporalStructureChallenge(context.Background(), fixture.config(output, "oversized"))
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%d exceeds allowed range 1..%d bytes", fixture.media.renderBytes, TemporalTruthMaximumVideoBytes)) {
 		t.Fatalf("oversized render error = %v", err)
 	}
@@ -360,7 +360,19 @@ func buildFixtureTemporalStructureChallenge(ctx context.Context, config Temporal
 	if err != nil {
 		return TemporalStructureChallengeResult{}, err
 	}
-	return buildTemporalStructureChallenge(ctx, config, raw, authoring, nil, strings.Repeat("c", 64), TemporalStructureHoldoutContractVersion)
+	receipt := TemporalStructureHoldoutReceipt{
+		ContractVersion: TemporalStructureHoldoutContractVersion,
+		AuthoringSHA256: hashBytes(raw),
+	}
+	receiptRaw, err := json.MarshalIndent(receipt, "", "  ")
+	if err != nil {
+		return TemporalStructureChallengeResult{}, err
+	}
+	receiptRaw = append(receiptRaw, '\n')
+	if err := os.WriteFile(config.PlanReceiptPath, receiptRaw, 0o600); err != nil {
+		return TemporalStructureChallengeResult{}, err
+	}
+	return buildTemporalStructureChallenge(ctx, config, raw, authoring, &receipt, hashBytes(receiptRaw), receipt.ContractVersion)
 }
 
 func (fixture temporalStructureFixture) writeAuthoring(t *testing.T) {

@@ -186,3 +186,22 @@ func TestBuildTemporalStructureWindowCorpusPlanRejectsDriftedAuthority(t *testin
 		t.Fatalf("drift error = %v", err)
 	}
 }
+
+func TestBuildTemporalStructureWindowCorpusPlanRejectsShortProgrammeParentsBeforePublication(t *testing.T) {
+	fixture := newTemporalStructureHoldoutFixtureWithProgrammeParentDuration(t, 180_000)
+	holdout := filepath.Join(t.TempDir(), "holdout")
+	if _, err := BuildTemporalStructureHoldoutPlan(fixture.config(holdout)); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "output")
+	_, err := BuildTemporalStructureWindowCorpusPlan(TemporalStructureWindowCorpusConfig{
+		HoldoutAuthoringPath: filepath.Join(holdout, "authoring.json"), HoldoutReceiptPath: filepath.Join(holdout, "receipt.json"),
+		Seed: "window-corpus-seed", PlannedAt: fixture.plannedAt.Add(time.Hour), OutputDir: output,
+	})
+	if err == nil || !strings.Contains(err.Error(), "exceeds source") {
+		t.Fatalf("short parent error = %v", err)
+	}
+	if _, err := os.Stat(output); !os.IsNotExist(err) {
+		t.Fatalf("short-parent plan unexpectedly published output: %v", err)
+	}
+}

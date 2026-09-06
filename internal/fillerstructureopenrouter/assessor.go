@@ -49,7 +49,8 @@ func (a *Assessor) AssessCompleteTimeline(ctx context.Context, media filler.Stru
 	requestedAt := a.config.Now().UTC().Round(0)
 	var reservationState fillerstructure.AssessmentReservationState
 	callResult, callErr := openroutermedia.Call(ctx, a.config.Client, a.config.BaseURL, openroutermedia.Config{
-		APIKey: a.config.APIKey, Model: a.config.Model, ResolvedModel: a.config.ResolvedModel,
+		Authority: a.config.RouteAuthority,
+		APIKey:    a.config.APIKey, Model: a.config.Model, ResolvedModel: a.config.ResolvedModel,
 		UpstreamProvider: a.config.UpstreamProvider, ProviderSlug: a.config.UpstreamProviderSlug,
 		SchemaName: structureSchemaName, Schema: fillerstructure.DirectVideoSchema(media.Source.DurationMs),
 		SystemPrompt: fillerstructure.DirectVideoSystemPrompt, Content: fillerstructure.DirectVideoContent(media.Source.DurationMs),

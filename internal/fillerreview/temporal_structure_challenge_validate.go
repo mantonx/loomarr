@@ -65,8 +65,12 @@ func validateTemporalStructureChallenge(publicRoot string, manifest TemporalStru
 	if requireCurrentFields && (authority.PlanContractVersion != TemporalStructureHoldoutContractVersion || !reviewSHA256(authority.PlanReceiptSHA256)) || !requireCurrentFields && (authority.PlanContractVersion != "" || authority.PlanReceiptSHA256 != "") {
 		return fmt.Errorf("private challenge authority has invalid plan binding")
 	}
-	if !reflect.DeepEqual(authority.AssessmentMediaProfile, fillerstructuremedia.CanonicalProfile()) || authority.AssessmentMediaProfile.SHA256 != manifest.AssessmentMediaProfileSHA256 {
-		return fmt.Errorf("private challenge assessment media profile is invalid")
+	if requireCurrentFields {
+		if !reflect.DeepEqual(authority.AssessmentMediaProfile, fillerstructuremedia.CanonicalProfile()) || authority.AssessmentMediaProfile.SHA256 != manifest.AssessmentMediaProfileSHA256 {
+			return fmt.Errorf("private challenge assessment media profile is invalid")
+		}
+	} else if !reflect.DeepEqual(authority.AssessmentMediaProfile, fillerstructuremedia.Profile{}) {
+		return fmt.Errorf("archived private challenge has unexpected assessment media profile")
 	}
 	for name, identity := range map[string]TemporalTruthToolIdentity{"ffmpeg": authority.MediaTools.FFmpeg, "ffprobe": authority.MediaTools.FFprobe} {
 		if strings.TrimSpace(identity.Path) == "" || strings.TrimSpace(identity.Version) == "" || !reviewSHA256(identity.BinarySHA256) {

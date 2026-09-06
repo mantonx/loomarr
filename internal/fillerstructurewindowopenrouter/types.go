@@ -9,6 +9,7 @@ import (
 
 	"github.com/loomarr/loomarr/internal/fillerstructure"
 	"github.com/loomarr/loomarr/internal/fillerstructurewindow"
+	"github.com/loomarr/loomarr/internal/openroutermedia"
 )
 
 type Ledger interface {
@@ -17,6 +18,7 @@ type Ledger interface {
 }
 
 type Config struct {
+	RouteAuthority         openroutermedia.RouteAuthority
 	Profile                fillerstructure.AssessorProfile
 	MetadataSnapshotSHA256 string
 	APIKey                 string

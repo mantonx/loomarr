@@ -5393,7 +5393,9 @@ longest possible prefix and suffix and more than fifteen seconds after that suff
 constructions retain their separate ten-second end margin. Packet measurement found ten-second
 timestamp holes at 100 seconds in one otherwise useful parent and near 650 seconds in another, so
 neither an arbitrary ten-second prefix start nor a long EOF-relative edge suffix is continuous
-evidence. The plan performs no rendering or model call. A later renderer measures the
+evidence. Before publishing a plan, the planner verifies every requested part against its locked
+source bounds and the applicable seam or duration-edge context margins; insufficient programme
+parents fail planning without publishing a plan. The plan performs no rendering or model call. A later renderer measures the
 canonical encoded parts and may publish a certification suite only when wordless, motion, and largest-
 byte evidence also satisfy the fixed slice counts; insufficiency fails the corpus rather than causing
 model-outcome-guided case substitution.
@@ -5622,7 +5624,9 @@ and rendering interfaces remain on
 the current challenge and plan contracts. Separate strict archived input shapes reject fields
 introduced by later contracts even when empty or null. They require the original explicit negative
 production disposition, complete media/authority/alias/segment bindings, and the exact immutable
-result/comparison bindings. Decode and hash the same raw bytes; reject unknown, duplicate, trailing,
+result/comparison bindings. The private validator requires the canonical assessment-media profile
+for current challenges and its absence for challenge-v1 diagnostics, whose schema predates that
+field. Decode and hash the same raw bytes; reject unknown, duplicate, trailing,
 mismatched, ambiguous, or incomplete evidence before publication. Archived inputs cannot substitute
 for current measured profiles, plan receipts, source provenance, or ledger evidence. No version
 string, original artifact, or provider result is rewritten to make historical evidence appear current.

@@ -105,6 +105,9 @@ func constructTemporalStructureWindowCorpusPlan(
 		))
 	}
 	sort.Slice(cases, func(i, j int) bool { return cases[i].ID < cases[j].ID })
+	if err := validateTemporalStructureWindowCorpusSourceBounds(cases, sources); err != nil {
+		return TemporalStructureWindowCorpusPlan{}, err
+	}
 	plan := TemporalStructureWindowCorpusPlan{
 		SchemaVersion: TemporalStructureWindowCorpusSchemaVersion, ContractVersion: TemporalStructureWindowCorpusContractVersion,
 		PlannedAt: plannedAt, HoldoutAuthoringSHA256: authoringSHA, HoldoutReceiptSHA256: receiptSHA,
@@ -112,6 +115,53 @@ func constructTemporalStructureWindowCorpusPlan(
 	}
 	plan.SHA256 = temporalStructureWindowCorpusPlanSHA256(plan)
 	return plan, nil
+}
+
+func validateTemporalStructureWindowCorpusSourceBounds(cases []TemporalStructureWindowCorpusCase, sources map[string]TemporalStructureChallengeSource) error {
+	for _, item := range cases {
+		if len(item.Segments) == 0 {
+			return fmt.Errorf("window corpus case %q has no requested source parts", item.ID)
+		}
+		for index, segment := range item.Segments {
+			source, ok := sources[segment.SourceID]
+			if !ok {
+				return fmt.Errorf("window corpus case %q part %d source %q is absent from authoring", item.ID, index, segment.SourceID)
+			}
+			if segment.StartMS < 0 || segment.DurationMS <= 0 || segment.StartMS > source.DurationMS || segment.DurationMS > source.DurationMS-segment.StartMS {
+				return fmt.Errorf("window corpus case %q part %d exceeds source %q bounds", item.ID, index, source.ID)
+			}
+			if source.Provenance.Kind != TemporalStructureSourceProgrammeParent && (segment.StartMS != 0 || segment.DurationMS != source.DurationMS) {
+				return fmt.Errorf("window corpus case %q filler part %d does not retain whole source %q", item.ID, index, source.ID)
+			}
+		}
+
+		prefix := item.Segments[0]
+		parent := sources[prefix.SourceID]
+		if parent.Provenance.Kind != TemporalStructureSourceProgrammeParent || prefix.StartMS != temporalStructureWindowProgrammePrefixStart(parent) {
+			return fmt.Errorf("window corpus case %q does not retain its programme prefix context", item.ID)
+		}
+		switch item.Pattern {
+		case TemporalStructureWindowPatternSeamOverlap, TemporalStructureWindowPatternSeamPrimaryLeft, TemporalStructureWindowPatternSeamPrimaryRight, TemporalStructureWindowPatternCrossingSeam:
+			suffix := item.Segments[len(item.Segments)-1]
+			if suffix.SourceID != parent.ID || suffix.DurationMS != temporalStructureWindowCorpusProgrammeSuffixMS ||
+				suffix.StartMS != parent.DurationMS-temporalStructureWindowCorpusProgrammeSuffixMS-10_000 ||
+				parent.DurationMS-suffix.StartMS-suffix.DurationMS < 10_000 {
+				return fmt.Errorf("window corpus case %q does not retain its seam EOF context", item.ID)
+			}
+		case TemporalStructureWindowPatternDurationLowerEdge, TemporalStructureWindowPatternDurationUpperEdge:
+			if len(item.Segments) != 3 {
+				return fmt.Errorf("window corpus case %q has invalid duration-edge parts", item.ID)
+			}
+			suffix := item.Segments[2]
+			if suffix.SourceID != parent.ID || suffix.StartMS != temporalStructureWindowProgrammeEdgeSuffixStart(parent) ||
+				suffix.StartMS-(prefix.StartMS+prefix.DurationMS) <= 15_000 || parent.DurationMS-suffix.StartMS-suffix.DurationMS <= 15_000 {
+				return fmt.Errorf("window corpus case %q does not retain its duration-edge programme margins", item.ID)
+			}
+		default:
+			return fmt.Errorf("window corpus case %q has unknown pattern %q", item.ID, item.Pattern)
+		}
+	}
+	return nil
 }
 
 func selectTemporalStructureWindowEdgeAnchors(seed, pattern string, durationMS int64, anchors []temporalStructureWindowAnchor) ([]temporalStructureWindowAnchor, error) {

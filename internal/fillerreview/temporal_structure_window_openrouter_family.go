@@ -80,8 +80,12 @@ func NewTemporalStructureWindowOpenRouterFamily(config TemporalStructureWindowOp
 		return TemporalStructureWindowOpenRouterFamily{}, err
 	}
 	model := openRouterTemporalModel(config.Snapshot, config.Model)
+	authority, err := openRouterRouteAuthority(config.Snapshot, fillerbakeoff.OpenRouterSnapshotSHA256(config.Snapshot), baseURL, config.Model, model.CanonicalSlug, config.UpstreamProvider, config.UpstreamProviderSlug, []string{"text", "video"}, temporalStructureOpenRouterMaxTokens, config.ReasoningMode == TemporalStructureOpenRouterReasoningRequired, now)
+	if err != nil {
+		return TemporalStructureWindowOpenRouterFamily{}, err
+	}
 	assessor, err := fillerstructurewindowopenrouter.New(fillerstructurewindowopenrouter.Config{
-		Profile: profile, MetadataSnapshotSHA256: fillerbakeoff.OpenRouterSnapshotSHA256(config.Snapshot),
+		RouteAuthority: authority, Profile: profile, MetadataSnapshotSHA256: fillerbakeoff.OpenRouterSnapshotSHA256(config.Snapshot),
 		APIKey: config.APIKey, BaseURL: baseURL, Model: config.Model,
 		ResolvedModel: model.CanonicalSlug, UpstreamProvider: config.UpstreamProvider,
 		UpstreamProviderSlug: config.UpstreamProviderSlug, ReservationNanoUSD: config.ReservationNanoUSD,

@@ -27,7 +27,7 @@ func TestPublishTemporalStructureCertificationBindsCompleteHoldoutLineage(t *tes
 	challengeRoot := filepath.Join(t.TempDir(), "challenge")
 	generatedAt := fixture.plannedAt.Add(time.Hour)
 	if _, err := BuildTemporalStructureChallenge(context.Background(), TemporalStructureChallengeConfig{
-		AuthoringPath: authoringPath, SourceRoot: fixture.root, OutputDir: challengeRoot,
+		AuthoringPath: authoringPath, PlanReceiptPath: filepath.Join(holdoutRoot, "receipt.json"), SourceRoot: fixture.root, OutputDir: challengeRoot,
 		ChallengeID: "certification-challenge", Seed: "holdout-seed", GeneratedAt: generatedAt, Media: media,
 	}); err != nil {
 		t.Fatal(err)
