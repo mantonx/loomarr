@@ -191,6 +191,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Shared no-network HTTP test seams without importing any application adapter.
 - **`testkit/postgresimage`** · 1 importer
   Owns the single image reference used by Postgres testcontainers and the Make pre-pull that runs before those tests.
+- **`testkit/recordfixture`**
 - **`textmatch`** · 3 importers
   Owns deterministic, Unicode-aware whole-word phrase matching.
 - **`web`** · 1 importer
