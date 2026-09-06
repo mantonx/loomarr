@@ -190,9 +190,6 @@ func (d *YtDlpDownloader) Download(ctx context.Context, src Source, dropDir stri
 			provenanceErr = errors.Join(provenanceErr, stampErr)
 		}
 		output.ArchiveID = reported.archiveID
-		if output.ArchiveID == "" {
-			output.ArchiveID = archiveIDFromSidecar(output.SidecarPath)
-		}
 		if src.archiveAttempt {
 			entry, entryErr := exactArchiveEntry(attemptArchive, output.ArchiveID)
 			if entryErr != nil {
@@ -324,23 +321,9 @@ func exactArchiveEntry(lines []string, archiveID string) (string, error) {
 	return match, nil
 }
 
-func archiveIDFromSidecar(path string) string {
-	bytes, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	var sidecar struct {
-		ID string `json:"id"`
-	}
-	if json.Unmarshal(bytes, &sidecar) != nil {
-		return ""
-	}
-	return sidecar.ID
-}
-
 // ytDlpMediaPaths reads yt-dlp's output ID plus JSON-encoded after-move path from the private
-// result file for this invocation. Legacy path-only fixture records remain accepted; in that case
-// the exact ID is recovered from the paired sidecar. Ordinary diagnostics are never provenance.
+// result file for this invocation. Every record is the exact id<TAB>JSON-encoded absolute path
+// emitted by --print-to-file; ordinary diagnostics are never provenance.
 // A skipped retry writes no records. Candidates are opened through root, so their descriptor stays
 // bound to the file yt-dlp named even if its path changes before stamping.
 type ytDlpReportedMedia struct {
@@ -361,16 +344,13 @@ func ytDlpMediaPaths(root *os.Root, resultPath string) ([]ytDlpReportedMedia, er
 	scanner.Buffer(make([]byte, 4*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		archiveID := ""
-		if before, after, ok := strings.Cut(line, "\t"); ok {
-			archiveID, line = before, after
+		archiveID, encodedMedia, ok := strings.Cut(line, "\t")
+		if !ok || strings.TrimSpace(archiveID) == "" || strings.ContainsAny(archiveID, " \t\r\n") {
+			return nil, errors.New("malformed yt-dlp result record")
 		}
 		var media string
-		if err := json.Unmarshal([]byte(line), &media); err != nil || media == "" {
-			continue
-		}
-		if !filepath.IsAbs(media) {
-			media = filepath.Join(root.Name(), media)
+		if err := json.Unmarshal([]byte(encodedMedia), &media); err != nil || media == "" || !filepath.IsAbs(media) {
+			return nil, errors.New("malformed yt-dlp result record")
 		}
 		relativeMedia, err := filepath.Rel(root.Name(), media)
 		if err != nil || !withinDir(relativeMedia) {

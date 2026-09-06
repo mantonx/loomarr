@@ -237,7 +237,7 @@ stage=$(dirname "$result")
 printf 'video bytes' > "$stage/download.mp4"
 printf '{"id":"current-id","title":"download"}\n' > "$stage/download.info.json"
 printf 'youtube current-id\n' > "$archive"
-printf '"%s"\n' "$stage/download.mp4" >> "$result"
+printf 'current-id\t"%s"\n' "$stage/download.mp4" >> "$result"
 `)
 	closed, err := store.Open(t.Context(), dsn, true)
 	if err != nil {

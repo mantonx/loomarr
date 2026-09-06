@@ -105,7 +105,7 @@ func TestYtDlpDownloaderNaturalSuccessStampsSidecar(t *testing.T) {
 	}
 	executable := testkit.Executable(t, "fake-yt-dlp", fmt.Sprintf(`#!/bin/sh
 while test "$1" != "--print-to-file"; do shift; done
-printf '%%s\n' %q >> "$3"
+printf 'source-1\t%%s\n' %q >> "$3"
 `, strconv.Quote(media)))
 
 	_, err := NewYtDlpDownloader(executable, "ffmpeg").Download(context.Background(), Source{
@@ -310,10 +310,10 @@ printf 'video one' > %q
 touch %q
 printf '%%s\n' '{"title":"second download"}' > %q
 printf 'video two' > %q
-printf '%%s\n' %q >> "$result"
-printf '%%s\n' %q >> "$result"
+printf 'current-id\t%%s\n' %q >> "$result"
+printf 'second-id\t%%s\n' %q >> "$result"
 printf 'download warning: %%s\n' %q >&2
-`, marker, sidecar, media, marker, playlistSidecar, playlistMedia, strconv.Quote(filepath.Base(media)), strconv.Quote(filepath.Base(playlistMedia)), media))
+`, marker, sidecar, media, marker, playlistSidecar, playlistMedia, strconv.Quote(media), strconv.Quote(playlistMedia), media))
 
 	d := NewYtDlpDownloader(ytdlp, "ffmpeg")
 	src := Source{ID: "youtube:current", AcquisitionID: "acq-current", Kind: YouTube, URL: "https://youtube.com/watch?v=current-id"}
@@ -369,13 +369,11 @@ while test "$1" != "--print-to-file"; do shift; done
 result="$3"
 printf '%%s\n' '{"title":"current download"}' > %q
 printf 'video' > %q
-printf '%%s\n' %q >> "$result"
-printf '%%s\n' %q >> "$result"
-printf '%%s\n' %q >> "$result"
-printf '%%s\n' 'not-json' >> "$result"
-printf '%%s\n' '""' >> "$result"
-printf '%%s\n' %q >> "$result"
-`, sidecar, media, strconv.Quote(media), strconv.Quote(symlinkMedia), strconv.Quote(outsideMedia), strconv.Quote(filepath.Join("..", filepath.Base(outsideMedia)))))
+printf 'current-id\t%%s\n' %q >> "$result"
+printf 'symlinked-id\t%%s\n' %q >> "$result"
+printf 'outside-id\t%%s\n' %q >> "$result"
+printf 'parent-id\t%%s\n' %q >> "$result"
+	`, sidecar, media, strconv.Quote(media), strconv.Quote(symlinkMedia), strconv.Quote(outsideMedia), strconv.Quote(filepath.Join(drop, "..", filepath.Base(outsideMedia)))))
 
 	d := NewYtDlpDownloader(ytdlp, "ffmpeg")
 	src := Source{ID: "youtube:current", AcquisitionID: "acq-current", Kind: YouTube, URL: "https://youtube.com/watch?v=current-id"}
@@ -387,6 +385,39 @@ printf '%%s\n' %q >> "$result"
 	}
 	if _, stamped := readSidecar(t, sidecar)[filler.SidecarLoomarrKey()]; !stamped {
 		t.Fatal("in-directory sidecar was not stamped")
+	}
+}
+
+func TestYtDlpDownloader_StrictResultRecords(t *testing.T) {
+	pathOnlyDrop := t.TempDir()
+	pathOnlyMedia := filepath.Join(pathOnlyDrop, "path-only.mp4")
+	if err := os.WriteFile(pathOnlyMedia, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pathOnly := testkit.Executable(t, "yt-dlp-path-only", fmt.Sprintf(`#!/bin/sh
+while test "$1" != "--print-to-file"; do shift; done
+printf '%%s\n' %q >> "$3"
+`, strconv.Quote(pathOnlyMedia)))
+	if _, err := NewYtDlpDownloader(pathOnly, "ffmpeg").Download(context.Background(), Source{Kind: YouTube, URL: "https://youtube.com/watch?v=path-only"}, pathOnlyDrop); err == nil || !strings.Contains(err.Error(), "malformed yt-dlp result record") {
+		t.Fatalf("path-only result error = %v, want strict record rejection", err)
+	}
+
+	currentDrop := t.TempDir()
+	currentMedia := filepath.Join(currentDrop, "current.mp4")
+	currentSidecar := filepath.Join(currentDrop, "current.info.json")
+	if err := os.WriteFile(currentMedia, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(currentSidecar, []byte(`{"title":"current"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	current := testkit.Executable(t, "yt-dlp-current-record", fmt.Sprintf(`#!/bin/sh
+while test "$1" != "--print-to-file"; do shift; done
+printf 'current-id\t%%s\n' %q >> "$3"
+`, strconv.Quote(currentMedia)))
+	result, err := NewYtDlpDownloader(current, "ffmpeg").Download(context.Background(), Source{ID: "youtube:current", AcquisitionID: "acq-current", Kind: YouTube, URL: "https://youtube.com/watch?v=current-id"}, currentDrop)
+	if err != nil || result.Fetched != 1 || len(result.Outputs) != 1 || result.Outputs[0].ArchiveID != "current-id" {
+		t.Fatalf("current result = %+v, err = %v; want one strict current-format output", result, err)
 	}
 }
 
