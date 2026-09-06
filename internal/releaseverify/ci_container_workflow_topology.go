@@ -20,6 +20,8 @@ func workflowTopologyAuthorityEntries() map[string]workflowTopologyAuthority {
 		"ci-apple-mobile.yml":         {jobs: map[string]int{"run": 9}},
 		"ci-apple-tv.yml":             {jobs: map[string]int{"run": 9}},
 
+		"ci-expo-android-mobile.yml": {jobs: map[string]int{"run": 8}},
+
 		"ci-apple-cache-validation.yml": {jobs: map[string]int{"producer": 7, "consumer": 7}},
 
 		"ci-clients.yml":             {jobs: map[string]int{"run": 7}},
@@ -36,7 +38,7 @@ func workflowTopologyAuthorityEntries() map[string]workflowTopologyAuthority {
 		"ci.yml": {jobs: map[string]int{
 			"changes": 3, "agent-harness-macos": 0, "release-candidate-scope": 1, "full-manual-scope": 1,
 			"ci-policy": 6, "rust-contracts": 0, "go-contracts": 0, "image-certification": 0, "go": 0,
-			"store-postgres": 0, "frontend": 0, "clients": 0, "apple-mobile": 0, "apple-tv": 0, "apple-cache-validation": 0,
+			"store-postgres": 0, "frontend": 0, "clients": 0, "apple-mobile": 0, "apple-tv": 0, "apple-cache-validation": 0, "expo-android-mobile": 0,
 			"playwright": 0, "tuner": 0, "image": 0, "docs": 0, "android": 0, "ci-ok": 3,
 		}},
 		"image-benchmark.yml":  {jobs: map[string]int{"benchmark": 6}},
@@ -64,6 +66,8 @@ func reusableWorkflowCallerAuthorityEntries() map[string]reusableWorkflowCallerA
 		"clients":             {name: "Shared clients — lint + test + browser/iOS/Android/TV bundles", condition: "needs.changes.outputs.impact_clients == 'true'"},
 		"apple-mobile":        {name: "Apple mobile — native build + launch", condition: "needs.changes.outputs.lane != 'pr-fast' && needs.changes.outputs.impact_apple_mobile == 'true'"},
 		"apple-tv":            {name: "Apple TV — native build + launch", condition: "needs.changes.outputs.lane != 'pr-fast' && needs.changes.outputs.impact_apple_tv == 'true'"},
+
+		"expo-android-mobile": {name: "Expo Android mobile — native build", condition: "needs.changes.outputs.impact_expo_android_mobile == 'true'"},
 
 		"apple-cache-validation": {name: "Apple compilation cache — supported-toolchain validation", condition: "github.event_name == 'workflow_dispatch' && inputs.scope == 'apple-cache-validation'"},
 

@@ -218,6 +218,10 @@ func workflowRunAuthorityEntries() map[string]workflowAuthority {
 				},
 			}),
 		}),
+		"ci-expo-android-mobile.yml": standardRunWorkflow(map[string]workflowStepAuthority{
+			"make fe-install": exactWorkflowStep(5, "", workflowStepAuthority{targets: []string{"fe-install"}, allowsAcquisition: true}),
+			"make client-android-debug CLIENT_APP=mobile": exactWorkflowStep(6, "Generate and build the standalone mobile APK", workflowStepAuthority{targets: []string{"client-android-debug"}}),
+		}),
 		"ci-apple-cache-validation.yml": {
 			environment: standardWorkflowEnvironment(),
 			permissions: standardWorkflowPermissions(),
