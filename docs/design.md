@@ -9091,7 +9091,12 @@ All recurring background work runs under **one scheduler** (`internal/scheduler`
   Apple mobile and Apple TV are separate required jobs with app-specific native build, install, and
   launch commands, and each consumes its dedicated decision. Splitting a matrix must preserve
   compatible cache-key identities and must preserve each native result as a separate aggregate
-  dependency. Pull requests are the fast-feedback lane: they retain affected policy, repository,
+  dependency. Expo Android mobile is an independently selected required job consuming only
+  `impact_expo_android_mobile`. Its reusable workflow generates and assembles only `CLIENT_APP=mobile`
+  through the serialized native Make target, retains the standalone debug APK for seven days, and
+  feeds the required aggregate. This build gate grants no mobile release or distribution authority;
+  Android TV keeps its independently governed build and release path.
+  Pull requests are the fast-feedback lane: they retain affected policy, repository,
   static-analysis, compile/type, unit, documentation, shared-client, and Android feedback, but do
   not repeat race-policy shards, Postgres conformance, Playwright, release-image builds, runtime
   image certification, or scarce macOS jobs. The required merge queue admits at most two cumulative

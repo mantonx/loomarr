@@ -51,8 +51,10 @@ func TestVerifyCIAggregate(t *testing.T) {
     runs-on: ubuntu-latest
   docs:
     runs-on: ubuntu-latest
+  expo-android-mobile:
+    runs-on: ubuntu-latest
   ci-ok:
-    needs: [changes, docs]
+    needs: [changes, docs, expo-android-mobile]
     runs-on: ubuntu-latest
 `
 	path := filepath.Join(t.TempDir(), "ci.yml")
@@ -69,6 +71,14 @@ func TestVerifyCIAggregate(t *testing.T) {
 	}
 	if err := VerifyCIAggregate(path); err == nil {
 		t.Fatal("VerifyCIAggregate accepted a required check that omitted docs")
+	}
+
+	withoutExpoAndroidMobile := strings.Replace(workflow, ", expo-android-mobile", "", 1)
+	if err := os.WriteFile(path, []byte(withoutExpoAndroidMobile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCIAggregate(path); err == nil {
+		t.Fatal("VerifyCIAggregate accepted an existing Expo Android mobile job omitted from the aggregate")
 	}
 
 	unknownJob := strings.Replace(workflow, "changes, docs", "changes, docs, phantom", 1)
@@ -100,6 +110,7 @@ func TestVerifyCIImpactActivation(t *testing.T) {
       impact_tuner: ${{ steps.impact.outputs.tuner }}
       impact_apple_mobile: ${{ steps.impact.outputs.apple_mobile }}
       impact_apple_tv: ${{ steps.impact.outputs.apple_tv }}
+      impact_expo_android_mobile: ${{ steps.impact.outputs.expo_android_mobile }}
   ci-policy:
     needs: changes
     if: needs.changes.outputs.impact_policy == 'true'
@@ -149,6 +160,11 @@ func TestVerifyCIImpactActivation(t *testing.T) {
     if: needs.changes.outputs.lane != 'pr-fast' && needs.changes.outputs.impact_apple_tv == 'true'
     steps:
       - run: make client-apple-simulator CLIENT_APP=tv
+  expo-android-mobile:
+    needs: changes
+    if: needs.changes.outputs.impact_expo_android_mobile == 'true'
+    steps:
+      - run: make client-android-debug CLIENT_APP=mobile
 `
 	path := filepath.Join(t.TempDir(), "ci.yml")
 	if err := os.WriteFile(path, []byte(workflow), 0o600); err != nil {
@@ -210,8 +226,12 @@ func TestVerifyCIImpactActivation(t *testing.T) {
 			"needs.changes.outputs.impact_apple_tv == 'true' || needs.changes.outputs.release_candidate == 'true'",
 			1,
 		),
-		"Apple mobile runs tvOS": strings.Replace(workflow, "CLIENT_APP=mobile", "CLIENT_APP=tv", 1),
-		"Apple tv runs mobile":   strings.Replace(workflow, "CLIENT_APP=tv", "CLIENT_APP=mobile", 1),
+		"Apple mobile runs tvOS":              strings.Replace(workflow, "CLIENT_APP=mobile", "CLIENT_APP=tv", 1),
+		"Apple tv runs mobile":                strings.Replace(workflow, "CLIENT_APP=tv", "CLIENT_APP=mobile", 1),
+		"broad Expo Android mobile selector":  strings.Replace(workflow, "needs.changes.outputs.impact_expo_android_mobile == 'true'", "needs.changes.outputs.clients == 'true'", 1),
+		"detached Expo Android mobile output": strings.Replace(workflow, "steps.impact.outputs.expo_android_mobile", "steps.filter.outputs.clients", 1),
+		"Expo Android mobile runs TV":         strings.Replace(workflow, "client-android-debug CLIENT_APP=mobile", "client-android-debug CLIENT_APP=tv", 1),
+		"restored Expo Android matrix":        strings.Replace(workflow, "  expo-android-mobile:\n    needs: changes", "  expo-android-mobile:\n    strategy:\n      matrix: {client: [mobile, tv]}\n    needs: changes", 1),
 		"restored Apple matrix": strings.Replace(
 			workflow,
 			"  apple-mobile:\n    needs: changes",

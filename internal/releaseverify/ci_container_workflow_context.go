@@ -45,6 +45,8 @@ func workflowJobContextAuthorityEntries() map[workflowJobContextKey]workflowJobC
 		{workflow: "ci-apple-mobile.yml", job: "run"}:             {name: "Apple mobile — native build + launch", runsOn: "xcode-27", timeoutMinutes: 75},
 		{workflow: "ci-apple-tv.yml", job: "run"}:                 {name: "Apple TV — native build + launch", runsOn: "xcode-27", timeoutMinutes: 60},
 
+		{workflow: "ci-expo-android-mobile.yml", job: "run"}: {name: "Expo Android mobile — native build", runsOn: "ubuntu-latest"},
+
 		{workflow: "ci-apple-cache-validation.yml", job: "producer"}: {name: "Apple compilation cache — produce on Xcode 27", runsOn: "xcode-27", timeoutMinutes: 75},
 		{workflow: "ci-apple-cache-validation.yml", job: "consumer"}: {name: "Apple compilation cache — consume on distinct Xcode 27 runner", runsOn: "xcode-27", needsList: []string{"producer"}, timeoutMinutes: 75},
 
@@ -66,7 +68,7 @@ func workflowJobContextAuthorityEntries() map[workflowJobContextKey]workflowJobC
 		{workflow: "ci.yml", job: "changes"}:            {name: "What changed", runsOn: "ubuntu-latest"},
 		{workflow: "ci.yml", job: "ci-ok"}: {
 			name: "CI", runsOn: "ubuntu-latest",
-			needsList: []string{"changes", "release-candidate-scope", "full-manual-scope", "ci-policy", "agent-harness-macos", "rust-contracts", "go-contracts", "image-certification", "go", "store-postgres", "frontend", "clients", "apple-mobile", "apple-tv", "apple-cache-validation", "playwright", "tuner", "image", "docs", "android"},
+			needsList: []string{"changes", "release-candidate-scope", "full-manual-scope", "ci-policy", "agent-harness-macos", "rust-contracts", "go-contracts", "image-certification", "go", "store-postgres", "frontend", "clients", "apple-mobile", "apple-tv", "apple-cache-validation", "expo-android-mobile", "playwright", "tuner", "image", "docs", "android"},
 		},
 		{workflow: "image-benchmark.yml", job: "benchmark"}: {
 			name: "AVIF ladders (${{ matrix.platform }})", runsOn: "${{ matrix.runner }}", timeoutMinutes: 30,

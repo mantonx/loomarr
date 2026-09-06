@@ -501,6 +501,11 @@ classify() {
       select_gate apple_mobile
       select_gate policy
       ;;
+    .github/workflows/ci-expo-android-mobile.yml)
+      known=true
+      select_gate expo_android_mobile
+      select_gate policy
+      ;;
     .github/workflows/ci-apple-tv.yml)
       known=true
       select_gate apple_tv

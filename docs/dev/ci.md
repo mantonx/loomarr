@@ -390,8 +390,10 @@ native platforms because those packages are transitive inputs to both. The share
 also selects Web, Tuner, Image, and Android TV because its browser and native adapters share one
 transport contract. Browser-only client-proof and Turborepo contract changes select the shared
 JavaScript gate without spending a native runner.
-Apple mobile and Apple TV are active. Expo Android mobile and Expo Android TV remain classifier
-decisions until each has an independently required job and current-main evidence.
+Apple mobile, Apple TV, and Expo Android mobile are active. The mobile Android job consumes only
+`impact_expo_android_mobile`, builds `CLIENT_APP=mobile`, and retains its standalone debug APK for
+seven days. Expo Android TV remains a classifier decision until its independently required job and
+current-main evidence exist.
 
 ## Per-run measurements
 

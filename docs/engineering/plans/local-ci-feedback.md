@@ -84,8 +84,9 @@ and Android. The work changes when assurance runs, not whether it exists.
    then profile genuinely slow packages after orchestration waste is gone.
 9. Split the broad client family into shared JavaScript, iOS, tvOS, Expo Android mobile, and Expo
    Android TV decisions. App-local paths select one app on two platforms; shared-package and API
-   contract paths select every transitive native consumer. Keep all five observational until each
-   required native job and the protected final boundary are explicit.
+   contract paths select every transitive native consumer. Keep each decision observational until
+   its required native job and protected final boundary are explicit. Expo Android mobile is now
+   active as a separate required gate; Expo Android TV remains observational.
 10. Before any new release, run and record release-relevant certification on the maintainer's local
     machine. Protected CI remains required for host-incompatible native evidence and current-main
     provenance; neither local nor remote evidence substitutes for the other.

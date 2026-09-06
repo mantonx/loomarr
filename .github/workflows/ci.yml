@@ -397,6 +397,13 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.scope == 'apple-cache-validation'
     uses: ./.github/workflows/ci-apple-cache-validation.yml
 
+  # Android mobile is independently selected; TV retains its own native and release path.
+  expo-android-mobile:
+    name: Expo Android mobile — native build
+    needs: changes
+    if: needs.changes.outputs.impact_expo_android_mobile == 'true'
+    uses: ./.github/workflows/ci-expo-android-mobile.yml
+
   playwright:
     name: Playwright — visual + a11y + e2e
     needs: changes
@@ -436,7 +443,7 @@ jobs:
   ci-ok:
     name: CI
     if: always()
-    needs: [changes, release-candidate-scope, full-manual-scope, ci-policy, agent-harness-macos, rust-contracts, go-contracts, image-certification, go, store-postgres, frontend, clients, apple-mobile, apple-tv, apple-cache-validation, playwright, tuner, image, docs, android]
+    needs: [changes, release-candidate-scope, full-manual-scope, ci-policy, agent-harness-macos, rust-contracts, go-contracts, image-certification, go, store-postgres, frontend, clients, apple-mobile, apple-tv, apple-cache-validation, expo-android-mobile, playwright, tuner, image, docs, android]
     runs-on: ubuntu-latest
     permissions:
       actions: read
