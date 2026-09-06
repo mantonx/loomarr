@@ -2,6 +2,7 @@ package fillersafetycert
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -109,6 +110,29 @@ func TestAuthorityRejectsNonIndependentModelReviewer(t *testing.T) {
 	}
 }
 
+func TestAuthorityRequiresNoiseAndPlacementCoverage(t *testing.T) {
+	t.Parallel()
+	for _, required := range []string{SliceNoise, SlicePlacement} {
+		t.Run(required, func(t *testing.T) {
+			fixture := newCertificationFixture(t)
+			for index := range fixture.authority.Cases {
+				item := &fixture.authority.Cases[index]
+				if item.Label != LabelPositive {
+					continue
+				}
+				item.Slices = slices.DeleteFunc(item.Slices, func(slice string) bool { return slice == required })
+				if len(item.Slices) == 0 {
+					item.Slices = []string{SliceQuietSpeech}
+				}
+			}
+			fixture.rewriteAuthority(t)
+			if _, _, err := Publish(fixture.config()); err == nil || !strings.Contains(err.Error(), "coverage") {
+				t.Fatalf("err=%v", err)
+			}
+		})
+	}
+}
+
 func TestManifestRejectsRouteDriftAndHistoricalUnattributedEvidence(t *testing.T) {
 	t.Parallel()
 	t.Run("route schema", func(t *testing.T) {
@@ -129,6 +153,57 @@ func TestManifestRejectsRouteDriftAndHistoricalUnattributedEvidence(t *testing.T
 			t.Fatalf("err=%v", err)
 		}
 	})
+}
+
+func TestManifestBindsCandidateCoverageAndAudioDerivativeDuration(t *testing.T) {
+	t.Parallel()
+	t.Run("candidate outside source", func(t *testing.T) {
+		fixture := newCertificationFixture(t)
+		run := &fixture.manifest.Runs[0]
+		run.Events[1].Proposal.Candidates[0].EndMS = fixture.authority.Cases[0].DurationMS + 1
+		refreshRunTerminalEvidence(t, run)
+		fixture.rewriteManifest(t)
+		if _, _, err := Publish(fixture.config()); err == nil || !strings.Contains(err.Error(), "outside the source") {
+			t.Fatalf("err=%v", err)
+		}
+	})
+	t.Run("wrong in-source audio duration", func(t *testing.T) {
+		fixture := newCertificationFixture(t)
+		fixture.authority.Cases[0].DurationMS = 5_000
+		fixture.rewriteAuthority(t)
+		run := &fixture.manifest.Runs[0]
+		run.Events[1].Proposal.Candidates[0].StartMS = 200
+		run.Events[1].Proposal.Candidates[0].EndMS = 400
+		refreshRunTerminalEvidence(t, run)
+		fixture.rewriteManifest(t)
+		if _, _, err := Publish(fixture.config()); err == nil || !strings.Contains(err.Error(), "audio reservation") {
+			t.Fatalf("err=%v", err)
+		}
+	})
+	for _, test := range []struct {
+		name             string
+		startMS, endMS   int64
+		derivativeLength int64
+	}{
+		{name: "clipped beginning", startMS: 0, endMS: 250, derivativeLength: 1_250},
+		{name: "middle", startMS: 2_000, endMS: 2_500, derivativeLength: 2_500},
+		{name: "clipped end", startMS: 4_750, endMS: 5_000, derivativeLength: 1_250},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newCertificationFixture(t)
+			fixture.authority.Cases[0].DurationMS = 5_000
+			fixture.rewriteAuthority(t)
+			run := &fixture.manifest.Runs[0]
+			run.Events[1].Proposal.Candidates[0].StartMS = test.startMS
+			run.Events[1].Proposal.Candidates[0].EndMS = test.endMS
+			run.Events[2].Reserve.DerivativeDurationMS = test.derivativeLength
+			refreshRunTerminalEvidence(t, run)
+			fixture.rewriteManifest(t)
+			if _, _, err := Publish(fixture.config()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
 }
 
 func TestPrivateInputsRejectGroupReadableFiles(t *testing.T) {

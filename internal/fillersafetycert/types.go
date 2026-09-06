@@ -35,6 +35,8 @@ const (
 
 	SliceQuietSpeech           = "quiet_speech"
 	SliceMusicOverlap          = "music_overlap"
+	SliceNoise                 = "noise"
+	SlicePlacement             = "placement"
 	SliceAccentLocale          = "accent_locale"
 	SliceSpeedPitch            = "speed_pitch"
 	SliceCodecTransform        = "codec_transform"
@@ -179,6 +181,7 @@ type CaseReport struct {
 	Alias                     string `json:"alias"`
 	Label                     string `json:"label"`
 	Outcome                   string `json:"outcome"`
+	FalsePositive             bool   `json:"falsePositive"`
 	PositiveIntervals         int    `json:"positiveIntervals,omitempty"`
 	DetectedPositiveIntervals int    `json:"detectedPositiveIntervals,omitempty"`
 }

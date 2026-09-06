@@ -179,6 +179,13 @@ func refreshTerminal(t *testing.T, run *ResultRun) {
 	run.TerminalEventID, run.TerminalSHA256 = terminal.ID, digest
 }
 
+func refreshRunTerminalEvidence(t *testing.T, run *ResultRun) {
+	t.Helper()
+	run.Events[len(run.Events)-1].Terminal.Evidence.Candidates = run.Events[1].Proposal.Candidates
+	run.Events[len(run.Events)-1].Terminal.Result = fillersafety.Reduce(run.Events[len(run.Events)-1].Terminal.Evidence)
+	refreshTerminal(t, run)
+}
+
 func writeFixtureJSON(t *testing.T, path string, value any) {
 	t.Helper()
 	raw, err := json.MarshalIndent(value, "", "  ")

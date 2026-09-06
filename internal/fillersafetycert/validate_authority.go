@@ -181,7 +181,7 @@ func validPositiveIntervals(intervals []PositiveInterval, durationMS int64) bool
 }
 
 func requiredPositiveSlices() []string {
-	return []string{SliceAccentLocale, SliceClipping, SliceCodecTransform, SliceDerivativeCompilation, SliceMusicOverlap, SlicePartialToken, SlicePhoneticConfusable, SliceQuietSpeech, SliceSpeedPitch}
+	return []string{SliceAccentLocale, SliceClipping, SliceCodecTransform, SliceDerivativeCompilation, SliceMusicOverlap, SliceNoise, SlicePartialToken, SlicePhoneticConfusable, SlicePlacement, SliceQuietSpeech, SliceSpeedPitch}
 }
 
 func requiredCleanSlices() []string {

@@ -53,11 +53,14 @@ func score(loaded loadedCertification, scoredAt time.Time) Report {
 		case LabelClean:
 			report.CleanSources++
 			falsePositive := cleanAudioFalsePositive(terminal.Evidence)
+			result.FalsePositive = falsePositive
+			if falsePositive {
+				report.CleanFalsePositiveSources++
+			}
 			if hold {
 				report.CoverageHolds++
 				result.Outcome = OutcomeCoverageHold
 			} else if falsePositive {
-				report.CleanFalsePositiveSources++
 				result.Outcome = OutcomeFalsePositive
 			} else {
 				result.Outcome = OutcomeClean
@@ -69,7 +72,7 @@ func score(loaded loadedCertification, scoredAt time.Time) Report {
 					cleanBuckets[slice] = bucket
 				}
 				bucket.sources++
-				if falsePositive && !hold {
+				if falsePositive {
 					bucket.falsePositives++
 				}
 			}

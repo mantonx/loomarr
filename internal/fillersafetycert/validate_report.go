@@ -34,6 +34,9 @@ func validateReport(report Report) error {
 		previousAlias = item.Alias
 		switch item.Label {
 		case LabelPositive:
+			if item.FalsePositive {
+				return fmt.Errorf("positive case contains a false positive")
+			}
 			positive++
 			if item.PositiveIntervals <= 0 || item.DetectedPositiveIntervals > item.PositiveIntervals {
 				return fmt.Errorf("positive case interval counts are invalid")
@@ -58,12 +61,20 @@ func validateReport(report Report) error {
 			}
 			switch item.Outcome {
 			case OutcomeClean:
+				if item.FalsePositive {
+					return fmt.Errorf("clean case outcome omits false positive")
+				}
 			case OutcomeFalsePositive:
-				falsePositive++
+				if !item.FalsePositive {
+					return fmt.Errorf("false positive outcome lacks detection")
+				}
 			case OutcomeCoverageHold:
 				holds++
 			default:
 				return fmt.Errorf("clean case outcome is invalid")
+			}
+			if item.FalsePositive {
+				falsePositive++
 			}
 		default:
 			return fmt.Errorf("case label is invalid")

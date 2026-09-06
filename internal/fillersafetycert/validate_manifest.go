@@ -96,6 +96,11 @@ func validateRunSemantics(authority Authority, item AuthorityCase, events []fill
 }
 
 func validateHostedEvidence(authority Authority, item AuthorityCase, candidates []fillersafety.Candidate, evidence fillersafety.Evidence, events []fillersafety.LedgerEvent) error {
+	for _, candidate := range candidates {
+		if candidate.StartMS < 0 || candidate.EndMS <= candidate.StartMS || candidate.EndMS > item.DurationMS {
+			return fmt.Errorf("candidate interval is outside the source duration")
+		}
+	}
 	settlements := map[string]fillersafety.InferenceSettled{}
 	for _, event := range events {
 		if event.Settle != nil {
@@ -120,8 +125,10 @@ func validateHostedEvidence(authority Authority, item AuthorityCase, candidates 
 		}
 		if slices.Equal(reservation.Modalities, authority.AudioRoute.Modalities) {
 			assessment, exists := assessments[reservation.CandidateID]
+			candidate, candidateExists := findCandidate(candidates, reservation.CandidateID)
 			if !exists || !routeReservationMatches(authority.AudioRoute, reservation) ||
-				reservation.DerivativeDurationMS > item.DurationMS || reservation.DerivativePixels != 0 {
+				!candidateExists || reservation.DerivativeDurationMS != candidateAudioDuration(item.DurationMS, candidate) ||
+				reservation.DerivativePixels != 0 {
 				return fmt.Errorf("audio reservation is not bound to a candidate and route")
 			}
 			audioCounts[reservation.CandidateID]++
@@ -161,6 +168,28 @@ func validateHostedEvidence(authority Authority, item AuthorityCase, candidates 
 		return fmt.Errorf("complete-video corroboration coverage is invalid")
 	}
 	return nil
+}
+
+func findCandidate(candidates []fillersafety.Candidate, id string) (fillersafety.Candidate, bool) {
+	for _, candidate := range candidates {
+		if candidate.ID == id {
+			return candidate, true
+		}
+	}
+	return fillersafety.Candidate{}, false
+}
+
+func candidateAudioDuration(sourceDurationMS int64, candidate fillersafety.Candidate) int64 {
+	const contextMS int64 = 1_000
+	startMS := int64(0)
+	if candidate.StartMS > contextMS {
+		startMS = candidate.StartMS - contextMS
+	}
+	endMS := sourceDurationMS
+	if candidate.EndMS <= sourceDurationMS-contextMS {
+		endMS = candidate.EndMS + contextMS
+	}
+	return endMS - startMS
 }
 
 func routeReservationMatches(route RouteAuthority, reservation fillersafety.InferenceReserved) bool {
