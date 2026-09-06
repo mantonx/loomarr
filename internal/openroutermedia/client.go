@@ -16,24 +16,25 @@ const maxResponseBytes = 256 << 10
 
 // Config describes one already-authorized structured-media request.
 type Config struct {
-	Authority        RouteAuthority
-	APIKey           string
-	Model            string
-	ResolvedModel    string
-	UpstreamProvider string
-	ProviderSlug     string
-	SchemaName       string
-	Schema           map[string]any
-	SystemPrompt     string
-	Content          string
-	Images           []string
-	Audios           []Audio
-	Videos           []Video
-	MaxTokens        int
-	MaxChargeNanoUSD int64
-	DisableReasoning bool
-	Title            string
-	Reserve          func(string) error
+	Authority          RouteAuthority
+	APIKey             string
+	Model              string
+	ResolvedModel      string
+	UpstreamProvider   string
+	ProviderSlug       string
+	SchemaName         string
+	Schema             map[string]any
+	SystemPrompt       string
+	Content            string
+	Images             []string
+	Audios             []Audio
+	Videos             []Video
+	MaxTokens          int
+	ReservationNanoUSD int64
+	DisableReasoning   bool
+	EnableReasoning    bool
+	Title              string
+	Reserve            func(string) error
 }
 
 // Audio is one base64-encoded audio payload with an explicit provider format.
@@ -51,17 +52,18 @@ type Video struct {
 // Result retains the exact request, response, route, usage, and settlement
 // authority needed by the caller's durable ledger.
 type Result struct {
-	GenerationID     string
-	RawResponse      []byte
-	RequestSHA256    string
-	ResponseSHA256   string
-	PromptTokens     int64
-	CompletionTokens int64
-	ChargedAmountUSD string
-	ChargedNanoUSD   int64
-	ChargeKnown      bool
-	StructuredOutput string
-	ReasoningBytes   int
+	GenerationID           string
+	RawResponse            []byte
+	RequestSHA256          string
+	ResponseSHA256         string
+	PromptTokens           int64
+	CompletionTokens       int64
+	ChargedAmountUSD       string
+	ChargedNanoUSD         int64
+	ChargeKnown            bool
+	OverReservationNanoUSD int64
+	StructuredOutput       string
+	ReasoningBytes         int
 }
 
 // Call performs one fallback-disabled request after the caller durably
@@ -77,6 +79,9 @@ func Call(ctx context.Context, client *http.Client, baseURL string, config Confi
 	result := Result{RequestSHA256: hashBytes(body)}
 	if config.Reserve == nil {
 		return result, fmt.Errorf("OpenRouter structured call requires a durable reservation callback")
+	}
+	if config.ReservationNanoUSD <= 0 {
+		return result, fmt.Errorf("OpenRouter structured call requires a positive accounting reservation")
 	}
 	if err := config.Reserve(result.RequestSHA256); err != nil {
 		return result, err
@@ -102,7 +107,7 @@ func Call(ctx context.Context, client *http.Client, baseURL string, config Confi
 	result.ResponseSHA256 = hashBytes(raw)
 	result.RawResponse = bytes.Clone(raw)
 	if response.StatusCode != http.StatusOK {
-		return result, newStatusError(response.StatusCode)
+		return settleNonSuccessResponse(result, raw, config, response.StatusCode)
 	}
 	return settleResponse(result, raw, config)
 }

@@ -2,6 +2,7 @@ package fillerreview
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/loomarr/loomarr/internal/fillereval"
@@ -35,6 +36,9 @@ func buildTemporalStructurePairSummaries(cases []TemporalStructureCaseComparison
 				if first.Prediction.Unit == second.Prediction.Unit && (first.Prediction.Unit != fillereval.UnitStandalone || first.Prediction.Role == second.Prediction.Role) {
 					summary.ExactLabelAgreement++
 				}
+				if slices.Equal(first.Prediction.Segments, second.Prediction.Segments) {
+					summary.ExactSegmentPlanAgreement++
+				}
 			}
 			summaries = append(summaries, summary)
 		}
@@ -60,6 +64,15 @@ func temporalStructureDiagnosticReasons(item TemporalStructureCaseComparison) []
 		}
 		if assessment.RoleComparable && !assessment.RoleCorrect {
 			reasons["role_error"] = struct{}{}
+		}
+		if assessment.UnderSplits > 0 {
+			reasons["under_split"] = struct{}{}
+		}
+		if assessment.OverSplits > 0 {
+			reasons["over_split"] = struct{}{}
+		}
+		if assessment.SegmentRoleCorrect != assessment.SegmentRoleTargets {
+			reasons["segment_role_error"] = struct{}{}
 		}
 		for _, distance := range assessment.BoundaryDistances {
 			if !distance.Within5000MS {

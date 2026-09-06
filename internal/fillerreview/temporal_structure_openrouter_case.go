@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/loomarr/loomarr/internal/fillereval"
+	"github.com/loomarr/loomarr/internal/fillerstructure"
 	"github.com/loomarr/loomarr/internal/openroutermedia"
 )
 
@@ -39,20 +40,21 @@ func assessOpenRouterTemporalStructureCase(ctx context.Context, client *http.Cli
 		SchemaName: temporalStructureOpenRouterSchemaName, Schema: temporalStructureOpenRouterSchema(item.Video.DurationMS),
 		SystemPrompt: temporalStructureOpenRouterSystemPrompt, Content: temporalStructureOpenRouterContent(item.Video.DurationMS),
 		Videos:    []openroutermedia.Video{{MIMEType: "video/mp4", Base64: base64.StdEncoding.EncodeToString(video)}},
-		MaxTokens: temporalStructureOpenRouterMaxTokens, MaxChargeNanoUSD: config.MaxChargeNanoUSD,
+		MaxTokens: temporalStructureOpenRouterMaxTokens, ReservationNanoUSD: config.ReservationNanoUSD,
 		DisableReasoning: config.ReasoningMode == TemporalStructureOpenRouterReasoningDisabled,
+		EnableReasoning:  config.ReasoningMode == TemporalStructureOpenRouterReasoningRequired,
 		Title:            temporalStructureOpenRouterTitle,
 		Reserve: func(requestSHA string) error {
 			spent, spendErr := temporalStructureOpenRouterCheckpointSpend(*checkpoint)
 			if spendErr != nil {
 				return spendErr
 			}
-			if len(checkpoint.Attempts) >= config.MaxRequests || spent > config.MaxSpendNanoUSD-config.MaxChargeNanoUSD {
+			if len(checkpoint.Attempts) >= config.MaxRequests || spent > config.MaxSpendNanoUSD-config.ReservationNanoUSD {
 				return fmt.Errorf("%w before structure alias %q", errTemporalOpenRouterBudget, item.Alias)
 			}
 			checkpoint.Attempts = append(checkpoint.Attempts, TemporalStructureOpenRouterAttempt{
 				Alias: item.Alias, RequestedAt: now().UTC(), RequestSHA256: requestSHA,
-				State: temporalOpenRouterAttemptReserved, ReservedNanoUSD: config.MaxChargeNanoUSD,
+				State: temporalOpenRouterAttemptReserved, ReservedNanoUSD: config.ReservationNanoUSD,
 			})
 			return persistTemporalStructureOpenRouterCheckpoint(config.CheckpointDir, *checkpoint, selected)
 		},
@@ -71,10 +73,11 @@ func assessOpenRouterTemporalStructureCase(ctx context.Context, client *http.Cli
 	}
 	var wire temporalStructureOpenRouterWire
 	if callErr == nil {
-		if decodeErr := decodeStrictReviewJSON([]byte(callResult.StructuredOutput), &wire); decodeErr != nil {
+		parsed, _, decodeErr := fillerstructure.ParseDirectVideoResponse(callResult.StructuredOutput, item.Video.DurationMS)
+		if decodeErr != nil {
 			callErr = fmt.Errorf("structure assessment JSON is invalid: %w", decodeErr)
 		} else {
-			normalizeTemporalStructureOpenRouterWire(&wire)
+			wire = parsed
 		}
 	}
 	var failure *temporalCallError
@@ -97,7 +100,10 @@ func assessOpenRouterTemporalStructureCase(ctx context.Context, client *http.Cli
 	if callResult.ChargeKnown {
 		attempt.ChargedAmountUSD, attempt.ChargedNanoUSD = callResult.ChargedAmountUSD, callResult.ChargedNanoUSD
 	}
-	if failure == nil {
+	if callResult.OverReservationNanoUSD > 0 {
+		attempt.State = temporalOpenRouterAttemptOverReservation
+		attempt.OperationalFailure = fillereval.TemporalFailureProvider
+	} else if failure == nil {
 		attempt.State = temporalOpenRouterAttemptAccepted
 	} else {
 		attempt.OperationalFailure = failure.code

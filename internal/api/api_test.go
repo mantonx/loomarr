@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/loomarr/loomarr/internal/api"
+	"github.com/loomarr/loomarr/internal/filler"
 	"github.com/loomarr/loomarr/internal/fillerdecision"
 	"github.com/loomarr/loomarr/internal/store"
 )
@@ -152,12 +153,17 @@ func newServer(t *testing.T) (*httptest.Server, store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rights, err := filler.NewFillerRightsRegistry(st)
+	if err != nil {
+		t.Fatal(err)
+	}
 	h := api.Router(slog.New(slog.DiscardHandler), api.Options{
 		Store:           st,
 		Auth:            testAuthorizer{},
 		Log:             slog.New(slog.DiscardHandler),
 		BackupSQLite:    store.SQLiteBackuper(st),
 		FillerDecisions: decisions,
+		FillerRights:    rights,
 	})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)

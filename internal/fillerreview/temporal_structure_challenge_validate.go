@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/loomarr/loomarr/internal/fillereval"
+	"github.com/loomarr/loomarr/internal/fillerstructuremedia"
 )
 
 // LoadTemporalStructureChallenge re-establishes the complete public/private
@@ -63,6 +65,13 @@ func validateTemporalStructureChallenge(publicRoot string, manifest TemporalStru
 	if requireCurrentFields && (authority.PlanContractVersion != TemporalStructureHoldoutContractVersion || !reviewSHA256(authority.PlanReceiptSHA256)) || !requireCurrentFields && (authority.PlanContractVersion != "" || authority.PlanReceiptSHA256 != "") {
 		return fmt.Errorf("private challenge authority has invalid plan binding")
 	}
+	if requireCurrentFields {
+		if !reflect.DeepEqual(authority.AssessmentMediaProfile, fillerstructuremedia.CanonicalProfile()) || authority.AssessmentMediaProfile.SHA256 != manifest.AssessmentMediaProfileSHA256 {
+			return fmt.Errorf("private challenge assessment media profile is invalid")
+		}
+	} else if !reflect.DeepEqual(authority.AssessmentMediaProfile, fillerstructuremedia.Profile{}) {
+		return fmt.Errorf("archived private challenge has unexpected assessment media profile")
+	}
 	for name, identity := range map[string]TemporalTruthToolIdentity{"ffmpeg": authority.MediaTools.FFmpeg, "ffprobe": authority.MediaTools.FFprobe} {
 		if strings.TrimSpace(identity.Path) == "" || strings.TrimSpace(identity.Version) == "" || !reviewSHA256(identity.BinarySHA256) {
 			return fmt.Errorf("private challenge %s identity is invalid", name)
@@ -94,7 +103,7 @@ func validateTemporalStructureChallenge(publicRoot string, manifest TemporalStru
 }
 
 func validateTemporalStructureChallengePublic(publicRoot string, manifest TemporalStructureChallengeManifest, expectedCases int, contractVersion string, requireCurrentFields bool) (map[string]TemporalStructureChallengePublicCase, error) {
-	if expectedCases <= 0 || manifest.SchemaVersion != TemporalStructureChallengeSchemaVersion || manifest.ContractVersion != contractVersion || manifest.ChallengeID == "" || manifest.GeneratedAt.IsZero() || manifest.ProductionAdmissionAllowed || len(manifest.Cases) != expectedCases {
+	if expectedCases <= 0 || manifest.SchemaVersion != TemporalStructureChallengeSchemaVersion || manifest.ContractVersion != contractVersion || manifest.ChallengeID == "" || manifest.GeneratedAt.IsZero() || requireCurrentFields && manifest.AssessmentMediaProfileSHA256 != fillerstructuremedia.CanonicalProfile().SHA256 || !requireCurrentFields && manifest.AssessmentMediaProfileSHA256 != "" || manifest.ProductionAdmissionAllowed || len(manifest.Cases) != expectedCases {
 		return nil, fmt.Errorf("public challenge identity, count, or production disposition is invalid")
 	}
 	publicByAlias := make(map[string]TemporalStructureChallengePublicCase, expectedCases)
@@ -127,6 +136,9 @@ func validateTemporalStructureChallengePublic(publicRoot string, manifest Tempor
 func validateTemporalStructureAuthorityCase(item TemporalStructureChallengeAuthorityCase, outputDurationMS int64) error {
 	if len(item.Segments) == 0 {
 		return fmt.Errorf("segments are required")
+	}
+	if err := validateTemporalStructureSlices(item.Slices); err != nil {
+		return err
 	}
 	for index, part := range item.Segments {
 		if part.Ordinal != index || strings.TrimSpace(part.SourceID) == "" || part.SourcePath == "" || !reviewSHA256(part.SourceSHA256) || part.SourceDurationMS <= 0 || part.SourceStartMS < 0 || part.RequestedMS <= 0 || part.RenderedMS <= 0 || part.SourceStartMS+part.RequestedMS > part.SourceDurationMS || absoluteInt64(part.RequestedMS-part.RenderedMS) > 1_000 {
@@ -164,6 +176,28 @@ func validateTemporalStructureAuthorityCase(item TemporalStructureChallengeAutho
 		part := item.Segments[0]
 		if len(item.Segments) != 1 || item.Role != "" || part.Provenance.Kind != TemporalStructureSourceProgrammeParent || part.SourceStartMS < 5_000 || part.SourceStartMS+part.RequestedMS > part.SourceDurationMS-5_000 || len(item.JoinTimesMS) != 0 {
 			return fmt.Errorf("programme excerpt authority is not one interior parent cut")
+		}
+	case fillereval.UnitProgrammeSpots:
+		if len(item.Segments) < 3 || item.Role != "" || len(item.JoinTimesMS) != len(item.Segments)-1 {
+			return fmt.Errorf("programme-with-spots authority has invalid cardinality, role, or joins")
+		}
+		programmeParts, fillerParts := 0, 0
+		for index, part := range item.Segments {
+			if index > 0 && item.JoinTimesMS[index-1] != part.OutputStartMS {
+				return fmt.Errorf("programme-with-spots segment %d does not bind its asserted join", index)
+			}
+			switch part.Provenance.Kind {
+			case TemporalStructureSourceProgrammeParent:
+				programmeParts++
+			case TemporalStructureSourceBoundedItem:
+				if part.SourceStartMS != 0 || part.RequestedMS != part.SourceDurationMS {
+					return fmt.Errorf("programme-with-spots filler segment %d is not a whole bounded item", index)
+				}
+				fillerParts++
+			}
+		}
+		if programmeParts < 2 || fillerParts < 1 {
+			return fmt.Errorf("programme-with-spots authority lacks programme or filler material")
 		}
 	default:
 		return fmt.Errorf("unit %q has no provenance-grounded authority", item.Unit)

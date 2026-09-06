@@ -150,6 +150,13 @@ func (sp *Splitter) Reground(ctx context.Context, proposalID string, grounded []
 		return SplitProposal{}, err
 	}
 	current.Segments = mergeGrounding(current.Segments, grounded)
+	if current.Structure != nil {
+		structure, structureErr := reassessProposalStructure(current, sp.now().UTC())
+		if structureErr != nil {
+			return SplitProposal{}, fmt.Errorf("reground source structure: %w", structureErr)
+		}
+		current.Structure = &structure
+	}
 	if err := sp.store.UpdateSplitProposal(ctx, current); err != nil {
 		return SplitProposal{}, err
 	}
@@ -184,6 +191,10 @@ func mergeGrounding(onto, from []SplitSegment) []SplitSegment {
 		}
 		if g.Era > 0 {
 			out[i].Era = g.Era
+		}
+		if g.RoleEvidence != nil {
+			roleEvidence := cloneStructureRoleEvidence(*g.RoleEvidence)
+			out[i].RoleEvidence = &roleEvidence
 		}
 		// Unlike learned tags, an empty reason is meaningful: a later pass may have supplied the
 		// evidence that clears an earlier hold. Always copy it so stale explanations cannot survive.
@@ -272,7 +283,9 @@ func (sp *Splitter) advanceProposal(ctx context.Context, clipHash string, p *Spl
 		if segs, dropped := segmentsFromChapters(chapters, floor); len(segs) > 0 {
 			p.Detection.ScannedThroughMs = durationMs
 			p.Detection.Chapters = true
+			p.Detection.ChapterEdges = chapterEdges(chapters)
 			p.Detection.CoarseSegments = segs
+			p.Detection.Discarded = append([]Interval(nil), dropped.Spans...)
 			p.Dropped = dropped
 			if err := sp.saveProposal(ctx, *p); err != nil {
 				return p, false, err
@@ -309,6 +322,7 @@ func (sp *Splitter) advanceProposal(ctx context.Context, clipHash string, p *Spl
 				}
 				p.Detection.ScannedThroughMs = durationMs
 				p.Detection.CoarseSegments, p.Dropped = segmentsFromBoundaries(durationMs, nil, floor)
+				p.Detection.Discarded = append([]Interval(nil), p.Dropped.Spans...)
 			} else {
 				p.Detection.Black = append(p.Detection.Black, black...)
 				p.Detection.Silence = append(p.Detection.Silence, silence...)
@@ -318,6 +332,7 @@ func (sp *Splitter) advanceProposal(ctx context.Context, clipHash string, p *Spl
 		if p.Detection.ScannedThroughMs >= durationMs && len(p.Detection.CoarseSegments) == 0 {
 			gaps := sourcedGaps(p.Detection.Black, p.Detection.Silence)
 			p.Detection.CoarseSegments, p.Dropped = segmentsFromBoundaries(durationMs, gaps, floor)
+			p.Detection.Discarded = append([]Interval(nil), p.Dropped.Spans...)
 			if len(p.Detection.CoarseSegments) == 0 {
 				return p, false, fmt.Errorf("no usable segments detected in %s (everything was under %dms — filler.min_duration)", clipHash, floor.ms())
 			}
@@ -387,11 +402,16 @@ func (sp *Splitter) advanceProposal(ctx context.Context, clipHash string, p *Spl
 	// has flagged duplicates, so every fact the ladder reads is final. Scoring earlier would
 	// stamp numbers the rest of Propose then invalidates (§10 V34).
 	scoreBoundaries(segs)
+	structure, err := assessCurrentSplitStructure(p.Source, *p.Detection, segs, sp.now().UTC())
+	if err != nil {
+		return p, false, fmt.Errorf("assess source structure: %w", err)
+	}
 	// ⚠ The proposal carries the compilation's HASH, not its path. Confirm looks the clip back up
 	// with `GetClip`, which is hash-keyed — writing `clip.Path` here (as this did until V51a) meant
 	// that lookup never matched and no split could ever be committed. The file location Confirm
 	// needs is derived from the hash, so there is one identity and nothing to disagree with it.
 	p.Segments = segs
+	p.Structure = &structure
 	p.Detection = nil
 	if p.Dropped.Count > 0 && sp.log != nil {
 		// INFO, not WARN: discarding sub-floor fragments is the design working, not a fault. It is
@@ -742,6 +762,15 @@ func (sp *Splitter) confirm(ctx context.Context, proposalID string, segments, ho
 	// the catalog), so the operator can fix and retry rather than losing cuts.
 	publication := splitPublication{token: claimToken}
 	for i, seg := range segments {
+		childKind := clip.Kind
+		structureAuthority, hasStructureAuthority := structureDecisionAuthorityForInterval(p, seg)
+		if hasStructureAuthority {
+			var mapped bool
+			childKind, mapped = catalogKindForStructureRole(structureAuthority.role)
+			if !mapped {
+				return nil, fmt.Errorf("split confirm: certified segment %d has no catalog kind", i)
+			}
+		}
 		tmp := filepath.Join(tmpDir, fmt.Sprintf("seg-%03d%s", i, ext))
 		if err := sp.tools.Cut(ctx, sourceSnapshot, seg.StartMs, seg.EndMs, tmp); err != nil {
 			return nil, err
@@ -761,14 +790,17 @@ func (sp *Splitter) confirm(ctx context.Context, proposalID string, segments, ho
 			SourceID:              parentTags.SourceID,
 			AcquisitionID:         parentTags.AcquisitionID,
 			OriginalName:          seg.Name + ext,
+			Kind:                  string(childKind),
 			SplitPublicationToken: claimToken,
 			ConditioningLineage: &ConditioningLineage{
-				ChildHash:         id,
-				ParentHash:        clip.Hash,
-				ParentAssetRole:   string(source.Role),
-				ParentAssetSHA256: source.SHA256,
-				IntendedStartMs:   seg.StartMs,
-				IntendedEndMs:     seg.EndMs,
+				ChildHash:               id,
+				ParentHash:              clip.Hash,
+				ParentAssetRole:         string(source.Role),
+				ParentAssetSHA256:       source.SHA256,
+				StructureDecisionSHA256: structureAuthority.sha256,
+				StructureRole:           structureAuthority.role,
+				IntendedStartMs:         seg.StartMs,
+				IntendedEndMs:           seg.EndMs,
 			},
 		}
 		if err := WriteSidecarTags(tmp, childTags, false); err != nil {
@@ -794,10 +826,10 @@ func (sp *Splitter) confirm(ctx context.Context, proposalID string, segments, ho
 			if err := WriteSidecarTags(dst, childTags, false); err != nil {
 				return nil, fmt.Errorf("split confirm: fence existing segment %d: %w", i, err)
 			}
-			publication.cuts = append(publication.cuts, preparedSplitCut{segment: seg, hash: id, path: ClipRelPath(id, ext), staged: tmp, final: dst, existing: true})
+			publication.cuts = append(publication.cuts, preparedSplitCut{segment: seg, kind: childKind, hash: id, path: ClipRelPath(id, ext), staged: tmp, final: dst, existing: true})
 			continue
 		}
-		publication.cuts = append(publication.cuts, preparedSplitCut{segment: seg, hash: id, path: ClipRelPath(id, ext), staged: tmp, final: dst})
+		publication.cuts = append(publication.cuts, preparedSplitCut{segment: seg, kind: childKind, hash: id, path: ClipRelPath(id, ext), staged: tmp, final: dst})
 	}
 	if err := validateSplitCompositeOwnership(ctx, src, sourceSnapshot); err != nil {
 		return nil, fmt.Errorf("split confirm: composite source changed while cuts were prepared: %w", err)
@@ -829,7 +861,7 @@ func (sp *Splitter) confirm(ctx context.Context, proposalID string, segments, ho
 		nc.Hash = c.hash
 		nc.Path = c.path
 		nc.Name = c.segment.Name
-		nc.Kind = clip.Kind
+		nc.Kind = c.kind
 		nc.DurationMs = c.segment.EndMs - c.segment.StartMs
 		nc.Era = c.segment.Era
 		nc.SuggestedEra = c.segment.SuggestedEra

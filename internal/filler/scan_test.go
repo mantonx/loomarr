@@ -292,6 +292,25 @@ func TestScanDir_InfersKindAndEraFromTheFilename(t *testing.T) {
 	}
 }
 
+func TestScanDir_RestoresCatalogKindFromPortableSidecar(t *testing.T) {
+	dir := t.TempDir()
+	media := filepath.Join(dir, "opaque.mp4")
+	if err := os.WriteFile(media, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := filler.WriteSidecarTags(media, filler.SidecarTags{OriginalName: "untitled clip.mp4", Kind: string(filler.PSA)}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	clips, _, err := filler.ScanDir(context.Background(), dir, fakeProbe(20_000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clips) != 1 || clips[0].Kind != filler.PSA {
+		t.Fatalf("rebuilt clips=%+v, want portable PSA kind", clips)
+	}
+}
+
 // --- ClipPath: the containment boundary ---
 //
 // ⚠ THREE tests lived here and are SUPERSEDED by `clippath_test.go` (V38c). They asserted the

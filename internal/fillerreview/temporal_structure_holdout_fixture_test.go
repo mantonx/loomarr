@@ -30,6 +30,18 @@ type temporalStructureHoldoutFixture struct {
 }
 
 func newTemporalStructureHoldoutFixture(t *testing.T) temporalStructureHoldoutFixture {
+	return newTemporalStructureHoldoutFixtureWithEvidenceAndProgrammeParentDuration(t, nil, 700_000)
+}
+
+func newTemporalStructureHoldoutFixtureWithEvidence(t *testing.T, mutate func(*TemporalTruthEvidenceManifest, *TemporalTruthEvidencePrivateMap)) temporalStructureHoldoutFixture {
+	return newTemporalStructureHoldoutFixtureWithEvidenceAndProgrammeParentDuration(t, mutate, 700_000)
+}
+
+func newTemporalStructureHoldoutFixtureWithProgrammeParentDuration(t *testing.T, parentDurationMS int64) temporalStructureHoldoutFixture {
+	return newTemporalStructureHoldoutFixtureWithEvidenceAndProgrammeParentDuration(t, nil, parentDurationMS)
+}
+
+func newTemporalStructureHoldoutFixtureWithEvidenceAndProgrammeParentDuration(t *testing.T, mutate func(*TemporalTruthEvidenceManifest, *TemporalTruthEvidencePrivateMap), parentDurationMS int64) temporalStructureHoldoutFixture {
 	t.Helper()
 	base := newTemporalHumanReviewFixture(t)
 	manifest := readStrictTestJSON[TemporalTruthEvidenceManifest](t, base.manifest)
@@ -49,6 +61,10 @@ func newTemporalStructureHoldoutFixture(t *testing.T) temporalStructureHoldoutFi
 		manifest.Cases[index].Video.SHA256 = hashBytes(raw)
 		manifest.Cases[index].Video.Bytes = int64(len(raw))
 		manifest.Cases[index].Video.DurationMS = durationMS
+	}
+	if mutate != nil {
+		mutate(&manifest, &privateMap)
+		writeTemporalHumanJSON(t, filepath.Dir(base.privateMap), filepath.Base(base.privateMap), privateMap)
 	}
 	writeTemporalHumanJSON(t, filepath.Dir(base.manifest), filepath.Base(base.manifest), manifest)
 	evidenceSHA, err := hashFile(base.manifest)
@@ -238,7 +254,7 @@ func newTemporalStructureHoldoutFixture(t *testing.T) temporalStructureHoldoutFi
 		t.Fatal(err)
 	}
 	inventory := TemporalStructureHoldoutProgrammeInventory{
-		SchemaVersion: TemporalStructureHoldoutSchemaVersion, ContractVersion: TemporalStructureHoldoutProgrammeInventoryContract,
+		SchemaVersion: TemporalStructureHoldoutProgrammeInventorySchemaVersion, ContractVersion: TemporalStructureHoldoutProgrammeInventoryContract,
 		GeneratedAt: family.GeneratedAt.Add(time.Hour),
 	}
 	record := fillercorpus.Inventory{
@@ -267,12 +283,12 @@ func newTemporalStructureHoldoutFixture(t *testing.T) temporalStructureHoldoutFi
 			Authority: "test-programme-authority", ItemID: itemID, Title: itemID, RoleHints: []string{"programme"}, RightsAssertions: []string{"fixture"},
 			ItemURL: "https://example.invalid/items/" + itemID, MetadataURL: "https://example.invalid/metadata/" + itemID,
 			MetadataCache: relativeMetadataPath, MetadataRetrievedAt: inventory.GeneratedAt.Add(-time.Hour), MetadataSHA256: hashBytes(metadata),
-			Representation: fillercorpus.InventoryRepresentation{Transport: fillercorpus.TransportLocal, Name: filepath.Base(path), Path: relativePath, MIMEType: "video/mp4", Bytes: int64(len(raw)), SHA256: hashBytes(raw), DurationMS: 180_000 + int64(index)*10_000},
+			Representation: fillercorpus.InventoryRepresentation{Transport: fillercorpus.TransportLocal, Name: filepath.Base(path), Path: relativePath, MIMEType: "video/mp4", Bytes: int64(len(raw)), SHA256: hashBytes(raw), DurationMS: parentDurationMS + int64(index)*10_000},
 			Evidence:       []fillercorpus.InventoryEvidence{{Kind: "rights", Path: relativeMetadataPath, Bytes: int64(len(metadata)), SHA256: hashBytes(metadata)}, {Kind: "provenance", Path: relativeMetadataPath, Bytes: int64(len(metadata)), SHA256: hashBytes(metadata)}},
 		})
 		inventory.Sources = append(inventory.Sources, TemporalStructureChallengeSource{
 			ID: "programme-" + string(rune('a'+index)), Path: filepath.ToSlash(path[len(base.root)+1:]),
-			SHA256: hashBytes(raw), DurationMS: 180_000 + int64(index)*10_000,
+			SHA256: hashBytes(raw), DurationMS: parentDurationMS + int64(index)*10_000,
 			Provenance: TemporalStructureSourceProvenance{
 				Kind: TemporalStructureSourceProgrammeParent, Authority: "test-programme-authority",
 				ItemID: itemID, Reference: "https://example.invalid/items/" + itemID, MetadataSHA256: hashBytes(metadata),

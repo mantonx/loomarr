@@ -275,7 +275,7 @@ func reviewOneOpenRouter(ctx context.Context, client *http.Client, baseURL, expe
 		Authority: authority, APIKey: config.APIKey, Model: config.Model, ResolvedModel: model.CanonicalSlug,
 		UpstreamProvider: config.UpstreamProvider, ProviderSlug: config.UpstreamProviderSlug,
 		SchemaName: "filler_blind_review", Schema: reviewLabelsSchema(item), SystemPrompt: reviewerSystemPrompt,
-		Content: content, Images: images, MaxTokens: 4096, MaxChargeNanoUSD: config.MaxChargeNanoUSD,
+		Content: content, Images: images, MaxTokens: 4096, ReservationNanoUSD: config.MaxChargeNanoUSD,
 		Title: "Loomarr filler blind review", Reserve: reserve,
 	})
 	if err != nil {

@@ -84,6 +84,7 @@ const body = (clips: IncomingClipDTO[]): FillerIncomingOutputBody => ({
     "probe",
     "transcode",
     "split",
+    "screen",
     "language",
     "transcribe",
     "tag",

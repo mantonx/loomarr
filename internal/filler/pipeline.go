@@ -221,6 +221,9 @@ type Pipeline struct {
 	// before Confirm began filing their parent row. The pipeline disposition and absence of a
 	// proposal make the old state recognizable without a schema version or a new migration.
 	legacyCompositeHoldsChecked bool
+	// legacySegmentScreeningChecked gates the one-time rewind of children created before the
+	// rendered-child safety rung existed. A completed stage record is the durable migration mark.
+	legacySegmentScreeningChecked bool
 }
 
 // NewPipeline builds a runner over the given stages. Stages absent from the list are treated as
@@ -299,6 +302,17 @@ func (p *Pipeline) RunOnce(ctx context.Context) (PipelineResult, error) {
 			}
 		} else {
 			p.legacyQualityChecked = true
+		}
+	}
+	if !p.legacySegmentScreeningChecked {
+		n, screeningErr := p.requeueLegacySegmentScreening(ctx)
+		res.Requeued += n
+		if screeningErr != nil {
+			if p.log != nil {
+				p.log.Warn("filler pipeline: rendered-child screening backfill failed", "err", screeningErr)
+			}
+		} else {
+			p.legacySegmentScreeningChecked = true
 		}
 	}
 	if !p.legacySplitReviewsChecked {
@@ -402,6 +416,63 @@ func (p *Pipeline) RunOnce(ctx context.Context) (PipelineResult, error) {
 			"no_advance_reason", res.NoAdvanceReason)
 	}
 	return res, nil
+}
+
+// requeueLegacySegmentScreening closes the upgrade gap for children whose pipeline rows had
+// already advanced beyond split before StageScreen existed. It holds the catalog row first, then
+// rewinds the durable ladder. A crash between those writes is safe: the child is non-airable and
+// the same data-selected pass retries the row after restart.
+func (p *Pipeline) requeueLegacySegmentScreening(ctx context.Context) (int, error) {
+	if p.clips == nil {
+		return 0, nil
+	}
+	rows, err := p.store.ListClipPipelines(ctx, PipelineFilter{})
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, row := range rows {
+		if StageIndex(row.Stage) <= StageIndex(StageScreen) || SegmentScreeningCompleted(row) {
+			continue
+		}
+		switch row.Disposition {
+		case DispositionRunning, DispositionReview, DispositionFiled:
+		case DispositionRejected:
+			if !row.RejectReason.Soft() {
+				continue
+			}
+		default:
+			continue
+		}
+		clip, found, err := p.clips.GetClip(ctx, row.ClipHash)
+		if err != nil {
+			return n, err
+		}
+		if !found || !clip.IsSegment() || clip.Path == "" {
+			continue
+		}
+		at := p.now().UTC()
+		if _, err := p.clips.SetClipsHeld(ctx, []string{clip.Path}, true, false, at); err != nil {
+			return n, err
+		}
+		kept := row.Stages[:0:0]
+		for _, record := range row.Stages {
+			if index := StageIndex(record.Stage); index >= 0 && index < StageIndex(StageScreen) {
+				kept = append(kept, record)
+			}
+		}
+		row.Stages = kept
+		row.Stage, row.Status, row.Attempts, row.Progress = StageScreen, StatusQueued, 0, 0
+		row.Disposition = DispositionRunning
+		row.RejectReason, row.RejectDetail = "", ""
+		row.NextRun, row.UpdatedAt = time.Time{}, at
+		if err := p.store.UpsertClipPipeline(ctx, row); err != nil {
+			return n, err
+		}
+		p.publish(row, clip)
+		n++
+	}
+	return n, nil
 }
 
 // repairLegacyCompositeHolds releases parent rows confirmed before full confirmation started doing
@@ -857,7 +928,7 @@ func (p *Pipeline) onFailure(row *ClipPipeline, err error) bool {
 	// Admission persistence is the fail-closed seam before V38 may file a clip. Exhausting ordinary
 	// retries cannot skip it: that would turn a store outage into publication authority. Keep the
 	// clip parked on this rung and retry at the bounded terminal backoff until the audit is durable.
-	if row.Stage == StageAdmission && row.Attempts >= MaxAttempts {
+	if (row.Stage == StageScreen || row.Stage == StageAdmission) && row.Attempts >= MaxAttempts {
 		row.Attempts = MaxAttempts
 		row.NextRun = now.Add(backoff(MaxAttempts))
 		row.Record(row.Stage, StatusFailed, err.Error(), row.Attempts, now)

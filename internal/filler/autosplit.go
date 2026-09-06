@@ -109,6 +109,23 @@ func segmentVerdict(s SplitSegment, pol *AutoSplitPolicy, minClipDuration, maxDu
 	if s.Unsplittable {
 		return RejectUnsplittable
 	}
+	if why := segmentContentVerdict(s, pol, minClipDuration, maxDur); why != AutoSplitOK {
+		return why
+	}
+	// ⚠ **LAST, and only over segments that already passed every refusal above** (§10 V34).
+	// At the default 85 this means BOTH of the segment's boundaries must be corroborated —
+	// chapter, reel edge, or black+silence agreed (90) clears it; a single-detector edge (65)
+	// does not. That conservatism is doing real work: a confirmed segment is airable, with no
+	// second human gate after this one.
+	if s.BoundaryConfidence < minConfidence(pol) {
+		return RejectBoundaryUncertain
+	}
+	return AutoSplitOK
+}
+
+// segmentContentVerdict owns refusals that remain relevant after an independently certified
+// complete-timeline decision. It deliberately knows nothing about detector success or confidence.
+func segmentContentVerdict(s SplitSegment, pol *AutoSplitPolicy, minClipDuration, maxDur time.Duration) AutoSplitReject {
 	if s.DupOf != "" {
 		return RejectDuplicate
 	}
@@ -141,14 +158,6 @@ func segmentVerdict(s SplitSegment, pol *AutoSplitPolicy, minClipDuration, maxDu
 	// above, because `SuggestedEra` is checked at every setting.
 	if minConfidence(pol) >= MaxAutoFileConfidence && s.Era == 0 {
 		return RejectUngrounded
-	}
-	// ⚠ **LAST, and only over segments that already passed every refusal above** (§10 V34).
-	// At the default 85 this means BOTH of the segment's boundaries must be corroborated —
-	// chapter, reel edge, or black+silence agreed (90) clears it; a single-detector edge (65)
-	// does not. That conservatism is doing real work: a confirmed segment is airable, with no
-	// second human gate after this one.
-	if s.BoundaryConfidence < minConfidence(pol) {
-		return RejectBoundaryUncertain
 	}
 	return AutoSplitOK
 }
@@ -192,10 +201,13 @@ func AutoConfirmable(p SplitProposal, pol *AutoSplitPolicy, minClipDuration time
 
 // SplitPartition is what the gate decided, segment by segment.
 type SplitPartition struct {
-	// Confirm may be cut and filed unattended.
+	// Confirm may be cut into held child work items unattended.
 	Confirm []SplitSegment
 	// Hold stays in the proposal, each carrying the reason it was kept back.
 	Hold []SplitSegment
+	// Discard is complete-plan material intentionally omitted with retained structure authority.
+	// It is neither publishable nor an unresolved hold.
+	Discard []SplitSegment
 	// Reject is set only for a WHOLE-proposal refusal (auto-split switched off, nothing detected).
 	// A per-segment refusal is on the segment, not here.
 	Reject AutoSplitReject

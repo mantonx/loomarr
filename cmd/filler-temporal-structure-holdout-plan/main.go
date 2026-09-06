@@ -1,5 +1,5 @@
 // Command filler-temporal-structure-holdout-plan selects authority-bound source
-// material and emits private construction authoring for the 36-case holdout.
+// material and emits private construction authoring for the 60-case holdout.
 package main
 
 import (

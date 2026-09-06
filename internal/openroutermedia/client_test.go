@@ -66,6 +66,35 @@ func TestCallRejectsInvalidAudioBeforeReservation(t *testing.T) {
 	}
 }
 
+func TestCallRejectsContradictoryReasoningBeforeReservation(t *testing.T) {
+	t.Parallel()
+	reserved := false
+	config := validConfig(func(string) error { reserved = true; return nil })
+	config.DisableReasoning = true
+	config.EnableReasoning = true
+	_, err := Call(t.Context(), http.DefaultClient, "https://openrouter.test/api/v1", config)
+	if err == nil || !strings.Contains(err.Error(), "enable and disable reasoning") || reserved {
+		t.Fatalf("err=%v reserved=%t", err, reserved)
+	}
+}
+
+func TestBuildRequestCanExplicitlyEnableReasoning(t *testing.T) {
+	t.Parallel()
+	config := validConfig(func(string) error { return nil })
+	config.EnableReasoning = true
+	body, err := buildRequest(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request structuredRequest
+	if err := json.Unmarshal(body, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Reasoning == nil || !request.Reasoning.Enabled {
+		t.Fatalf("reasoning = %+v", request.Reasoning)
+	}
+}
+
 func TestCallRequiresReservationBeforeHTTP(t *testing.T) {
 	t.Parallel()
 	called := false
@@ -101,6 +130,68 @@ func TestCallRetainsNonOKResponseAuthority(t *testing.T) {
 	}
 }
 
+func TestCallSettlesKnownNonOKChargesWithoutAuthorizingOutput(t *testing.T) {
+	t.Parallel()
+	const providerSecret = "non-ok-provider-private-detail"
+	tests := []struct {
+		name             string
+		statusCode       int
+		body             string
+		reservation      int64
+		wantCharged      int64
+		wantOverReserve  int64
+		wantChargeKnown  bool
+		wantExcessCharge bool
+	}{
+		{
+			name: "known charge", statusCode: http.StatusBadGateway, reservation: 2_000_000,
+			body:        `{"usage":{"prompt_tokens":7,"completion_tokens":2,"cost":0.001},"error":{"message":"` + providerSecret + `"}}`,
+			wantCharged: 1_000_000, wantChargeKnown: true,
+		},
+		{
+			name: "known over reservation", statusCode: http.StatusTooManyRequests, reservation: 2_000_000,
+			body:        `{"usage":{"prompt_tokens":7,"completion_tokens":2,"cost":0.003},"error":{"message":"` + providerSecret + `"}}`,
+			wantCharged: 3_000_000, wantOverReserve: 1_000_000, wantChargeKnown: true, wantExcessCharge: true,
+		},
+		{
+			name: "missing cost remains unknown", statusCode: http.StatusServiceUnavailable, reservation: 2_000_000,
+			body: `{"usage":{"prompt_tokens":7,"completion_tokens":2},"error":{"message":"` + providerSecret + `"}}`,
+		},
+		{
+			name: "malformed cost remains unknown", statusCode: http.StatusServiceUnavailable, reservation: 2_000_000,
+			body: `{"usage":{"prompt_tokens":7,"completion_tokens":2,"cost":"not-a-number"},"error":{"message":"` + providerSecret + `"}}`,
+		},
+		{
+			name: "success shaped body does not authorize output", statusCode: http.StatusInternalServerError, reservation: 2_000_000,
+			body: string(validResponse()), wantCharged: 1_000_000, wantChargeKnown: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			reserved := false
+			config := validConfig(func(string) error {
+				reserved = true
+				return nil
+			})
+			config.ReservationNanoUSD = test.reservation
+			client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: response(test.statusCode, []byte(test.body))})}
+
+			result, err := Call(t.Context(), client, "https://openrouter.test/api/v1", config)
+			var statusErr *StatusError
+			if !reserved || !errors.As(err, &statusErr) || statusErr.StatusCode != test.statusCode || statusErr.Detail != "provider request failed" ||
+				result.ChargeKnown != test.wantChargeKnown || result.ChargedNanoUSD != test.wantCharged || result.OverReservationNanoUSD != test.wantOverReserve ||
+				result.StructuredOutput != "" || result.ReasoningBytes != 0 || !bytes.Equal(result.RawResponse, []byte(test.body)) || result.ResponseSHA256 != hashBytes([]byte(test.body)) ||
+				errors.Is(err, ErrChargeExceedsReservation) != test.wantExcessCharge {
+				t.Fatalf("result=%+v err=%v reserved=%t", result, err, reserved)
+			}
+			if strings.Contains(err.Error(), providerSecret) {
+				t.Fatalf("error leaked provider detail: %v", err)
+			}
+		})
+	}
+}
+
 func TestCallReturnsNestedChoiceErrorAsSettledProviderStatus(t *testing.T) {
 	t.Parallel()
 	client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: &http.Response{
@@ -122,8 +213,8 @@ func TestCallFailsClosedAfterSettlement(t *testing.T) {
 		body string
 		want string
 	}{
-		{name: "missing cost", body: `{"id":"generation","model":"vendor/model","choices":[{"message":{"content":"{}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1},"openrouter_metadata":{"attempt":1,"endpoints":{"available":[{"provider":"Pinned Provider","model":"vendor/model-2026","selected":true}]}}}`, want: "missing or out-of-reservation cost"},
-		{name: "over ceiling", body: `{"id":"generation","model":"vendor/model","choices":[{"message":{"content":"{}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"cost":1},"openrouter_metadata":{"attempt":1,"endpoints":{"available":[{"provider":"Pinned Provider","model":"vendor/model-2026","selected":true}]}}}`, want: "missing or out-of-reservation cost"},
+		{name: "missing cost", body: `{"id":"generation","model":"vendor/model","choices":[{"message":{"content":"{}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1},"openrouter_metadata":{"attempt":1,"endpoints":{"available":[{"provider":"Pinned Provider","model":"vendor/model-2026","selected":true}]}}}`, want: "missing or malformed cost"},
+		{name: "over reservation", body: `{"id":"generation","model":"vendor/model","choices":[{"message":{"content":"{}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"cost":1},"openrouter_metadata":{"attempt":1,"endpoints":{"available":[{"provider":"Pinned Provider","model":"vendor/model-2026","selected":true}]}}}`, want: "exceeds accounting reservation"},
 		{name: "requested model drift", body: `{"id":"generation","model":"other/model","choices":[{"message":{"content":"{}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"cost":0.001},"openrouter_metadata":{"attempt":1,"endpoints":{"available":[{"provider":"Pinned Provider","model":"vendor/model-2026","selected":true}]}}}`, want: "does not bind"},
 		{name: "selected route drift", body: `{"id":"generation","model":"vendor/model","choices":[{"message":{"content":"{}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"cost":0.001},"openrouter_metadata":{"attempt":1,"endpoints":{"available":[{"provider":"Other Provider","model":"vendor/model-2026","selected":true}]}}}`, want: "does not bind"},
 		{name: "multiple attempts", body: `{"id":"generation","model":"vendor/model","choices":[{"message":{"content":"{}"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"cost":0.001},"openrouter_metadata":{"attempt":1,"attempts":[{"provider":"Pinned Provider","model":"vendor/model-2026","status":200},{"provider":"Pinned Provider","model":"vendor/model-2026","status":200}],"endpoints":{"available":[{"provider":"Pinned Provider","model":"vendor/model-2026","selected":true}]}}}`, want: "does not bind"},
@@ -138,6 +229,35 @@ func TestCallFailsClosedAfterSettlement(t *testing.T) {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
 		})
+	}
+}
+
+func TestCallRetainsKnownChargeAboveAccountingReservation(t *testing.T) {
+	t.Parallel()
+	client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: response(http.StatusOK, []byte(`{"id":"generation","model":"vendor/model","choices":[{"message":{"content":"{\"ok\":true}"}}],"usage":{"prompt_tokens":42781,"completion_tokens":283,"cost":0.132588},"openrouter_metadata":{"attempt":1,"endpoints":{"available":[{"provider":"Pinned Provider","model":"vendor/model-2026","selected":true}]}}}`))})}
+	config := validConfig(func(string) error { return nil })
+	config.ReservationNanoUSD = 100_000_000
+	result, err := Call(t.Context(), client, "https://openrouter.test/api/v1", config)
+	if !errors.Is(err, ErrChargeExceedsReservation) || !result.ChargeKnown || result.ChargedAmountUSD != "0.132588" || result.ChargedNanoUSD != 132_588_000 || result.OverReservationNanoUSD != 32_588_000 || result.StructuredOutput != "" || result.ResponseSHA256 == "" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+func TestCallRetainsKnownChargeFromProviderErrorEnvelope(t *testing.T) {
+	t.Parallel()
+	client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: response(http.StatusOK, []byte(`{"id":"generation","model":"vendor/model","usage":{"prompt_tokens":10,"completion_tokens":0,"cost":0.003},"error":{"message":"upstream stopped"}}`))})}
+	result, err := Call(t.Context(), client, "https://openrouter.test/api/v1", validConfig(func(string) error { return nil }))
+	if err == nil || strings.Contains(err.Error(), "upstream stopped") || !errors.Is(err, ErrChargeExceedsReservation) || !result.ChargeKnown || result.ChargedNanoUSD != 3_000_000 || result.OverReservationNanoUSD != 1_000_000 || result.StructuredOutput != "" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+func TestCallReportsProviderErrorWhenErrorEnvelopeOmitsCost(t *testing.T) {
+	t.Parallel()
+	client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: response(http.StatusOK, []byte(`{"id":"generation","error":{"message":"Request contains an invalid argument.","code":400}}`))})}
+	result, err := Call(t.Context(), client, "https://openrouter.test/api/v1", validConfig(func(string) error { return nil }))
+	if err == nil || strings.Contains(err.Error(), "Request contains an invalid argument.") || result.ChargeKnown || result.GenerationID != "generation" {
+		t.Fatalf("result=%+v err=%v", result, err)
 	}
 }
 
@@ -240,7 +360,7 @@ func validConfig(reserve func(string) error) Config {
 		UpstreamProvider: "Pinned Provider", ProviderSlug: "pinned/provider",
 		SchemaName: "contract", Schema: map[string]any{"type": "object"},
 		SystemPrompt: "system", Content: "content", MaxTokens: 32,
-		MaxChargeNanoUSD: 2_000_000, Title: "contract test", Reserve: reserve,
+		ReservationNanoUSD: 2_000_000, Title: "contract test", Reserve: reserve,
 	}
 }
 

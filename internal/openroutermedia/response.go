@@ -17,6 +17,11 @@ import (
 // requested model, upstream provider, selected endpoint, and one-attempt route.
 var ErrRouteMismatch = errors.New("OpenRouter structured response route mismatch")
 
+// ErrChargeExceedsReservation reports a known provider charge that exceeded
+// the caller's accounting reservation. The response remains billed evidence,
+// but its structured output is not usable.
+var ErrChargeExceedsReservation = errors.New("OpenRouter structured response charge exceeds accounting reservation")
+
 type structuredResponse struct {
 	ID      string `json:"id"`
 	Model   string `json:"model"`
@@ -49,6 +54,7 @@ type structuredResponse struct {
 	} `json:"openrouter_metadata"`
 	Error *struct {
 		Message string `json:"message"`
+		Code    int    `json:"code"`
 	} `json:"error"`
 }
 
@@ -72,6 +78,21 @@ func newStatusError(statusCode int) *StatusError {
 	return &StatusError{StatusCode: statusCode, Detail: "provider request failed"}
 }
 
+// settleNonSuccessResponse records a parseable reported charge while preserving
+// the HTTP failure as the result classification. A non-success response never
+// authorizes structured output, regardless of the shape of its body.
+func settleNonSuccessResponse(result Result, raw []byte, config Config, statusCode int) (Result, error) {
+	settled, _ := settleResponse(result, raw, config)
+	settled.StructuredOutput = ""
+	settled.ReasoningBytes = 0
+
+	statusErr := newStatusError(statusCode)
+	if settled.OverReservationNanoUSD > 0 {
+		return settled, errors.Join(statusErr, ErrChargeExceedsReservation)
+	}
+	return settled, statusErr
+}
+
 func settleResponse(result Result, raw []byte, config Config) (Result, error) {
 	var wire structuredResponse
 	if err := decodeProviderJSON(raw, &wire); err != nil {
@@ -81,14 +102,28 @@ func settleResponse(result Result, raw []byte, config Config) (Result, error) {
 	result.PromptTokens = wire.Usage.PromptTokens
 	result.CompletionTokens = wire.Usage.CompletionTokens
 	result.ChargedAmountUSD = wire.Usage.Cost.String()
+	if result.ChargedAmountUSD != "" {
+		charged, err := fillereval.USDToNanoCeil(result.ChargedAmountUSD)
+		if err != nil || charged < 0 {
+			if wire.Error == nil {
+				return result, fmt.Errorf("OpenRouter structured call returned missing or malformed cost")
+			}
+		} else {
+			result.ChargedNanoUSD, result.ChargeKnown = charged, true
+			if charged > config.ReservationNanoUSD {
+				result.OverReservationNanoUSD = charged - config.ReservationNanoUSD
+			}
+		}
+	} else if wire.Error == nil {
+		return result, fmt.Errorf("OpenRouter structured call returned missing or malformed cost")
+	}
 	if wire.Error != nil {
-		return result, fmt.Errorf("OpenRouter structured response included a provider error")
+		providerErr := fmt.Errorf("OpenRouter structured response included a provider error")
+		if result.OverReservationNanoUSD > 0 {
+			return result, errors.Join(providerErr, ErrChargeExceedsReservation)
+		}
+		return result, providerErr
 	}
-	charged, err := fillereval.USDToNanoCeil(result.ChargedAmountUSD)
-	if err != nil || charged < 0 || charged > config.MaxChargeNanoUSD {
-		return result, fmt.Errorf("OpenRouter structured call returned missing or out-of-reservation cost")
-	}
-	result.ChargedNanoUSD, result.ChargeKnown = charged, true
 	if len(wire.Choices) == 1 && wire.Choices[0].Error != nil {
 		wireError := wire.Choices[0].Error
 		status := wireError.Code
@@ -99,6 +134,9 @@ func settleResponse(result Result, raw []byte, config Config) (Result, error) {
 	}
 	if wire.ID == "" || wire.Model != config.Model || len(wire.Choices) != 1 || wire.Metadata.Attempt != 1 || !validAttemptLedger(wire, config) || !selectedEndpoint(wire, config) {
 		return result, fmt.Errorf("%w: does not bind the requested one-attempt route", ErrRouteMismatch)
+	}
+	if result.OverReservationNanoUSD > 0 {
+		return result, fmt.Errorf("%w: charged %d nano-USD against %d reserved", ErrChargeExceedsReservation, result.ChargedNanoUSD, config.ReservationNanoUSD)
 	}
 	result.StructuredOutput = wire.Choices[0].Message.Content
 	result.ReasoningBytes = len(wire.Choices[0].Message.Reasoning)

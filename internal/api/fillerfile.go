@@ -46,7 +46,8 @@ func (s *Server) registerFillerFile(api huma.API) {
 		Description: "Admin only (§10 V38). Admits held clips to the playable catalog — they become matchable " +
 			"into pods. With `asSuggested`, each clip's OWN ungrounded era guess is confirmed as it files " +
 			"(the mock's \"File all as suggested\"), which `bulk/tag` cannot express because it applies one " +
-			"era to the whole selection. Filing by hand CLEARS the auto-filed marker: a human looked.",
+			"era to the whole selection. Filing by hand CLEARS the auto-filed marker: a human looked. A " +
+			"materialized compilation child cannot be filed until its rendered-child screening rung completed.",
 		Tags: []string{"filler"},
 	}, RoleAdmin), s.fileFillerClips)
 
@@ -84,6 +85,23 @@ func (s *Server) fileFillerClips(ctx context.Context, in *fileFillerInput) (*bul
 		}
 		hashes = append(hashes, c.Hash)
 		clips = append(clips, c)
+	}
+	// Human curation may settle later language, taxonomy, or confidence questions, but it cannot
+	// substitute for the rendered-child broadcast-safety boundary. Check the entire resolved batch
+	// before confirming suggestions or unholding anything, so one unresolved child cannot create a
+	// partially filed request.
+	for _, clip := range clips {
+		if clip.ParentHash == "" {
+			continue
+		}
+		row, found, err := s.store.GetClipPipeline(ctx, clip.Hash)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("verify rendered-child screening", err)
+		}
+		if !found || !filler.SegmentScreeningCompleted(row) {
+			return nil, errUnprocessable("Broadcast-safety screening incomplete",
+				"This compilation child must complete its rendered-child screening before it can be filed.")
+		}
 	}
 
 	// Confirming the suggestions happens BEFORE filing, so a failure leaves the clips held with

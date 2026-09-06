@@ -87,6 +87,13 @@ func LockTemporalStructureAssessment(config TemporalStructureAssessmentLockConfi
 	}, snapshot.SourceBaseURL, result.CompletedAt); err != nil {
 		return TemporalStructureAssessmentLockResult{}, fmt.Errorf("validate temporal structure model route at completion: %w", err)
 	}
+	estimatedMaximumCharge, err := estimateTemporalStructureOpenRouterCharge(TemporalStructureOpenRouterConfig{
+		Snapshot: snapshot, Model: result.Assessor.Model, MaximumInputTokens: result.MaximumInputTokens,
+		UpstreamProvider: result.UpstreamProvider, UpstreamProviderSlug: result.UpstreamProviderSlug,
+	})
+	if err != nil || estimatedMaximumCharge != result.EstimatedMaximumChargeNanoUSD {
+		return TemporalStructureAssessmentLockResult{}, fmt.Errorf("temporal structure result price bound does not reproduce from the snapshot")
+	}
 
 	rawResultSHA := hashBytes(resultRaw)
 	snapshotFileSHA := hashBytes(snapshotRaw)
@@ -121,7 +128,7 @@ func LockTemporalStructureAssessment(config TemporalStructureAssessmentLockConfi
 func verifyTemporalStructureOpenRouterRawResponses(resultPath string, result TemporalStructureOpenRouterResult) error {
 	root := resultPath + ".private"
 	for index, attempt := range result.Attempts {
-		if attempt.State != temporalOpenRouterAttemptAccepted && attempt.State != temporalOpenRouterAttemptFailed && attempt.State != temporalOpenRouterAttemptUnsettled {
+		if attempt.State != temporalOpenRouterAttemptAccepted && attempt.State != temporalOpenRouterAttemptFailed && attempt.State != temporalOpenRouterAttemptUnsettled && attempt.State != temporalOpenRouterAttemptOverReservation {
 			return fmt.Errorf("temporal structure attempt %d is not terminal", index)
 		}
 		if attempt.ResponseSHA256 == "" {

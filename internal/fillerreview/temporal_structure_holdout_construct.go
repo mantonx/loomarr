@@ -22,6 +22,7 @@ func constructTemporalStructureHoldout(config TemporalStructureHoldoutConfig, lo
 		PlannedAt: config.PlannedAt.UTC(), SeedSHA256: hashBytes([]byte(config.Seed)), Inputs: loaded.inputs,
 		Cases: TemporalStructureHoldoutCases, StandaloneCases: temporalStructureHoldoutClassCases,
 		CompilationCases: temporalStructureHoldoutClassCases, ProgrammeExcerptCases: temporalStructureHoldoutClassCases,
+		ProgrammeSpotCases: temporalStructureHoldoutClassCases, MultiCompilationCases: temporalStructureHoldoutClassCases,
 		IndependentSources: temporalStructureHoldoutClassCases, ProgrammeParents: temporalStructureHoldoutParentSources,
 		StandaloneRoleCounts:    map[fillereval.TemporalRole]int{},
 		FutureTrainingExclusion: TemporalStructureHoldoutTrainingExclusion{Split: "holdout"},
@@ -57,17 +58,32 @@ func constructTemporalStructureHoldout(config TemporalStructureHoldoutConfig, lo
 	}
 	authoring.Cases = append(authoring.Cases, compilationCases...)
 	receipt.CompilationConstructions = compilationReceipt
+	multiCompilationCases, multiCompilationReceipt, err := constructTemporalStructureHoldoutMultiCompilations(config.Seed, anchors)
+	if err != nil {
+		return TemporalStructureChallengeAuthoring{}, TemporalStructureHoldoutReceipt{}, err
+	}
+	authoring.Cases = append(authoring.Cases, multiCompilationCases...)
+	receipt.MultiCompilationConstructions = multiCompilationReceipt
 	programmeCases, programmeReceipt := constructTemporalStructureHoldoutProgrammeCuts(config.Seed, parents)
 	authoring.Cases = append(authoring.Cases, programmeCases...)
 	receipt.ProgrammeConstructions = programmeReceipt
+	programmeSpotCases, programmeSpotReceipt := constructTemporalStructureHoldoutProgrammeSpots(config.Seed, parents, anchors)
+	authoring.Cases = append(authoring.Cases, programmeSpotCases...)
+	receipt.ProgrammeSpotConstructions = programmeSpotReceipt
 	sort.Slice(authoring.Sources, func(i, j int) bool { return authoring.Sources[i].ID < authoring.Sources[j].ID })
 	sort.Slice(authoring.Cases, func(i, j int) bool { return authoring.Cases[i].ID < authoring.Cases[j].ID })
 	sort.Slice(receipt.SelectedAnchors, func(i, j int) bool { return receipt.SelectedAnchors[i].SourceID < receipt.SelectedAnchors[j].SourceID })
 	sort.Slice(receipt.CompilationConstructions, func(i, j int) bool {
 		return receipt.CompilationConstructions[i].CaseID < receipt.CompilationConstructions[j].CaseID
 	})
+	sort.Slice(receipt.MultiCompilationConstructions, func(i, j int) bool {
+		return receipt.MultiCompilationConstructions[i].CaseID < receipt.MultiCompilationConstructions[j].CaseID
+	})
 	sort.Slice(receipt.ProgrammeConstructions, func(i, j int) bool {
 		return receipt.ProgrammeConstructions[i].CaseID < receipt.ProgrammeConstructions[j].CaseID
+	})
+	sort.Slice(receipt.ProgrammeSpotConstructions, func(i, j int) bool {
+		return receipt.ProgrammeSpotConstructions[i].CaseID < receipt.ProgrammeSpotConstructions[j].CaseID
 	})
 	sort.Strings(receipt.FutureTrainingExclusion.SourceSHA256)
 	sort.Strings(receipt.FutureTrainingExclusion.FamilyIDs)
@@ -80,9 +96,46 @@ func constructTemporalStructureHoldout(config TemporalStructureHoldoutConfig, lo
 		return TemporalStructureChallengeAuthoring{}, TemporalStructureHoldoutReceipt{}, err
 	}
 	if len(prepared) != TemporalStructureHoldoutCases {
-		return TemporalStructureChallengeAuthoring{}, TemporalStructureHoldoutReceipt{}, fmt.Errorf("temporal structure holdout authoring did not produce 36 unique blinded cases")
+		return TemporalStructureChallengeAuthoring{}, TemporalStructureHoldoutReceipt{}, fmt.Errorf("temporal structure holdout authoring did not produce %d unique blinded cases", TemporalStructureHoldoutCases)
 	}
 	return authoring, receipt, nil
+}
+
+func constructTemporalStructureHoldoutProgrammeSpots(seed string, parents []TemporalStructureChallengeSource, anchors []temporalStructureHoldoutSelectedAnchor) ([]TemporalStructureChallengeCase, []TemporalStructureHoldoutProgrammeSpot) {
+	const programmePartMS int64 = 20_000
+	var cases []TemporalStructureChallengeCase
+	var receipts []TemporalStructureHoldoutProgrammeSpot
+	anchorIndex := 0
+	for _, parent := range parents {
+		patterns := []struct {
+			name        string
+			beforeStart int64
+			afterStart  int64
+		}{
+			{name: "early_insert", beforeStart: 10_000, afterStart: 30_000},
+			{name: "late_insert", beforeStart: parent.DurationMS - 50_000, afterStart: parent.DurationMS - 30_000},
+		}
+		for _, pattern := range patterns {
+			anchor := anchors[anchorIndex]
+			anchorIndex++
+			caseID := temporalStructureHoldoutCaseID(seed, "programme_with_spots", fmt.Sprintf("%s\x00%s\x00%s", parent.ID, anchor.source.ID, pattern.name))
+			cases = append(cases, TemporalStructureChallengeCase{
+				ID: caseID, Unit: fillereval.UnitProgrammeSpots,
+				Slices: []string{map[string]string{"early_insert": TemporalStructureSliceSpotEarly, "late_insert": TemporalStructureSliceSpotLate}[pattern.name]},
+				Segments: []TemporalStructureChallengeSegment{
+					{SourceID: parent.ID, StartMS: pattern.beforeStart, DurationMS: programmePartMS},
+					{SourceID: anchor.source.ID, DurationMS: anchor.source.DurationMS},
+					{SourceID: parent.ID, StartMS: pattern.afterStart, DurationMS: programmePartMS},
+				},
+			})
+			receipts = append(receipts, TemporalStructureHoldoutProgrammeSpot{
+				CaseID: caseID, ParentSourceID: parent.ID, FillerSourceID: anchor.source.ID, Pattern: pattern.name,
+				ParentDurationMS: parent.DurationMS, BeforeSourceStartMS: pattern.beforeStart, AfterSourceStartMS: pattern.afterStart,
+				ProgrammePartMS: programmePartMS, FillerDurationMS: anchor.source.DurationMS, FillerRole: anchor.receipt.Role,
+			})
+		}
+	}
+	return cases, receipts
 }
 
 func constructTemporalStructureHoldoutCompilations(seed string, selected []temporalStructureHoldoutSelectedAnchor) ([]TemporalStructureChallengeCase, []TemporalStructureHoldoutCompilation, error) {
@@ -96,8 +149,10 @@ func constructTemporalStructureHoldoutCompilations(seed string, selected []tempo
 		first, second := selected[item.first], selected[item.second]
 		durationMS := first.source.DurationMS + second.source.DurationMS
 		caseID := temporalStructureHoldoutCaseID(seed, "compilation", first.source.ID+"\x00"+second.source.ID)
+		roles := []fillereval.TemporalRole{first.receipt.Role, second.receipt.Role}
 		cases = append(cases, TemporalStructureChallengeCase{
 			ID: caseID, Unit: fillereval.UnitCompilation,
+			Slices: []string{temporalStructureMultiTrait(roles), TemporalStructureSliceTwoItemCompilation},
 			Segments: []TemporalStructureChallengeSegment{
 				{SourceID: first.source.ID, DurationMS: first.source.DurationMS},
 				{SourceID: second.source.ID, DurationMS: second.source.DurationMS},
@@ -106,7 +161,7 @@ func constructTemporalStructureHoldoutCompilations(seed string, selected []tempo
 		receipts = append(receipts, TemporalStructureHoldoutCompilation{
 			CaseID: caseID, FirstSourceID: first.source.ID, SecondSourceID: second.source.ID,
 			JoinBand: item.band, TransitionStratum: item.stratum, JoinAtMS: first.source.DurationMS, DurationMS: durationMS,
-			Roles: []string{string(first.receipt.Role), string(second.receipt.Role)},
+			Roles: []string{string(roles[0]), string(roles[1])},
 		})
 	}
 	return cases, receipts, nil
@@ -221,23 +276,20 @@ func temporalStructureHoldoutJoinBand(joinAtMS, durationMS int64) string {
 func constructTemporalStructureHoldoutProgrammeCuts(seed string, parents []TemporalStructureChallengeSource) ([]TemporalStructureChallengeCase, []TemporalStructureHoldoutProgrammeCut) {
 	var cases []TemporalStructureChallengeCase
 	var receipts []TemporalStructureHoldoutProgrammeCut
-	for parentIndex, parent := range parents {
-		allCuts := map[string]struct {
+	for _, parent := range parents {
+		cuts := []struct {
 			pattern    string
 			start      int64
 			durationMS int64
 		}{
-			"dependent_start": {pattern: "dependent_start", start: 10_000, durationMS: 30_000},
-			"dependent_end":   {pattern: "dependent_end", start: parent.DurationMS - 55_000, durationMS: 45_000},
-			"both_edges":      {pattern: "both_edges", start: (parent.DurationMS - 45_000) / 2, durationMS: 45_000},
+			{pattern: "near_parent_start", start: 10_000, durationMS: 30_000},
+			{pattern: "near_parent_end", start: parent.DurationMS - 55_000, durationMS: 45_000},
 		}
-		patternPairs := [][2]string{{"dependent_start", "dependent_end"}, {"dependent_start", "both_edges"}, {"dependent_end", "both_edges"}}
-		patterns := patternPairs[parentIndex%len(patternPairs)]
-		for _, pattern := range patterns {
-			cut := allCuts[pattern]
+		for _, cut := range cuts {
 			caseID := temporalStructureHoldoutCaseID(seed, "programme_excerpt", fmt.Sprintf("%s\x00%s\x00%d\x00%d", parent.ID, cut.pattern, cut.start, cut.durationMS))
 			cases = append(cases, TemporalStructureChallengeCase{
 				ID: caseID, Unit: fillereval.UnitProgrammeExcerpt,
+				Slices:   []string{map[string]string{"near_parent_start": TemporalStructureSliceProgrammeNearStart, "near_parent_end": TemporalStructureSliceProgrammeNearEnd}[cut.pattern]},
 				Segments: []TemporalStructureChallengeSegment{{SourceID: parent.ID, StartMS: cut.start, DurationMS: cut.durationMS}},
 			})
 			receipts = append(receipts, TemporalStructureHoldoutProgrammeCut{

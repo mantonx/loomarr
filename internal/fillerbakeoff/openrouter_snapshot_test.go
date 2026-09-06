@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -48,6 +49,58 @@ func TestFetchOpenRouterSnapshotLocksEndpointIdentityPriceCapabilityAndZDR(t *te
 	}
 	if len(OpenRouterSnapshotSHA256(snapshot)) != 64 {
 		t.Fatal("snapshot has no digest")
+	}
+}
+
+func TestFetchOpenRouterSnapshotPreservesTieredEndpointPricing(t *testing.T) {
+	t.Parallel()
+	tiered := strings.Replace(
+		snapshotEndpointFixture("vendor/model-1", "Pinned Provider", "pinned-provider/variant"),
+		`"discount":0.25}`,
+		`"discount":0.25,"overrides":[{"min_prompt_tokens":200000,"prompt":"0.000002","completion":"0.000009"}]}`,
+		1,
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/models":
+			_, _ = io.WriteString(writer, `{"data":[{"id":"vendor/model-1","canonical_slug":"vendor/model-1-20260826","name":"Model One","created":1}]}`)
+		case "/endpoints/zdr":
+			_, _ = io.WriteString(writer, `{"data":[`+tiered+`]}`)
+		case "/models/vendor/model-1/endpoints":
+			_, _ = io.WriteString(writer, `{"data":{"id":"vendor/model-1","name":"Model One","created":1,"architecture":{"input_modalities":["text","video"],"output_modalities":["text"]},"endpoints":[`+tiered+`]}}`)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	snapshot, err := FetchOpenRouterSnapshot(context.Background(), OpenRouterSnapshotConfig{
+		BaseURL: server.URL, APIKey: "secret", Models: []string{"vendor/model-1"},
+		RetrievedAt: time.Date(2026, 9, 5, 2, 30, 0, 0, time.UTC), Client: server.Client(), AllowInsecureTestURL: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	overrides := snapshot.Models[0].Endpoints[0].PricingOverrides
+	if len(overrides) != 1 || overrides[0].MinimumPromptTokens != 200_000 ||
+		overrides[0].Pricing["prompt"] != "0.000002" || overrides[0].Pricing["completion"] != "0.000009" {
+		t.Fatalf("pricing overrides = %+v", overrides)
+	}
+}
+
+func TestValidateOpenRouterSnapshotReplaysLegacyTierlessSchema(t *testing.T) {
+	t.Parallel()
+	snapshot := validOpenRouterSnapshot()
+	snapshot.SchemaVersion = legacyOpenRouterSnapshotSchema
+	if err := ValidateOpenRouterSnapshot(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Models[0].Endpoints[0].PricingOverrides = []OpenRouterPricingOverride{{
+		MinimumPromptTokens: 200_000,
+		Pricing:             map[string]string{"prompt": "0.000002"},
+	}}
+	if err := ValidateOpenRouterSnapshot(snapshot); err == nil || !strings.Contains(err.Error(), "cannot contain pricing overrides") {
+		t.Fatalf("legacy tier validation error=%v", err)
 	}
 }
 

@@ -16,6 +16,8 @@ import (
 	"github.com/loomarr/loomarr/internal/filler"
 	"github.com/loomarr/loomarr/internal/fillerdecision"
 	"github.com/loomarr/loomarr/internal/fillersafety"
+	"github.com/loomarr/loomarr/internal/fillerstructure"
+	"github.com/loomarr/loomarr/internal/fillerstructurewindow"
 	"github.com/loomarr/loomarr/internal/inventory"
 	"github.com/loomarr/loomarr/internal/invitation"
 	"github.com/loomarr/loomarr/internal/notifications"
@@ -495,6 +497,11 @@ type SplitProposalStore interface {
 	// CompleteSplitConfirmation atomically transitions a fully reviewed split proposal, retained
 	// parent, replacement pipelines, and selected child generation (§10 V65).
 	CompleteSplitConfirmation(ctx context.Context, completion filler.SplitCompletion) (int, error)
+	// Put/ListStructureSplitShadowDecisions own the immutable V67 compatibility-versus-complete-
+	// plan history. It survives proposal consumption so publication cannot erase disagreement.
+	PutStructureSplitShadowDecision(ctx context.Context, decision filler.StructureSplitShadowDecision) error
+	GetStructureSplitShadowDecision(ctx context.Context, id string) (filler.StructureSplitShadowDecision, bool, error)
+	ListStructureSplitShadowDecisions(ctx context.Context, clipHash string, limit int) ([]filler.StructureSplitShadowDecision, error)
 
 	// --- The per-clip ingest pipeline (§10 V51b, migration 00044) ---
 	//
@@ -586,6 +593,19 @@ type FillerInferenceStore interface {
 	ListInferenceEvaluations(ctx context.Context, filter InferenceEvaluationFilter) ([]InferenceEvaluation, error)
 }
 
+// FillerStructureAssessmentStore owns the structure-specific journal layered over shared filler
+// inference accounting. Duplicate requests remain visible conflicts rather than implicit retries.
+type FillerStructureAssessmentStore interface {
+	ReserveStructureAssessment(context.Context, fillerstructure.AssessmentReservation, InferenceBudget) (fillerstructure.AssessmentReservationState, error)
+	SettleStructureAssessment(context.Context, fillerstructure.AssessmentRecord) error
+	GetStructureAssessmentLedgerEntry(context.Context, string) (fillerstructure.AssessmentLedgerEntry, error)
+	ListOpenStructureAssessmentLedgerEntries(context.Context, int) ([]fillerstructure.AssessmentLedgerEntry, error)
+	ReserveStructureWindowCall(context.Context, fillerstructurewindow.CallReservation, InferenceBudget) (fillerstructurewindow.CallReservationState, error)
+	SettleStructureWindowCall(context.Context, fillerstructurewindow.CallRecord) error
+	GetStructureWindowCallLedgerEntry(context.Context, string) (fillerstructurewindow.CallLedgerEntry, error)
+	ListOpenStructureWindowCallLedgerEntries(context.Context, int) ([]fillerstructurewindow.CallLedgerEntry, error)
+}
+
 // FillerDecisionStore owns immutable V63 admission results and append-only
 // operator actions. Projection rules remain in fillerdecision.Service.
 type FillerDecisionStore interface {
@@ -600,6 +620,13 @@ type FillerSafetyStore interface {
 	ReserveSpokenSafetyInference(context.Context, SpokenSafetyInferenceReservation, InferenceEvaluation, InferenceBudget) (InferenceEvaluation, fillersafety.LedgerEvent, error)
 	SettleSpokenSafetyInference(context.Context, SpokenSafetyInferenceSettlement, InferenceSettlement) (InferenceEvaluation, fillersafety.LedgerEvent, error)
 	RecoverInterruptedSpokenSafetyRuns(context.Context, time.Time) (int, error)
+}
+
+// FillerRightsStore is the append-only operator-reviewed rights authority used by both rendered-
+// child screening and terminal release. Current-time interpretation remains in filler.Registry;
+// the store owns only immutable history and the atomic current-head pointer.
+type FillerRightsStore interface {
+	filler.FillerRightsGrantRepository
 }
 
 // FillerSourceStore is the persisted REMOTE filler-source registry (§10, V33).
@@ -845,8 +872,10 @@ type Store interface {
 	FillerAcquisitionStore
 	InteractiveOperationStore
 	FillerInferenceStore
+	FillerStructureAssessmentStore
 	FillerDecisionStore
 	FillerSafetyStore
+	FillerRightsStore
 	SplitProposalStore
 	AiringStore
 	ActivityStore

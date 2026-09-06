@@ -20,6 +20,7 @@ const (
 	StageProbe      StageID = "probe"
 	StageTranscode  StageID = "transcode"
 	StageSplit      StageID = "split"
+	StageScreen     StageID = "screen"
 	StageLanguage   StageID = "language"
 	StageTranscribe StageID = "transcribe"
 	StageTag        StageID = "tag"
@@ -34,12 +35,13 @@ const (
 // ⚠ Order is not arbitrary. `probe` measures the file everything else reasons about; `transcode`
 // rewrites bytes so it must precede anything that hashes or reads frames; `split` spawns new
 // clips, so it runs before the per-clip metadata rungs that those children will each need;
+// `screen` evaluates only those children after their final transcode and before enrichment;
 // `transcribe` must precede `tag` because the transcript is one of the text signals `tag` grounds
 // against (running them the other way round is what the cron schedule did, and why a clip could
 // be scored low against a transcript that arrived ten minutes later); `admission` durably records
 // the V61 shadow before `score`, and `score` remains last while it owns V38 compatibility filing.
 var StageOrder = []StageID{
-	StageProbe, StageTranscode, StageSplit, StageLanguage,
+	StageProbe, StageTranscode, StageSplit, StageScreen, StageLanguage,
 	StageTranscribe, StageTag, StageVision, StageAdmission, StageScore,
 }
 
@@ -55,6 +57,22 @@ func StageIndex(id StageID) int {
 		}
 	}
 	return -1
+}
+
+// SegmentScreeningCompleted reports that a child advanced beyond the screening rung through its
+// ordinary success path. A StatusDone record alone is insufficient because review verdicts also
+// close their current rung before waiting on a person; requiring the row to be later in the ladder
+// prevents a manual filing action from turning an unresolved screen into release authority.
+func SegmentScreeningCompleted(row ClipPipeline) bool {
+	if StageIndex(row.Stage) <= StageIndex(StageScreen) {
+		return false
+	}
+	for _, record := range row.Stages {
+		if record.Stage == StageScreen && record.Status == StatusDone {
+			return true
+		}
+	}
+	return false
 }
 
 // StageStatus is how the CURRENT stage is going.

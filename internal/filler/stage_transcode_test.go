@@ -455,6 +455,9 @@ func TestTranscodeStage_RestartHoldsMalformedOrUnboundConditioningEvidence(t *te
 		{name: "empty intended interval", mutate: func(lineage *ConditioningLineage, _ *ConditioningEvidence, _ *MediaQuality, _ *StoreClip) {
 			lineage.IntendedEndMs = lineage.IntendedStartMs
 		}},
+		{name: "invalid structure decision identity", mutate: func(lineage *ConditioningLineage, _ *ConditioningEvidence, _ *MediaQuality, _ *StoreClip) {
+			lineage.StructureDecisionSHA256 = "not-a-digest"
+		}},
 		{name: "parent is airable", mutate: func(_ *ConditioningLineage, _ *ConditioningEvidence, _ *MediaQuality, parent *StoreClip) {
 			parent.IsComposite = false
 		}},

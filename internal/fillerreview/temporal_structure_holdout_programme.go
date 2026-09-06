@@ -13,9 +13,11 @@ import (
 	"github.com/loomarr/loomarr/internal/fillerreference"
 )
 
-const TemporalStructureHoldoutProgrammeInventoryContract = "filler-temporal-structure-programme-inventory-v2"
-
-const temporalStructureProgrammeEvidenceMaxBytes = 16 << 20
+const (
+	TemporalStructureHoldoutProgrammeInventorySchemaVersion = 1
+	TemporalStructureHoldoutProgrammeInventoryContract      = "filler-temporal-structure-programme-inventory-v2"
+	temporalStructureProgrammeEvidenceMaxBytes              = 16 << 20
+)
 
 func loadTemporalStructureHoldoutProgrammeInventory(path, sourceRoot string, ledger fillerreference.DownloadLedger, plannedAt time.Time) (TemporalStructureHoldoutProgrammeInventory, string, error) {
 	raw, err := os.ReadFile(path)
@@ -26,7 +28,7 @@ func loadTemporalStructureHoldoutProgrammeInventory(path, sourceRoot string, led
 	if err != nil {
 		return TemporalStructureHoldoutProgrammeInventory{}, "", err
 	}
-	if inventory.SchemaVersion != TemporalStructureHoldoutSchemaVersion || inventory.ContractVersion != TemporalStructureHoldoutProgrammeInventoryContract || inventory.GeneratedAt.IsZero() || plannedAt.Before(inventory.GeneratedAt) || len(inventory.Sources) < temporalStructureHoldoutParentSources {
+	if inventory.SchemaVersion != TemporalStructureHoldoutProgrammeInventorySchemaVersion || inventory.ContractVersion != TemporalStructureHoldoutProgrammeInventoryContract || inventory.GeneratedAt.IsZero() || plannedAt.Before(inventory.GeneratedAt) || len(inventory.Sources) < temporalStructureHoldoutParentSources {
 		return TemporalStructureHoldoutProgrammeInventory{}, "", fmt.Errorf("temporal structure holdout programme inventory is incomplete")
 	}
 	seenIDs, seenPaths, seenSHA := map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}

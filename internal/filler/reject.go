@@ -64,6 +64,9 @@ const (
 	ReasonUnplayable RejectReason = "unplayable"
 	ReasonLanguage   RejectReason = "language"
 	ReasonDuplicate  RejectReason = "duplicate"
+	// ReasonScreening is an authority-bound rendered-child refusal. Details name only the failed
+	// axis; restricted phrases and visual descriptions stay in the private evidence repository.
+	ReasonScreening RejectReason = "screening"
 	// ReasonSliver — a sub-floor split fragment with no speech (§10 V45): dropped, not reviewed.
 	ReasonSliver RejectReason = "sliver"
 	// ReasonUnidentified — every signal tier ran and grounded NOTHING: no era, audience, tag,

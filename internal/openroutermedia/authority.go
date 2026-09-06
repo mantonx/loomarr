@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	CapabilitySnapshotSchemaVersion = 2
+	CapabilitySnapshotSchemaVersion = 3
+	legacyCapabilitySnapshotSchema  = 2
 	maxCapabilityModels             = 16
 	maxCapabilityEndpoints          = 256
+	maxCapabilityPricingOverrides   = 4
 	maxCapabilityResponseBytes      = 32 << 20
 	maxCapabilityFieldBytes         = 512
 	maxCapabilityAge                = 24 * time.Hour
@@ -54,9 +56,17 @@ type CapabilityEndpointSnapshot struct {
 	MaxPromptTokens       int64             `json:"maxPromptTokens,omitempty"`
 	SupportedParameters   []string          `json:"supportedParameters"`
 	Pricing               map[string]string `json:"pricing"`
+	PricingOverrides      []PricingOverride `json:"pricingOverrides,omitempty"`
 	Status                int               `json:"status"`
 	ZDR                   bool              `json:"zdr"`
 	SupportsImplicitCache bool              `json:"supportsImplicitCaching"`
+}
+
+// PricingOverride records a prompt-token pricing tier. Its pricing fields
+// override, rather than replace, the endpoint's base pricing.
+type PricingOverride struct {
+	MinimumPromptTokens int64             `json:"minimumPromptTokens"`
+	Pricing             map[string]string `json:"pricing"`
 }
 
 // RouteRequirements identifies the exact route and request capabilities that
@@ -206,8 +216,8 @@ func CapabilitySnapshotSHA256(snapshot CapabilitySnapshot) string {
 
 func ValidateCapabilitySnapshot(snapshot CapabilitySnapshot) error {
 	parsedSource, sourceErr := url.Parse(snapshot.SourceBaseURL)
-	if snapshot.SchemaVersion != CapabilitySnapshotSchemaVersion || sourceErr != nil || parsedSource.Host == "" || snapshot.RetrievedAt.IsZero() || snapshot.RetrievedAt.Location() != time.UTC {
-		return fmt.Errorf("OpenRouter snapshot requires schema %d and a UTC retrieval time", CapabilitySnapshotSchemaVersion)
+	if (snapshot.SchemaVersion != legacyCapabilitySnapshotSchema && snapshot.SchemaVersion != CapabilitySnapshotSchemaVersion) || sourceErr != nil || parsedSource.Host == "" || snapshot.RetrievedAt.IsZero() || snapshot.RetrievedAt.Location() != time.UTC {
+		return fmt.Errorf("OpenRouter snapshot requires supported schema %d or %d and a UTC retrieval time", legacyCapabilitySnapshotSchema, CapabilitySnapshotSchemaVersion)
 	}
 	if len(snapshot.Models) == 0 || len(snapshot.Models) > maxCapabilityModels || snapshot.Requests != len(snapshot.Models)+2 || snapshot.ResponseBytes <= 0 || snapshot.ResponseBytes > maxCapabilityResponseBytes {
 		return fmt.Errorf("OpenRouter snapshot has invalid bounded request, response, or model counts")
@@ -232,21 +242,44 @@ func ValidateCapabilitySnapshot(snapshot CapabilitySnapshot) error {
 				return fmt.Errorf("OpenRouter snapshot model %q repeats endpoint %q", model.ID, endpoint.ProviderSlug)
 			}
 			seen[key] = struct{}{}
-			if endpoint.Name == "" || endpoint.ModelID != model.ID || endpoint.ProviderName == "" || endpoint.ProviderSlug == "" || requiresContext && endpoint.ContextLength <= 0 || !requiresContext && endpoint.ContextLength < 0 || endpoint.MaxCompletionTokens < 0 || endpoint.MaxPromptTokens < 0 || !canonicalStrings(endpoint.SupportedParameters) || len(endpoint.Pricing) == 0 || len(endpoint.Pricing) > 32 {
+			if snapshot.SchemaVersion == legacyCapabilitySnapshotSchema && len(endpoint.PricingOverrides) > 0 {
+				return fmt.Errorf("OpenRouter snapshot schema %d cannot contain pricing overrides", legacyCapabilitySnapshotSchema)
+			}
+			if endpoint.Name == "" || endpoint.ModelID != model.ID || endpoint.ProviderName == "" || endpoint.ProviderSlug == "" || requiresContext && endpoint.ContextLength <= 0 || !requiresContext && endpoint.ContextLength < 0 || endpoint.MaxCompletionTokens < 0 || endpoint.MaxPromptTokens < 0 || !canonicalStrings(endpoint.SupportedParameters) || len(endpoint.PricingOverrides) > maxCapabilityPricingOverrides {
 				return fmt.Errorf("OpenRouter snapshot model %q has an invalid endpoint", model.ID)
 			}
-			for priceName, price := range endpoint.Pricing {
-				if priceName == "" || len(priceName) > maxCapabilityFieldBytes || price == "" || len(price) > 128 {
-					return fmt.Errorf("OpenRouter snapshot endpoint %q has invalid pricing", endpoint.ProviderSlug)
+			if err := validateCapabilityPricing(endpoint.ProviderSlug, endpoint.Pricing); err != nil {
+				return err
+			}
+			previousThreshold := int64(0)
+			for _, override := range endpoint.PricingOverrides {
+				if override.MinimumPromptTokens <= previousThreshold {
+					return fmt.Errorf("OpenRouter snapshot endpoint %q pricing overrides are not canonical", endpoint.ProviderSlug)
 				}
-				if _, err := fillereval.USDToNanoCeil(price); err != nil {
-					return fmt.Errorf("OpenRouter snapshot endpoint %q price %q: %w", endpoint.ProviderSlug, priceName, err)
+				previousThreshold = override.MinimumPromptTokens
+				if err := validateCapabilityPricing(endpoint.ProviderSlug, override.Pricing); err != nil {
+					return err
 				}
 			}
 		}
 	}
 	if !canonicalStrings(modelIDs) {
 		return fmt.Errorf("OpenRouter snapshot model identities are not canonical")
+	}
+	return nil
+}
+
+func validateCapabilityPricing(providerSlug string, pricing map[string]string) error {
+	if len(pricing) == 0 || len(pricing) > 32 {
+		return fmt.Errorf("OpenRouter snapshot endpoint %q has invalid bounded pricing", providerSlug)
+	}
+	for name, price := range pricing {
+		if name == "" || len(name) > maxCapabilityFieldBytes || price == "" || len(price) > 128 {
+			return fmt.Errorf("OpenRouter snapshot endpoint %q has invalid bounded pricing", providerSlug)
+		}
+		if _, err := fillereval.USDToNanoCeil(price); err != nil {
+			return fmt.Errorf("OpenRouter snapshot endpoint %q price %q: %w", providerSlug, name, err)
+		}
 	}
 	return nil
 }

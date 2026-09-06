@@ -261,7 +261,7 @@ func callOpenRouterTemporalClaim(ctx context.Context, client *http.Client, baseU
 		Authority: authority, APIKey: config.APIKey, Model: config.Model, ResolvedModel: model.CanonicalSlug,
 		UpstreamProvider: config.UpstreamProvider, ProviderSlug: config.UpstreamProviderSlug,
 		SchemaName: schemaName, Schema: schema, SystemPrompt: prompt, Content: content, Images: images,
-		MaxTokens: 1024, MaxChargeNanoUSD: config.MaxChargeNanoUSD, DisableReasoning: true,
+		MaxTokens: 1024, ReservationNanoUSD: config.MaxChargeNanoUSD, DisableReasoning: true,
 		Title: "Loomarr filler temporal calibration",
 		Reserve: func(requestSHA256 string) error {
 			spent, spendErr := temporalOpenRouterCheckpointSpend(*checkpoint)
@@ -338,6 +338,9 @@ func temporalFailedAssessment(alias string, assessedAt time.Time, calls []filler
 func classifyTemporalOpenRouterFailure(ctx context.Context, result openroutermedia.Result, err error) *temporalCallError {
 	if errors.Is(err, errTemporalOpenRouterBudget) {
 		return &temporalCallError{code: fillereval.TemporalFailureContextExhausted, detail: err.Error()}
+	}
+	if errors.Is(err, openroutermedia.ErrChargeExceedsReservation) {
+		return &temporalCallError{code: fillereval.TemporalFailureProvider, detail: err.Error()}
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return &temporalCallError{code: fillereval.TemporalFailureTimeout, detail: "per-case inference deadline exceeded", retryable: true}

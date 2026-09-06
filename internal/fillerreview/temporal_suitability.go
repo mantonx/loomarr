@@ -207,9 +207,12 @@ func assessOpenRouterSuitabilityCase(ctx context.Context, client *http.Client, b
 		UpstreamProvider: config.UpstreamProvider, ProviderSlug: config.UpstreamProviderSlug,
 		SchemaName: "filler_suitability", Schema: temporalSuitabilitySchema(item.DurationMS),
 		SystemPrompt: temporalSuitabilitySystemPrompt, Content: temporalSuitabilityContent(item),
-		Videos:    []openroutermedia.Video{{MIMEType: "video/mp4", Base64: base64.StdEncoding.EncodeToString(video)}},
-		MaxTokens: temporalSuitabilityMaxTokens, MaxChargeNanoUSD: config.MaxChargeNanoUSD, DisableReasoning: config.ReasoningMode == TemporalSuitabilityReasoningDisabled,
-		Title: temporalSuitabilityRequestTitle,
+		Videos:             []openroutermedia.Video{{MIMEType: "video/mp4", Base64: base64.StdEncoding.EncodeToString(video)}},
+		MaxTokens:          temporalSuitabilityMaxTokens,
+		ReservationNanoUSD: config.MaxChargeNanoUSD,
+		DisableReasoning:   config.ReasoningMode == TemporalSuitabilityReasoningDisabled,
+		EnableReasoning:    config.ReasoningMode == TemporalSuitabilityReasoningRequired,
+		Title:              temporalSuitabilityRequestTitle,
 		Reserve: func(requestSHA string) error {
 			spent, spendErr := temporalSuitabilityCheckpointSpend(*checkpoint)
 			if spendErr != nil {

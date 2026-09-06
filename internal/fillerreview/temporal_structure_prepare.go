@@ -77,6 +77,9 @@ func prepareTemporalStructureCase(config TemporalStructureChallengeConfig, item 
 	if strings.TrimSpace(item.ID) == "" || len(item.Segments) == 0 {
 		return temporalStructurePreparedCase{}, fmt.Errorf("id and segments are required")
 	}
+	if err := validateTemporalStructureSlices(item.Slices); err != nil {
+		return temporalStructurePreparedCase{}, err
+	}
 	result := temporalStructurePreparedCase{spec: item}
 	for index, segment := range item.Segments {
 		source, exists := sources[segment.SourceID]
@@ -107,6 +110,25 @@ func prepareTemporalStructureCase(config TemporalStructureChallengeConfig, item 
 		segment := item.Segments[0]
 		if len(item.Segments) != 1 || item.Role != "" || source.Provenance.Kind != TemporalStructureSourceProgrammeParent || segment.StartMS < 5_000 || segment.StartMS+segment.DurationMS > source.DurationMS-5_000 {
 			return temporalStructurePreparedCase{}, fmt.Errorf("programme excerpt requires one interior cut with five-second parent margins")
+		}
+	case fillereval.UnitProgrammeSpots:
+		if item.Role != "" || len(item.Segments) < 3 {
+			return temporalStructurePreparedCase{}, fmt.Errorf("programme with spots requires programme material around at least one bounded filler item and no role")
+		}
+		programmeParts, fillerParts := 0, 0
+		for index, source := range result.sources {
+			switch source.Provenance.Kind {
+			case TemporalStructureSourceProgrammeParent:
+				programmeParts++
+			case TemporalStructureSourceBoundedItem:
+				if !wholeBoundedTemporalSource(item.Segments[index], source) {
+					return temporalStructurePreparedCase{}, fmt.Errorf("programme-with-spots filler segment %d is not one whole bounded item", index)
+				}
+				fillerParts++
+			}
+		}
+		if programmeParts < 2 || fillerParts < 1 {
+			return temporalStructurePreparedCase{}, fmt.Errorf("programme with spots requires programme material around at least one bounded filler item and no role")
 		}
 	default:
 		return temporalStructurePreparedCase{}, fmt.Errorf("unit %q has no provenance-grounded construction", item.Unit)
@@ -185,12 +207,13 @@ func auditTemporalStructureChallengeLeakage(publicRoot string, authoring Tempora
 	if err != nil {
 		return err
 	}
-	secrets := []string{string(fillereval.UnitStandalone), string(fillereval.UnitCompilation), string(fillereval.UnitProgrammeExcerpt)}
+	secrets := []string{string(fillereval.UnitStandalone), string(fillereval.UnitCompilation), string(fillereval.UnitProgrammeExcerpt), string(fillereval.UnitProgrammeSpots)}
 	for _, source := range authoring.Sources {
 		secrets = append(secrets, source.ID, source.Path, source.Provenance.Authority, source.Provenance.Reference, source.Provenance.MetadataSHA256)
 	}
 	for _, item := range authoring.Cases {
 		secrets = append(secrets, item.ID)
+		secrets = append(secrets, item.Slices...)
 	}
 	if receipt != nil {
 		secrets = append(secrets, receipt.SeedSHA256, receipt.AuthoringSHA256)
@@ -207,6 +230,24 @@ func auditTemporalStructureChallengeLeakage(publicRoot string, authoring Tempora
 	for _, secret := range secrets {
 		if strings.TrimSpace(secret) != "" && strings.Contains(string(public), secret) {
 			return fmt.Errorf("public challenge leaks coordinator-private value %q", secret)
+		}
+	}
+	return nil
+}
+
+func validateTemporalStructureSlices(slices []string) error {
+	allowed := map[string]struct{}{
+		TemporalStructureSliceTwoItemCompilation: {}, TemporalStructureSliceThreeItemCompilation: {},
+		TemporalStructureSliceAdjacentSameRole: {}, TemporalStructureSliceMixedRoleJoins: {},
+		TemporalStructureSliceProgrammeNearStart: {}, TemporalStructureSliceProgrammeNearEnd: {},
+		TemporalStructureSliceSpotEarly: {}, TemporalStructureSliceSpotLate: {},
+	}
+	if !sort.StringsAreSorted(slices) {
+		return fmt.Errorf("challenge slices are not ordered")
+	}
+	for index, slice := range slices {
+		if _, ok := allowed[slice]; !ok || index > 0 && slice == slices[index-1] {
+			return fmt.Errorf("challenge contains an unknown or repeated slice")
 		}
 	}
 	return nil

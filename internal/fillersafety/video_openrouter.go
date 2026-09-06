@@ -120,7 +120,7 @@ func (c *openRouterVideoCorroborator) corroborate(
 		SystemPrompt: videoSystemPrompt,
 		Content:      fmt.Sprintf("Duration milliseconds: %d. Inspect the complete supplied video without identifying its source.", plan.Video.EndMS),
 		Videos:       []openroutermedia.Video{{MIMEType: mimeType, Base64: base64.StdEncoding.EncodeToString(video)}},
-		MaxTokens:    videoMaxTokens, MaxChargeNanoUSD: c.config.MaxChargeNanoUSD,
+		MaxTokens:    videoMaxTokens, ReservationNanoUSD: c.config.MaxChargeNanoUSD,
 		DisableReasoning: c.config.DisableReasoning,
 		Title:            "Loomarr spoken-safety complete-video corroboration",
 		Reserve:          reserve,
