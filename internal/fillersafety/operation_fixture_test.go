@@ -61,8 +61,12 @@ func newOperationFixture(t *testing.T, intervals []proposedInterval) operationFi
 	proposer := proposalRecorder(identity, intervals)
 	audioResult := &operationAudioResult{state: AudioAbsent}
 	audio := &recordfixture.Recorder[Candidate, audioAttempt]{Respond: func(candidate Candidate) (audioAttempt, error) {
+		matchedRuleIDs := []string{}
+		if audioResult.state == AudioDetected {
+			matchedRuleIDs = []string{"rule-000000000000000000000001"}
+		}
 		return audioAttempt{
-			Assessment: AudioAssessment{CandidateID: candidate.ID, State: audioResult.state}, MatchedRuleIDs: []string{},
+			Assessment: AudioAssessment{CandidateID: candidate.ID, State: audioResult.state}, MatchedRuleIDs: matchedRuleIDs,
 			Transport: hostedTransportFixture("audio", audioResult.unknownCharge),
 		}, audioResult.err
 	}}
@@ -125,7 +129,7 @@ func recordedRepository(state *operationRepositoryState) *recordedExecutionRepos
 				reservationState, reserved = ReservationHeldBudget, 0
 			}
 			event := LedgerEvent{ID: command.EventID, RunID: command.RunID, Ordinal: command.Ordinal, Kind: LedgerInferenceReserved, CreatedAt: command.CreatedAt,
-				Reserve: &InferenceReserved{EvaluationID: command.EvaluationID, RequestSHA256: command.RequestSHA256, RequestedProvider: command.RequestedProvider, RequestedModel: command.RequestedModel, UpstreamProvider: command.UpstreamProvider, CapabilitySHA256: command.Versions.CapabilitySHA256, PromptSHA256: command.Versions.PromptSHA256, CandidateID: command.CandidateID, Modalities: slices.Clone(command.Modalities), RequestedNanoUSD: command.RequestedNanoUSD, ReservedNanoUSD: reserved, State: reservationState}}
+				Reserve: &InferenceReserved{EvaluationID: command.EvaluationID, RequestSHA256: command.RequestSHA256, RequestedProvider: command.RequestedProvider, RequestedModel: command.RequestedModel, UpstreamProvider: command.UpstreamProvider, Role: command.Role, Rung: command.Rung, CapabilitySHA256: command.Versions.CapabilitySHA256, PromptSHA256: command.Versions.PromptSHA256, SchemaSHA256: command.Versions.SchemaSHA256, CandidateID: command.CandidateID, Modalities: slices.Clone(command.Modalities), DerivativeBytes: command.DerivativeBytes, DerivativeDurationMS: command.DerivativeDurationMS, DerivativePixels: command.DerivativePixels, RequestedNanoUSD: command.RequestedNanoUSD, ReservedNanoUSD: reserved, State: reservationState}}
 			return event, nil
 		},
 		SettleFunc: func(ctx context.Context, command HostedCallSettlement) (LedgerEvent, error) {

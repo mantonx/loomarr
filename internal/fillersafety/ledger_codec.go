@@ -2,8 +2,11 @@ package fillersafety
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
+	"time"
 )
 
 // CanonicalLedgerEvent validates an event and returns the exact payload bytes
@@ -27,6 +30,30 @@ func CanonicalLedgerEvent(event LedgerEvent) ([]byte, error) {
 		return nil, ErrLedgerInvalid
 	}
 	return raw, nil
+}
+
+// LedgerEventSHA256 binds the complete canonical event identity, not merely
+// its payload, so a certification manifest can name exactly one terminal.
+func LedgerEventSHA256(event LedgerEvent) (string, error) {
+	payload, err := CanonicalLedgerEvent(event)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(struct {
+		ID        string          `json:"id"`
+		RunID     string          `json:"runId"`
+		Ordinal   int             `json:"ordinal"`
+		Kind      LedgerEventKind `json:"kind"`
+		CreatedAt string          `json:"createdAt"`
+		Payload   json.RawMessage `json:"payload"`
+	}{
+		ID: event.ID, RunID: event.RunID, Ordinal: event.Ordinal, Kind: event.Kind,
+		CreatedAt: event.CreatedAt.UTC().Format(time.RFC3339Nano), Payload: payload,
+	})
+	if err != nil || len(raw) > maxLedgerPayload+maxLedgerIDBytes*2+256 {
+		return "", ErrLedgerInvalid
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(raw)), nil
 }
 
 func DecodeLedgerEvent(kind LedgerEventKind, raw []byte) (LedgerEvent, error) {

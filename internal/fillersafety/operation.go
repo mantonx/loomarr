@@ -90,7 +90,7 @@ func (o *evaluationOperation) Evaluate(ctx context.Context, request EvaluationRe
 	if err := o.repository.AppendSpokenSafetyEvent(ctx, terminal); err != nil {
 		return EvaluationReport{}, err
 	}
-	return EvaluationReport{Run: run, Evidence: completed.Evidence, Result: completed.Result}, nil
+	return evaluationReport(run, terminal)
 }
 
 func (o *evaluationOperation) completedReport(ctx context.Context, run LedgerRun) (EvaluationReport, error) {
@@ -117,7 +117,21 @@ func (o *evaluationOperation) completedReport(ctx context.Context, run LedgerRun
 	if !slices.Equal(ids, terminal.EventIDs) || !sameResult(terminal.Result, Reduce(terminal.Evidence)) {
 		return EvaluationReport{}, ErrEvaluationIncomplete
 	}
-	return EvaluationReport{Run: run, Evidence: terminal.Evidence, Result: terminal.Result}, nil
+	return evaluationReport(run, events[len(events)-1])
+}
+
+func evaluationReport(run LedgerRun, terminal LedgerEvent) (EvaluationReport, error) {
+	if terminal.Terminal == nil {
+		return EvaluationReport{}, ErrEvaluationIncomplete
+	}
+	digest, err := LedgerEventSHA256(terminal)
+	if err != nil {
+		return EvaluationReport{}, ErrEvaluationIncomplete
+	}
+	return EvaluationReport{
+		Run: run, Evidence: terminal.Terminal.Evidence, Result: terminal.Terminal.Result,
+		TerminalEventID: terminal.ID, TerminalSHA256: digest,
+	}, nil
 }
 
 func evaluationLedgerRun(request EvaluationRequest, authoritySHA256, proposerSHA256 string) LedgerRun {
