@@ -143,6 +143,7 @@ func proposalTestPlan(t *testing.T) *CompleteMediaPlan {
 
 func validProposerIdentityFixture() proposerIdentity {
 	return proposerIdentity{
+		Kind:           proposerExternalModel,
 		Implementation: "sherpa-kws-v1",
 		Platform:       "linux/arm64",
 		RuntimeVersion: "sherpa-1.12.28",

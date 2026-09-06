@@ -4881,7 +4881,7 @@ only sorted opaque matched-rule ids beside their closed state; they never retain
 It exposes neither adapters nor a provider response and cannot be used as an admission decision.
 
 The cascade validates exact source bytes, measured duration, transformations, tool identities, and
-complete modality coverage before inference. A certified local acoustic proposer emits source-relative
+complete modality coverage before inference. A certified local candidate proposer emits source-relative
 candidate intervals. Each candidate is adjudicated by a pinned native-audio route. Only when every
 candidate receives a valid absent result may a distinct pinned route inspect the complete source video
 and audio. Calls are serial by default and retain the exact requested and canonical model, upstream
@@ -4964,19 +4964,31 @@ retain the validated capability and response binding before writing those fields
 append operation cannot create reservation or settlement authority.
 
 Restricted spoken language and broad visual suitability remain separate claims. Complete-video
-suitability must ultimately cover every source, including a source for which the acoustic proposer emits
+suitability must ultimately cover every source, including a source for which the candidate proposer emits
 no interval; a video corroboration performed only on spoken candidates cannot satisfy that obligation.
 The admission evaluator combines independently certified claim evidence and never treats one no-signal
 lane as authority for another.
 
-The local proposer is not a production dependency until its runtime and exact model-weight artifacts have
-explicit redistribution and use authority recorded in §14. The selected 2024 GigaSpeech archive's model-card
+The measured sherpa keyword proposer is not a production dependency until its runtime and exact model-weight
+artifacts have explicit redistribution and use authority recorded in §14. The selected 2024 GigaSpeech archive's model-card
 metadata says Apache License 2.0, but the archive contains no `LICENSE` or `NOTICE`, and upstream issue #3802
 explicitly asks which terms apply to this exact model and remains unanswered. That is enough evidence for the
 maintainer's private development measurement, not enough authority for Loomarr to bundle, fetch, recommend,
 or imply commercial use of the weights. The engine pin and companion-file inventory are now known; the weight
-authority and both-platform certification remain separate gates. If those cannot be established,
-certification must select a legally usable proposer; a lower-recall decoder is not silently substituted.
+authority and both-platform certification remain separate gates. A lower-recall decoder is not silently
+substituted.
+
+The legally unblocked baseline proposer is instead deterministic and weight-free. It partitions the verified
+complete soundtrack into contiguous, non-overlapping 28-second source intervals, with the final interval ending
+exactly at the source duration. The existing native-audio extractor supplies one second of clamped context on
+each side, so every request remains at most 30 seconds of 16 kHz mono WAV and below the existing 2 MiB ceiling.
+The union of candidate intervals is exactly `[0, duration)`; a boundary cannot become an uncovered negative.
+The 4,096-candidate ceiling rejects rather than truncates a source beyond 31 hours. This strategy reads no
+source bytes, starts no process, carries no model/runtime identity, and makes no safety classification: it
+trades more serial hosted calls for auditable complete audio coverage. Its proposer identity explicitly names
+the deterministic strategy and hashes its window configuration; the model-backed sherpa identity remains a
+separate strategy with exact platform, runtime, and model hashes. Certification, route budgets, and private
+source-family truth decide whether the weight-free baseline is good enough before any shadow wiring.
 
 The development adapter consumes one private, mode-`0600` **acoustic keyword authority**, not raw policy
 phrases on its interface. That versioned JSON binds the canonical policy digest, exact model manifest digest,
@@ -4998,7 +5010,7 @@ proposal. Candidate intervals run from the first token timestamp through one 40 
 last and are clamped only at the verified source endpoint. Native-audio adjudication extracts each of those
 evidence intervals with the calibrated one second of context on both sides, clamped to the complete source;
 the candidate identity and ledger interval remain the unexpanded acoustic evidence rather than pretending the
-context was detected speech. These implementation details stay behind the private acoustic-proposer seam;
+context was detected speech. These implementation details stay behind the private candidate-proposer seam;
 the external evaluator interface remains one evaluation operation.
 
 Production certification uses a locked, source-family-disjoint challenge of real speech, not generated

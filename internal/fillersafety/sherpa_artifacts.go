@@ -71,7 +71,8 @@ func newSherpaProposerWithContract(ctx context.Context, config sherpaProposerCon
 		return nil, fmt.Errorf("identify spoken-safety acoustic proposer configuration")
 	}
 	proposer.identity = proposerIdentity{
-		Implementation: sherpaImplementation, Platform: contract.platform, RuntimeVersion: sherpaRuntimeVersion,
+		Kind: proposerExternalModel, Implementation: sherpaImplementation,
+		Platform: contract.platform, RuntimeVersion: sherpaRuntimeVersion,
 		RuntimeSHA256: sherpaRuntimeIdentitySHA256(contract), ModelSHA256: modelIdentity, ConfigSHA256: configSHA,
 	}
 	cleanup = false

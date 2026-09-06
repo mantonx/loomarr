@@ -13,7 +13,7 @@ import (
 	"github.com/loomarr/loomarr/internal/mediatools"
 )
 
-var _ acousticProposer = (*sherpaProposer)(nil).Propose
+var _ candidateProposer = (*sherpaProposer)(nil).Propose
 
 func (p *sherpaProposer) Propose(ctx context.Context, request proposalRequest) (proposalOutput, error) {
 	if p == nil {

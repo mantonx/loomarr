@@ -148,14 +148,15 @@ func evaluationLedgerRun(request EvaluationRequest, authoritySHA256, proposerSHA
 
 func proposerIdentitySHA256(identity proposerIdentity) string {
 	raw, err := json.Marshal(struct {
-		Implementation string `json:"implementation"`
-		Platform       string `json:"platform"`
-		RuntimeVersion string `json:"runtimeVersion"`
-		RuntimeSHA256  string `json:"runtimeSha256"`
-		ModelSHA256    string `json:"modelSha256"`
-		ConfigSHA256   string `json:"configSha256"`
+		Kind           proposerKind `json:"kind"`
+		Implementation string       `json:"implementation"`
+		Platform       string       `json:"platform"`
+		RuntimeVersion string       `json:"runtimeVersion"`
+		RuntimeSHA256  string       `json:"runtimeSha256"`
+		ModelSHA256    string       `json:"modelSha256"`
+		ConfigSHA256   string       `json:"configSha256"`
 	}{
-		Implementation: identity.Implementation, Platform: identity.Platform,
+		Kind: identity.Kind, Implementation: identity.Implementation, Platform: identity.Platform,
 		RuntimeVersion: identity.RuntimeVersion, RuntimeSHA256: identity.RuntimeSHA256,
 		ModelSHA256: identity.ModelSHA256, ConfigSHA256: identity.ConfigSHA256,
 	})
