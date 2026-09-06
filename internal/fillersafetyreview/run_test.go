@@ -23,6 +23,7 @@ func TestRunOpenRouterRejectsNilContext(t *testing.T) {
 		requests.Add(1)
 	}))
 	fixture := newReviewFixture(t, endpoint.baseURL)
+	//nolint:staticcheck // Intentionally pass nil to verify rejection before context.WithTimeout can panic.
 	if _, err := runOpenRouter(nil, fixture.config, fixture.runtime(endpoint.client, endpoint.baseURL)); err == nil || !strings.Contains(err.Error(), "active context") {
 		t.Fatalf("err=%v", err)
 	}
