@@ -41,18 +41,16 @@ func loadTemporalSuitabilityEvidence(manifestPath, structureAuthorityPath string
 		if err != nil {
 			return TemporalTruthEvidenceManifest{}, "", err
 		}
-		projected := TemporalTruthEvidenceManifest{
-			SchemaVersion: TemporalTruthEvidenceSchemaVersion, ContractVersion: TemporalTruthEvidenceContractVersion,
-			EvidenceVersion: manifest.ChallengeID, GeneratedAt: manifest.GeneratedAt, SelectionSHA256: authoritySHA,
-			Cases: make([]TemporalTruthEvidenceCase, 0, len(manifest.Cases)),
-		}
-		for _, item := range manifest.Cases {
-			projected.Cases = append(projected.Cases, TemporalTruthEvidenceCase{
-				Alias: item.Alias, DurationMS: item.Video.DurationMS, Video: item.Video,
-			})
-		}
-		return projected, manifestSHA, nil
+		return temporalStructureChallengeSuitabilityEvidence(manifest, authoritySHA), manifestSHA, nil
 	default:
 		return TemporalTruthEvidenceManifest{}, "", fmt.Errorf("unsupported suitability evidence contract %q", header.ContractVersion)
 	}
+}
+
+func temporalStructureChallengeSuitabilityEvidence(manifest TemporalStructureChallengeManifest, authoritySHA string) TemporalTruthEvidenceManifest {
+	projected := TemporalTruthEvidenceManifest{SchemaVersion: TemporalTruthEvidenceSchemaVersion, ContractVersion: TemporalTruthEvidenceContractVersion, EvidenceVersion: manifest.ChallengeID, GeneratedAt: manifest.GeneratedAt, SelectionSHA256: authoritySHA, Cases: make([]TemporalTruthEvidenceCase, 0, len(manifest.Cases))}
+	for _, item := range manifest.Cases {
+		projected.Cases = append(projected.Cases, TemporalTruthEvidenceCase{Alias: item.Alias, DurationMS: item.Video.DurationMS, Video: item.Video})
+	}
+	return projected
 }

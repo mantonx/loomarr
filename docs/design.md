@@ -4763,6 +4763,33 @@ catalog ingestion, scheduling, or production. Operational and incomplete-modalit
 remain held. Only an independently specified suitability-recall certification can turn complete
 no-signal observations into an admission claim.
 
+The source projection is one separate deterministic private seam. It consumes the exact public
+structure manifest, private construction authority, two-family comparison, and both immutable
+result files named by that comparison; the result files retain the observation ranges that the
+summary comparison deliberately does not duplicate. It first reproduces the comparison from those
+results, rejects a comparison timestamp earlier than either completed result, and then intersects
+every observation with measured output segments. Encoder-duration drift expands the projected
+source interval conservatively by the bounded render drift rather than narrowing it. Overlapping
+same-kind, same-modality source intervals merge into one observation with ordered assessor/case
+witnesses. The private report lists every source and derivative case, propagates a source quarantine
+to derivatives that had no direct flag, and keeps `trainingAllowed`, `ingestionAllowed`,
+`schedulingAllowed`, and `productionAdmissionAllowed` false. It performs no inference, catalog
+write, media mutation, or admission decision.
+
+The private projection also retains the verified immutable challenge-v1 evidence contract required
+by #903. This is an archived diagnostic input, not a current challenge or certification. Only the
+projection seam may load it; the public challenge, assessment, and rendering interfaces remain on
+the current challenge and plan contracts. Separate strict archived input shapes reject fields
+introduced by later contracts even when empty or null. They require the original explicit negative
+production disposition, complete media/authority/alias/segment bindings, and the exact immutable
+result/comparison bindings. Decode and hash the same raw bytes; reject unknown, duplicate, trailing,
+mismatched, ambiguous, or incomplete evidence before publication. Archived inputs cannot substitute
+for current measured profiles, plan receipts, source provenance, or ledger evidence. No version
+string, original artifact, or provider result is rewritten to make historical evidence appear current.
+The projected report preserves the original input digests and all four false permissions, including
+when reproducing an archived no-signal observation. This narrowly retained external evidence
+contract does not provide a general legacy-loader option or an admission fallback.
+
 The temporal `unusable` answer is diagnostic history, not media-integrity truth. Media integrity,
 presentation/source defects, broadcast suitability, semantic unit/role, and rights are five
 independent claims with independent policy owners. The maintained media-integrity challenge consumes
