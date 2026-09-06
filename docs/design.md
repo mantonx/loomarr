@@ -4777,8 +4777,10 @@ to derivatives that had no direct flag, and keeps `trainingAllowed`, `ingestionA
 write, media mutation, or admission decision.
 
 The private projection also retains the verified immutable challenge-v1 evidence contract required
-by #903. This is an archived diagnostic input, not a current challenge or certification. Only the
-projection seam may load it; the public challenge, assessment, and rendering interfaces remain on
+by #903 and the retained complete-source spoken diagnostic in #912. This is an archived diagnostic
+input, not a current challenge or certification. Only the source-suitability and spoken-safety
+projection seams may load it through the same private strict decoder; public challenge, assessment,
+and rendering interfaces remain on
 the current challenge and plan contracts. Separate strict archived input shapes reject fields
 introduced by later contracts even when empty or null. They require the original explicit negative
 production disposition, complete media/authority/alias/segment bindings, and the exact immutable
@@ -4789,6 +4791,49 @@ string, original artifact, or provider result is rewritten to make historical ev
 The projected report preserves the original input digests and all four false permissions, including
 when reproducing an archived no-signal observation. This narrowly retained external evidence
 contract does not provide a general legacy-loader option or an admission fallback.
+
+Spoken-language safety is a separate complete-source evidence seam; neither the production catalog
+transcript nor a direct-video model's spoken-language answer can satisfy it. The catalog transcript
+is deliberately selective and normally samples only the `LanguageSpan` window, while the safety
+seam transcribes `[0, measured source duration)` for every source in the exact corpus manifest and
+every additional source named only by the construction authority. It validates the label-blind
+packet set and its external media bytes against that corpus manifest before evaluating transcripts,
+then binds the source, packet, extracted audio, ffmpeg, whisper executable, model, implementation,
+timing, and completion identities in an immutable private transcript artifact. The smaller review
+evidence set is a projection target, not the scanner's population. Wordless is a completed outcome
+only after that full span runs successfully. Missing audio, an engine error, unordered or
+out-of-range timing, identity drift, or an incomplete source set is a coverage hold, never a clean
+observation.
+
+One deep `PublishTemporalSpokenSafety` module interface owns strict authority loading, complete-span
+transcript-artifact validation, private policy evaluation, source projection, canonical validation,
+and atomic publication. Transcript production remains behind the existing digest-pinned
+`BuildTranscripts` engine seam rather than being duplicated. Its versioned policy file is private
+and uses opaque rule identifiers; report artifacts retain only the policy digest, rule identifier,
+match class, and time range, never the raw
+restricted phrase or transcript text. Exact policy variants may quarantine; deliberately ambiguous
+variants hold coverage. A source-level quarantine propagates to every derivative through the same
+construction authority as the visual projection, with no majority-vote clear. Certification uses a
+separate source-disjoint positive/clean challenge and counts source families rather than derivatives;
+it requires zero positive misses and a one-sided 95% exact Clopper-Pearson lower bound of at least
+95% for source recall (59 independent positive sources with zero misses). Until that challenge
+passes, the report keeps training, ingestion, scheduling, and production admission false even when
+the measured sources contain no match.
+
+Spoken-safety certification consumes that exact private projection plus a separate locked private
+challenge authority authored no later than the projection under test. The authority binds the
+corpus and policy rather than a post-run report, and uses opaque aliases and family identifiers to
+label source-disjoint positive intervals and clean locale/slice controls; it contains no model output
+and cannot be derived from the transcript under test. Every positive interval must overlap a
+prohibited match from the projected source, and any missing/ambiguous transcript remains an
+operational hold.
+Recall is counted by independent source family, requires zero misses, and reports the one-sided 95%
+exact Clopper-Pearson lower bound. Clean false-positive rates are reproduced independently for each
+locked locale/slice and may not exceed 1%. The canonical certification report retains only opaque
+case identities, counts, rates, authority digests, and outcomes. It never reproduces source identity,
+transcript text, or policy phrases and grants no production permission even when the diagnostic
+challenge passes. Generated/TTS controls are permanently marked `development` and can produce only
+a diagnostic result; they cannot satisfy or be relabeled as the independent-source certification.
 
 The temporal `unusable` answer is diagnostic history, not media-integrity truth. Media integrity,
 presentation/source defects, broadcast suitability, semantic unit/role, and rights are five

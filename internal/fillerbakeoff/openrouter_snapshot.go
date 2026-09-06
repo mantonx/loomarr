@@ -68,6 +68,7 @@ type OpenRouterSnapshotConfig struct {
 	BaseURL              string
 	APIKey               string
 	Models               []string
+	OutputModality       string
 	RetrievedAt          time.Time
 	Client               *http.Client
 	AllowInsecureTestURL bool
@@ -132,7 +133,15 @@ func FetchOpenRouterSnapshot(ctx context.Context, config OpenRouterSnapshotConfi
 	snapshot := OpenRouterSnapshot{SchemaVersion: OpenRouterSnapshotSchemaVersion, SourceBaseURL: baseURL, RetrievedAt: config.RetrievedAt.UTC()}
 	var totalBytes int64
 	var catalog openRouterModelsResponse
-	read, err := getOpenRouterJSON(ctx, client, baseURL+"/models", config.APIKey, &catalog)
+	catalogURL := baseURL + "/models"
+	if config.OutputModality != "" {
+		if !validOpenRouterCatalogModality(config.OutputModality) {
+			return OpenRouterSnapshot{}, fmt.Errorf("OpenRouter snapshot output modality %q is invalid", config.OutputModality)
+		}
+		query := url.Values{"output_modalities": []string{config.OutputModality}}
+		catalogURL += "?" + query.Encode()
+	}
+	read, err := getOpenRouterJSON(ctx, client, catalogURL, config.APIKey, &catalog)
 	if err != nil {
 		return OpenRouterSnapshot{}, fmt.Errorf("fetch OpenRouter model catalog: %w", err)
 	}
@@ -218,6 +227,18 @@ func FetchOpenRouterSnapshot(ctx context.Context, config OpenRouterSnapshotConfi
 		return OpenRouterSnapshot{}, err
 	}
 	return snapshot, nil
+}
+
+func validOpenRouterCatalogModality(value string) bool {
+	if value == "" || len(value) > 32 {
+		return false
+	}
+	for _, r := range value {
+		if (r < 'a' || r > 'z') && r != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 func openRouterMetadataTransport(config OpenRouterSnapshotConfig) (string, *http.Client, error) {
@@ -348,11 +369,12 @@ func ValidateOpenRouterSnapshot(snapshot OpenRouterSnapshot) error {
 	for _, model := range snapshot.Models {
 		modelIDs = append(modelIDs, model.ID)
 		canonicalOwner, canonicalName, canonical := strings.Cut(model.CanonicalSlug, "/")
-		if model.ID == "" || !canonical || canonicalOwner == "" || canonicalName == "" || strings.Contains(strings.ToLower(model.CanonicalSlug), "latest") || model.Name == "" || model.Created <= 0 || len(model.Endpoints) == 0 || len(model.Endpoints) > maxSnapshotEndpoints || !canonicalStrings(model.InputModalities) || !canonicalStrings(model.OutputModalities) || !slices.Contains(model.OutputModalities, "text") {
+		if model.ID == "" || !canonical || canonicalOwner == "" || canonicalName == "" || strings.Contains(strings.ToLower(model.CanonicalSlug), "latest") || model.Name == "" || model.Created <= 0 || len(model.Endpoints) == 0 || len(model.Endpoints) > maxSnapshotEndpoints || !canonicalStrings(model.InputModalities) || !canonicalStrings(model.OutputModalities) || !validOpenRouterOutputModalities(model.OutputModalities) {
 			return fmt.Errorf("OpenRouter snapshot model %q has an invalid bounded identity or architecture", model.ID)
 		}
 		seenEndpoints := make(map[string]struct{}, len(model.Endpoints))
 		previousEndpoint := ""
+		requiresContext := slices.Contains(model.OutputModalities, "text")
 		for _, endpoint := range model.Endpoints {
 			key := endpoint.ProviderSlug + "\x00" + endpoint.Name
 			if key < previousEndpoint {
@@ -363,7 +385,7 @@ func ValidateOpenRouterSnapshot(snapshot OpenRouterSnapshot) error {
 				return fmt.Errorf("OpenRouter snapshot model %q repeats endpoint %q", model.ID, endpoint.ProviderSlug)
 			}
 			seenEndpoints[key] = struct{}{}
-			if endpoint.Name == "" || endpoint.ModelID != model.ID || endpoint.ProviderName == "" || endpoint.ProviderSlug == "" || endpoint.ContextLength <= 0 || endpoint.MaxCompletionTokens < 0 || endpoint.MaxPromptTokens < 0 || !canonicalStrings(endpoint.SupportedParameters) || len(endpoint.Pricing) == 0 || len(endpoint.Pricing) > 32 {
+			if endpoint.Name == "" || endpoint.ModelID != model.ID || endpoint.ProviderName == "" || endpoint.ProviderSlug == "" || requiresContext && endpoint.ContextLength <= 0 || !requiresContext && endpoint.ContextLength < 0 || endpoint.MaxCompletionTokens < 0 || endpoint.MaxPromptTokens < 0 || !canonicalStrings(endpoint.SupportedParameters) || len(endpoint.Pricing) == 0 || len(endpoint.Pricing) > 32 {
 				return fmt.Errorf("OpenRouter snapshot model %q has an invalid endpoint", model.ID)
 			}
 			for name, price := range endpoint.Pricing {
@@ -380,6 +402,10 @@ func ValidateOpenRouterSnapshot(snapshot OpenRouterSnapshot) error {
 		return fmt.Errorf("OpenRouter snapshot models are not canonical")
 	}
 	return nil
+}
+
+func validOpenRouterOutputModalities(modalities []string) bool {
+	return slices.Contains(modalities, "text") || slices.Contains(modalities, "transcription")
 }
 
 func ValidateOpenRouterRunSnapshot(run fillereval.RunIdentity, routes []Route, snapshot OpenRouterSnapshot) error {

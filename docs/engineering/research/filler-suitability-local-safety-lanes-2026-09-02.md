@@ -130,25 +130,202 @@ The existing plan already reserves direct video for named temporal ambiguity and
 requires a second model family only for listed uncertainty/safety cases.
 [`filler-model-led-identification-plan-2026-08-31.md:127-133`](../filler-model-led-identification-plan-2026-08-31.md#L127-L133)
 
-## Exact next implementation issues
+## First implemented spoken diagnostic
 
-Create these three issues, in this order, as dependents of #905 and #903. They
-are deliberately separate so an optional Apple-only evaluator cannot redefine
-portable speech or written-text certification.
+Issue [#908](https://github.com/loomarr/loomarr/issues/908) now implements the
+portable spoken-language seam. The scanner population is the exact 300-case
+corpus rather than the 48-case review sample; that distinction mattered because
+the confirmed prohibited source was outside the review sample. The module
+strictly revalidates the corpus manifest, every label-blind packet and external
+media file, 298 complete-span transcript artifacts with one common engine
+identity, the review evidence projection, construction authority, and a private
+opaque-rule policy before atomically publishing a private report.
 
-1. `filler-suitability-sca-capability-prototype`: build an evaluation-only signed
+The initial real policy intentionally represents only the one confirmed
+prohibited root and is not a comprehensive broadcast-language policy. An
+exact-word diagnostic exposed an ASR token carrying a morphological suffix, so
+the policy contract now distinguishes `exact_words` from an explicitly chosen
+`token_prefix`; it does not silently broaden every rule. Two byte-identical
+full-corpus executions produce private report SHA-256
+`5c73b2fea954e6faa2b86462de0c814bb8e134ab5ca2270d881401d384e24482`:
+306 sources comprise 1 prohibited source, 8 coverage holds (2 corpus cases
+without complete packet media and 6 construction-only programme parents), and
+297 no-signal observations. The 36 constructed derivatives contain none from
+the prohibited source; 12 remain coverage-held and 24 have no observed spoken
+signal. The report contains no policy phrase or transcript text and grants no
+training, ingestion, scheduling, or production authority.
+
+The first generated development challenge has now run. It is explicitly not a
+certification corpus: its 59 positive controls are TTS transformations rather
+than independent real source families, and its eight clean controls can expose
+obvious regressions but cannot establish a 1% false-positive bound. The first
+generated version proved the scorer's independence guard by being rejected when
+two silence controls and two music controls repeated media hashes. The repaired
+v2 authority has 67 distinct source hashes/family IDs, covers all nine positive
+and four clean slices, and remains permanently marked `development`.
+
+The pinned local `small.en` lane detected 17/59 positives (28.81%; one-sided
+95% exact lower bound 19.26%), missed 42, produced 0/8 clean false positives,
+and had no challenge coverage holds. Projection SHA-256 is
+`91a95bfc5263df75213a23d35471bb30582fc9c2c62a4043730fae528e4a5c24`;
+the corrected score SHA-256 is
+`e8e5fa81f11cde3a2fbfaa5cae69408403ad459d442c8624c44514389fd73a40`.
+Both reproduce byte-for-byte. The scorer now reports the actual
+Clopper-Pearson lower bound on failed runs rather than collapsing every miss to
+zero; certification still requires zero misses and a lower bound of at least
+95%.
+
+Two model-side changes were measured against the same controls:
+
+| Transcript candidate | Positive detections | Clean false positives | Authority consequence |
+| --- | ---: | ---: | --- |
+| pinned local `small.en` | 17/59 | 0/8 | locked development score |
+| same weights + private policy-vocabulary prompt | 24/59 | 0/8 | development diagnostic only |
+| OpenRouter `openai/whisper-large-v3` | 22/59 | 0/8 | development diagnostic only; $0.002960712 |
+| pinned local `large-v3-turbo` | 17/59 | 0/8 | development diagnostic only; 1.6 GB model |
+| same large weights + private policy-vocabulary prompt | 22/59 | 0/8 | development diagnostic only |
+| union of all five | 35/59 | 0/8 | still 24 positive misses |
+| sherpa-onnx GigaSpeech KWS, provisional macOS setting | 45/59 | 0/8 | development diagnostic only; selected on these rows |
+| same setting, both release Linux architectures | 43/59 | 0/8 | same unique decisions; still generated data |
+| union of five Whisper lanes plus release-Linux sherpa KWS | 50/59 | 0/8 | still 9 positive misses |
+
+The prompted transcript-set SHA-256 is
+`ad1fefdd04690da20e9a30cb8dd84d70caf1da3f2d900c1d7c06979b949fea20`.
+The hosted diagnostic report SHA-256 is
+`d28514f2973b9120d2af2a12c25a19fbf5cb143bf0b688370149fd4d0da13f3b`;
+its pre-run capability snapshot SHA-256 is
+`4e2cd072d2279a737859e109f0caac5ed173e9582f9bfd2ba9b71da0476fcb44`
+and listed every then-available endpoint as live and ZDR. It is deliberately
+not certification evidence: OpenRouter documents that `/audio/transcriptions`
+currently ignores chat-style provider ordering, fallback, data-collection, and
+per-request ZDR controls, so the run cannot prove one pinned upstream route.
+[OpenRouter STT](https://openrouter.ai/docs/guides/overview/multimodal/stt),
+[transcription routing limitation](https://openrouter.ai/blog/tutorials/transcription-on-openrouter/).
+
+The failure is recognition, not missing audio: hosted large-v3 returned
+non-empty transcripts for all 37 misses. A deterministic edit-distance probe
+found only two prompted positive misses one edit from the restricted root,
+while one clean near-match was also one edit away. Broad fuzzy matching would
+therefore buy little recall and immediately violate the clean boundary. An LLM
+fine-tune is not justified by this evidence: a text model cannot recover an
+acoustic token the transcript lost, and direct-audio model training would be a
+different, much larger evidence program.
+
+The larger local comparison is also complete. Full `ggml-large-v3-turbo.bin`
+from the same immutable model-repository revision has SHA-256
+`1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69`
+and ran through the pinned v1.9.1 arm64 container runtime. Its normalized
+transcript set reproduces SHA-256
+`cd66b6b38c1e6a5ffa83ca8e116e3c4a79212f02ff6bdf4547c92e485487e008`;
+the byte-identical transcript files have SHA-256
+`200c63760ab7682929f446bbcb3a42184173112c6c5b198000f998dfdc4c0b7f`
+and byte-identical scores have SHA-256
+`4e145703c3be87ac846e4c6665346c92059a7bebe86a11f69454ced25f6f405a`.
+It still detected only 17/59 positives, including zero of six quiet-speech
+controls, with 0/8 clean false positives. It overlapped only 9 of the baseline
+`small.en` detections and added two unique detections beyond the prior
+three-lane union. That diversity lifts the four-lane union to 33/59, but does
+not justify replacing the shipped 466 MB model with a 1.6 GB model or adding an
+ASR ensemble that still misses 26 positives.
+
+Private vocabulary context raises the large model to 22/59 and recovers two
+additional cases beyond that four-lane union. Its transcript-set SHA-256 is
+`34b027baa5e067d68b387e516ca6a35f97135a07d5c277f036857a7ae0f2e0b0`;
+the private transcript file SHA-256 is
+`fd4e2172b206d6f0731de8ea20def307fbf2f149a38ca2347212d19eb503af8a`
+and the private score SHA-256 is
+`da66f275d76aa7873ea96211d94254090035eba85745806618d2c6bb7e863ebf`.
+The five-lane union therefore reaches 35/59, still leaving 24 misses. A
+grammar-constrained keyword probe was also rejected before a full run: after
+correcting whisper.cpp's required leading-space tokenization, the clean
+homophone produced a higher-confidence constrained token stream than a known
+positive. No threshold could retain that positive without also holding the
+clean control. This closes the Whisper model-size, prompt, fuzzy-match, forced
+grammar, and ensemble branches for this policy.
+
+A purpose-built phonetic/keyword prototype is now measured. Official
+sherpa-onnx v1.13.7 with its 3.3M-parameter English GigaSpeech Zipformer KWS
+model detected 45/59 positives with 0/8 clean false positives on macOS arm64 at
+the provisional `keywords_score=4`, `keywords_threshold=0.05` setting. All 45
+hit intervals derived from token timestamps overlap their authored positive
+intervals, and an exact repeat reproduced raw results byte-for-byte.
+
+The exact setting was then replayed without network access using the official
+Linux arm64 and amd64 runtime archives. Both release architectures produce the
+same 43 unique positive-source decisions and 0/8 clean false positives, add 15
+detections outside the five-Whisper union, and lift that union to 50/59. Each is
+byte-identical on exact same-platform replay. Linux arm64 produces one
+additional intra-positive event for an already-detected source, and macOS finds
+two additional borderline sources, so raw event output is not cross-platform
+identical. The release-facing development result is 43/59, not the more
+favorable macOS result.
+
+The real corpus changes the decision. The frozen Linux-arm64 setting emitted
+130 events across 88 of the finalized corpus's 298 complete audio cases (297
+unique WAVs, 6.27 hours). It retained the one already-known prohibited source,
+but 87 candidates had only `no_spoken_signal_observed` in the existing Whisper
+projection. A pre-measured stricter threshold still emitted 117 events across
+78 cases, retaining the known source but replacing 17 candidates with seven
+different ones rather than behaving as a monotonic filter.
+
+Existing model evidence avoids turning those candidates into a human audit. Of
+47 prior real cases that join cleanly to the source projection, 12 are sherpa
+candidates. Gemini reported no prohibited signal for ten, the known prohibited
+signal for one, and one operational failure; Qwen coverage-held eight, reported
+two no-signal cases, found the same prohibited source, and failed once. Those
+model observations are not labels, but the 26-30% candidate rate is already an
+operational stop. Sherpa is rejected as a standalone verdict lane and retained
+only as a possible bounded-interval proposer for automated second-stage audio
+verification.
+
+Vosk constrained grammar also fails the real-corpus stop. A pinned target-plus-
+unknown grammar detects 35/59 generated positives with 0/8 generated clean
+false positives and adds seven sources beyond the Whisper union. The unchanged
+grammar then emits 299 events across 141/298 real cases while retaining the
+known source. Among the 47 prior direct-video cases, Gemini reports no
+prohibited signal for 15 of 19 Vosk candidates; only one of its two prohibited
+outcomes carries an audio flag. The real controls invalidate the apparent
+synthetic precision.
+
+The standalone decoder search is therefore closed. Next test the two-stage
+architecture: sherpa proposes only short intervals and an audio-capable LLM
+judges those intervals; disagreement or failure remains a hold. This is a use
+for LLM inference, not evidence for fine-tuning one. The sherpa model archive's
+metadata names Apache License 2.0 but contains no license/notice file, and its
+explicit weight/redistribution terms remain unresolved. Full measurements and
+candidate ranking are in
+[the keyword-spotting research](filler-spoken-keyword-spotting-options-2026-09-02.md).
+
+Apple Speech remains optional, but its on-device recognizer on the current host
+is available and its `contextualStrings` API is specifically designed to bias
+short unusual vocabulary; it no longer has priority over the measured portable
+KWS route. Any comparison still requires one-time authorization,
+`requiresOnDeviceRecognition=true`, and no network fallback.
+[Apple contextual strings](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/contextualstrings),
+[on-device requirement](https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/requiresondevicerecognition).
+
+## Tracked implementation issues
+
+These three issues are dependents of #905 and #903. They are deliberately
+separate so an optional Apple-only evaluator cannot redefine portable speech or
+written-text certification.
+
+1. [#907](https://github.com/loomarr/loomarr/issues/907),
+   `filler-suitability-sca-capability-prototype`: build an evaluation-only signed
    macOS prototype and rights-cleared fixtures that establish entitlement,
    policy, local-video completion, result shape, and repeatability. Stop without
    production integration if the entitlement cannot be obtained or policy
    cannot be controlled for a locked run.
-2. `filler-suitability-whisper-spoken-language-certification`: add a versioned,
+2. [#908](https://github.com/loomarr/loomarr/issues/908),
+   `filler-suitability-whisper-spoken-language-certification`: add a versioned,
    complete-source safety transcript contract using the existing pinned Whisper
    engine/artifact machinery, then a restricted lexicon matcher; exact
    interval/source binding; wordless/ambiguous/error handling; private locked
    challenge builder and all spoken/projection rows above. Do not treat the
    selective catalog transcript as complete. No Apple Speech dependency or
    network fallback.
-3. `filler-suitability-written-text-certification`: define and measure bounded
+3. [#909](https://github.com/loomarr/loomarr/issues/909),
+   `filler-suitability-written-text-certification`: define and measure bounded
    full-duration frame/OCR coverage, apply the same restricted matcher to
    timestamped OCR spans, and certify the written-text rows above. Sparse
    scene-selected Vision observations remain evidence only.

@@ -14,6 +14,12 @@ certification manifest and its evidence-packet JSONL are locked.
 - A schema-v1 run config containing the immutable run identity, admission policy, and ordered routes.
 - `OPENROUTER_API_KEY` in the environment. Credentials never enter the config or output ledger.
 
+Transcription models are absent from OpenRouter's default chat catalog; pass
+`--output-modality transcription` when snapshotting a speech-to-text model. The
+snapshot records transcription capability, prices, and current ZDR eligibility,
+but does not create provider-pinning authority: OpenRouter's dedicated
+transcription endpoint currently does not apply chat routing controls.
+
 The local case ID is a ledger join key, not model evidence. The runner validates it before spend but
 does not include it in provider prompt content; provider-visible facts use only opaque signal IDs.
 

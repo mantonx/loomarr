@@ -15,6 +15,9 @@ import (
 // Hosted speech-to-text over the OpenAI-compatible transcription endpoint (§10). OpenRouter uses
 // the same base URL and bearer key as chat/vision, but this is a distinct capability and model:
 // an STT model cannot answer the grounded chat loop, and a chat model does not imply timestamps.
+// OpenRouter's transcription endpoint does not currently apply chat provider-routing controls;
+// callers must not infer pinned-provider, disabled-fallback, or per-request ZDR authority from a
+// route configured on OpenAI. Capability snapshots support diagnostics, not that inference.
 
 type TranscriptionRequest struct {
 	Model    string
@@ -134,9 +137,13 @@ func (o *OpenAI) TranscribeAudio(ctx context.Context, req TranscriptionRequest) 
 	if o.metrics != nil {
 		o.metrics.LLMTokens(out.Usage.PromptTokens, out.Usage.CompletionTokens)
 	}
+	generationID := strings.TrimSpace(out.ID)
+	if generationID == "" {
+		generationID = strings.TrimSpace(resp.Header.Get("X-Generation-Id"))
+	}
 	return TranscriptionResult{
 		Segments: segments,
-		Attribution: attributionFromWire(o.provider, model, out.ID, out.Model, out.Usage,
+		Attribution: attributionFromWire(o.provider, model, generationID, out.Model, out.Usage,
 			out.OpenRouterMetadata, []string{"audio", "text"}, time.Since(started)),
 	}, nil
 }

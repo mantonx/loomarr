@@ -22,6 +22,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("filler-openrouter-snapshot", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	modelsText := flags.String("models", "", "comma-separated concrete OpenRouter model IDs")
+	outputModality := flags.String("output-modality", "", "optional OpenRouter output-modality catalog filter")
 	outPath := flags.String("out", "", "immutable output snapshot JSON")
 	baseURL := flags.String("base-url", fillerbakeoff.OpenRouterBaseURL, "OpenRouter API base URL")
 	if err := flags.Parse(args); err != nil {
@@ -41,7 +42,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		models[index] = strings.TrimSpace(models[index])
 	}
 	snapshot, err := fillerbakeoff.FetchOpenRouterSnapshot(context.Background(), fillerbakeoff.OpenRouterSnapshotConfig{
-		BaseURL: *baseURL, APIKey: apiKey, Models: models, RetrievedAt: time.Now().UTC(),
+		BaseURL: *baseURL, APIKey: apiKey, Models: models, OutputModality: *outputModality, RetrievedAt: time.Now().UTC(),
 	})
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "filler-openrouter-snapshot: %v\n", err)
