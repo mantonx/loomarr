@@ -97,9 +97,9 @@ func validateAuthorityCases(cases []AuthorityCase, excludedFamilies map[string]s
 			return fmt.Errorf("case label is invalid")
 		}
 	}
-	if positiveFamilies < MinimumPositiveFamilies || cleanSources == 0 ||
+	if positiveFamilies < MinimumPositiveFamilies || cleanSources < MinimumCleanFamilies ||
 		!coversExactly(positiveSlices, requiredPositiveSlices()) || !coversExactly(cleanSlices, requiredCleanSlices()) {
-		return fmt.Errorf("authority requires at least %d positive families, clean sources, and complete declared slice coverage", MinimumPositiveFamilies)
+		return fmt.Errorf("authority requires at least %d positive families, at least %d clean families, and complete declared slice coverage", MinimumPositiveFamilies, MinimumCleanFamilies)
 	}
 	return nil
 }
@@ -108,12 +108,19 @@ func validateReviewers(item AuthorityCase, excludedFamilies, attestations map[st
 	if len(item.Reviewers) < 2 || len(item.Reviewers) > 3 {
 		return fmt.Errorf("two primary reviewers and at most one adjudicator are required")
 	}
+	if item.Reviewers[0].Role != ReviewerPrimary || item.Reviewers[1].Role != ReviewerPrimary ||
+		item.Reviewers[0].ReviewerID >= item.Reviewers[1].ReviewerID ||
+		(len(item.Reviewers) == 3 && item.Reviewers[2].Role != ReviewerAdjudicator) {
+		return fmt.Errorf("reviewers are not in canonical primary/adjudicator order")
+	}
 	ids := map[string]struct{}{}
+	modelFamilies := map[string]struct{}{}
 	primary := make([]string, 0, 2)
 	adjudicator := ""
 	for _, reviewer := range item.Reviewers {
 		if !validOpaqueID(reviewer.ReviewerID, "reviewer-") || !validSHA256(reviewer.AttestationSHA256) ||
-			(reviewer.Decision != LabelPositive && reviewer.Decision != LabelClean) {
+			!validSHA256(reviewer.EvidenceSHA256) ||
+			(reviewer.Decision != ReviewDecisionVerified && reviewer.Decision != ReviewDecisionRejected) {
 			return fmt.Errorf("reviewer identity, attestation, or decision is invalid")
 		}
 		if _, duplicate := ids[reviewer.ReviewerID]; duplicate {
@@ -135,6 +142,10 @@ func validateReviewers(item AuthorityCase, excludedFamilies, attestations map[st
 			if _, excluded := excludedFamilies[reviewer.ModelFamily]; excluded {
 				return fmt.Errorf("model reviewer is not family-independent")
 			}
+			if _, repeated := modelFamilies[reviewer.ModelFamily]; repeated {
+				return fmt.Errorf("model reviewer families are not independent")
+			}
+			modelFamilies[reviewer.ModelFamily] = struct{}{}
 		default:
 			return fmt.Errorf("reviewer method is invalid")
 		}
@@ -154,13 +165,13 @@ func validateReviewers(item AuthorityCase, excludedFamilies, attestations map[st
 		return fmt.Errorf("exactly two primary reviewers are required")
 	}
 	if primary[0] == primary[1] {
-		if adjudicator != "" || primary[0] != item.Label {
-			return fmt.Errorf("agreeing primaries must establish the label without an adjudicator")
+		if adjudicator != "" || primary[0] != ReviewDecisionVerified {
+			return fmt.Errorf("agreeing primaries must verify the label without an adjudicator")
 		}
 		return nil
 	}
-	if adjudicator == "" || adjudicator != item.Label {
-		return fmt.Errorf("disagreeing primaries require an adjudicator establishing the label")
+	if adjudicator != ReviewDecisionVerified {
+		return fmt.Errorf("disagreeing primaries require an adjudicator verifying the label")
 	}
 	return nil
 }

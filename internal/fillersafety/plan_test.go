@@ -59,7 +59,6 @@ func TestPlanCompleteMediaRejectsInvalidAuthorityWithoutLeakingValues(t *testing
 		code   AuthorityCode
 	}{
 		{name: "schema", mutate: func(authority *SourceAuthority, _ *string) { authority.SchemaVersion++ }, code: AuthoritySchemaInvalid},
-		{name: "certification", mutate: func(authority *SourceAuthority, _ *string) { authority.CertificationSHA256 = "invalid" }, code: AuthorityIdentityInvalid},
 		{name: "policy", mutate: func(authority *SourceAuthority, _ *string) { authority.PolicySHA256 = "invalid" }, code: AuthorityIdentityInvalid},
 		{name: "implementation", mutate: func(authority *SourceAuthority, _ *string) { authority.Implementation = "" }, code: AuthorityIdentityInvalid},
 		{name: "source id", mutate: func(authority *SourceAuthority, _ *string) { authority.SourceID = "" }, code: AuthorityIdentityInvalid},
@@ -172,18 +171,17 @@ func sourceIdentity(contents []byte) (string, int64) {
 
 func validSourceAuthority() SourceAuthority {
 	return SourceAuthority{
-		SchemaVersion:       SourceAuthoritySchemaVersion,
-		CertificationSHA256: strings.Repeat("a", 64),
-		PolicySHA256:        strings.Repeat("b", 64),
-		Implementation:      "filler-spoken-safety-v1",
-		SourceID:            "source-one",
-		SourceSHA256:        strings.Repeat("c", 64),
-		SourceBytes:         1024,
-		DurationMS:          30_000,
-		HasAudio:            true,
-		HasVideo:            true,
-		MeasuredAt:          time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC),
-		FFmpeg:              ToolIdentity{Version: "ffmpeg-8", BinarySHA256: strings.Repeat("d", 64)},
-		FFprobe:             ToolIdentity{Version: "ffprobe-8", BinarySHA256: strings.Repeat("e", 64)},
+		SchemaVersion:  SourceAuthoritySchemaVersion,
+		PolicySHA256:   strings.Repeat("b", 64),
+		Implementation: "filler-spoken-safety-v1",
+		SourceID:       "source-one",
+		SourceSHA256:   strings.Repeat("c", 64),
+		SourceBytes:    1024,
+		DurationMS:     30_000,
+		HasAudio:       true,
+		HasVideo:       true,
+		MeasuredAt:     time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC),
+		FFmpeg:         ToolIdentity{Version: "ffmpeg-8", BinarySHA256: strings.Repeat("d", 64)},
+		FFprobe:        ToolIdentity{Version: "ffprobe-8", BinarySHA256: strings.Repeat("e", 64)},
 	}
 }

@@ -11,6 +11,17 @@ import (
 	"time"
 )
 
+func TestEvaluationOperationRejectsMissingCertificationBeforeOpeningSource(t *testing.T) {
+	t.Parallel()
+	fixture := newOperationFixture(t, nil)
+	fixture.request.CertificationSHA256 = ""
+
+	_, err := fixture.operation.Evaluate(t.Context(), fixture.request)
+	if !errors.Is(err, ErrEvaluationInvalid) || fixture.repository.Begun() || fixture.proposer.Calls() != 0 {
+		t.Fatalf("err=%v begun=%t proposer_calls=%d", err, fixture.repository.Begun(), fixture.proposer.Calls())
+	}
+}
+
 func TestEvaluationOperationRecordsSerialCascadeBeforeReturningEvidence(t *testing.T) {
 	t.Parallel()
 	fixture := newOperationFixture(t, []proposedInterval{{StartMS: 100, EndMS: 800}})

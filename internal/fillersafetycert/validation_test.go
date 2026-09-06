@@ -133,6 +133,31 @@ func TestAuthorityRequiresNoiseAndPlacementCoverage(t *testing.T) {
 	}
 }
 
+func TestAuthorityRejectsRepeatedModelReviewerFamily(t *testing.T) {
+	t.Parallel()
+	fixture := newCertificationFixture(t)
+	for index := range fixture.authority.Cases[0].Reviewers {
+		fixture.authority.Cases[0].Reviewers[index].Method = ReviewerModel
+		fixture.authority.Cases[0].Reviewers[index].ModelFamily = "independent-review-family"
+	}
+	fixture.rewriteAuthority(t)
+
+	if _, _, err := Publish(fixture.config()); err == nil || !strings.Contains(err.Error(), "families are not independent") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestAuthorityRequiresMinimumCleanFamilies(t *testing.T) {
+	t.Parallel()
+	fixture := newCertificationFixture(t)
+	fixture.authority.Cases = fixture.authority.Cases[:len(fixture.authority.Cases)-1]
+	fixture.rewriteAuthority(t)
+
+	if _, _, err := Publish(fixture.config()); err == nil || !strings.Contains(err.Error(), "at least 100 clean families") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestManifestRejectsRouteDriftAndHistoricalUnattributedEvidence(t *testing.T) {
 	t.Parallel()
 	t.Run("route schema", func(t *testing.T) {

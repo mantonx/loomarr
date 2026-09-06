@@ -25,9 +25,10 @@ type EvaluationOperation interface {
 // request. Source.Path is used only while the operation owns its private file
 // snapshot and is excluded from every returned and durable value.
 type EvaluationRequest struct {
-	RunID     string
-	StartedAt time.Time
-	Source    SourceRequest
+	RunID               string
+	StartedAt           time.Time
+	CertificationSHA256 string
+	Source              SourceRequest
 }
 
 // EvaluationReport is the canonical path-free result of one terminal run.
