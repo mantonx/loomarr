@@ -7,12 +7,12 @@ import (
 	"strings"
 )
 
-func validateOpenRouterAudioInput(adjudicator *openRouterAudioAdjudicator, ctx context.Context, candidate Candidate, wav []byte) error {
+func validateOpenRouterAudioInput(adjudicator *openRouterAudioAdjudicator, ctx context.Context, candidate Candidate, wav []byte, reserve func(string) error) error {
 	if adjudicator == nil || ctx == nil || ctx.Err() != nil {
 		return fmt.Errorf("spoken-safety audio adjudication input is invalid")
 	}
 	config := adjudicator.config
-	if config.Client == nil || strings.TrimSpace(config.BaseURL) == "" || strings.TrimSpace(config.APIKey) == "" || !boundedAuthorityID(config.Model) || !boundedAuthorityID(config.ResolvedModel) || !boundedAuthorityID(config.UpstreamProvider) || !boundedAuthorityID(config.ProviderSlug) || !validSHA256(config.CapabilitySHA256) || config.PolicySHA256 != policySHA256(config.Policy) || config.PromptSHA256 != audioPromptSHA256(config.Policy) || config.MaxChargeNanoUSD <= 0 || config.Reserve == nil {
+	if config.Client == nil || strings.TrimSpace(config.BaseURL) == "" || strings.TrimSpace(config.APIKey) == "" || !boundedAuthorityID(config.Model) || !boundedAuthorityID(config.ResolvedModel) || !boundedAuthorityID(config.UpstreamProvider) || !boundedAuthorityID(config.ProviderSlug) || !validSHA256(config.CapabilitySHA256) || config.PolicySHA256 != policySHA256(config.Policy) || config.PromptSHA256 != audioPromptSHA256(config.Policy) || config.MaxChargeNanoUSD <= 0 || reserve == nil {
 		return fmt.Errorf("spoken-safety audio adjudication authority is invalid")
 	}
 	if err := ValidatePolicy(config.Policy); err != nil {

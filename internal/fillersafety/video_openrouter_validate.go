@@ -7,12 +7,12 @@ import (
 	"strings"
 )
 
-func validateOpenRouterVideoInput(corroborator *openRouterVideoCorroborator, ctx context.Context, plan *CompleteMediaPlan) error {
+func validateOpenRouterVideoInput(corroborator *openRouterVideoCorroborator, ctx context.Context, plan *CompleteMediaPlan, reserve func(string) error) error {
 	if corroborator == nil || ctx == nil || ctx.Err() != nil || !validProposalPlan(plan) {
 		return fmt.Errorf("spoken-safety video corroboration input is invalid")
 	}
 	config := corroborator.config
-	if config.Client == nil || strings.TrimSpace(config.BaseURL) == "" || strings.TrimSpace(config.APIKey) == "" || !boundedAuthorityID(config.Model) || !boundedAuthorityID(config.ResolvedModel) || !boundedAuthorityID(config.UpstreamProvider) || !boundedAuthorityID(config.ProviderSlug) || !validSHA256(config.CapabilitySHA256) || config.PromptSHA256 != videoPromptSHA256() || config.MaxChargeNanoUSD <= 0 || config.Reserve == nil {
+	if config.Client == nil || strings.TrimSpace(config.BaseURL) == "" || strings.TrimSpace(config.APIKey) == "" || !boundedAuthorityID(config.Model) || !boundedAuthorityID(config.ResolvedModel) || !boundedAuthorityID(config.UpstreamProvider) || !boundedAuthorityID(config.ProviderSlug) || !validSHA256(config.CapabilitySHA256) || config.PromptSHA256 != videoPromptSHA256() || config.MaxChargeNanoUSD <= 0 || reserve == nil {
 		return fmt.Errorf("spoken-safety video corroboration authority is invalid")
 	}
 	return nil

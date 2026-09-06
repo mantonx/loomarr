@@ -41,7 +41,6 @@ type openRouterAudioConfig struct {
 	PolicySHA256     string
 	MaxChargeNanoUSD int64
 	DisableReasoning bool
-	Reserve          func(candidateID, requestSHA256 string) error
 }
 
 type openRouterAudioAdjudicator struct {
@@ -60,9 +59,24 @@ type audioModelOutput struct {
 	MatchedRuleIDs []string `json:"matchedRuleIds"`
 }
 
-func (a *openRouterAudioAdjudicator) adjudicate(ctx context.Context, candidate Candidate, wav []byte) (audioAttempt, error) {
+func (a *openRouterAudioAdjudicator) identity(_ int64) hostedCallIdentity {
+	return hostedCallIdentity{
+		RequestedProvider: "openrouter", RequestedModel: a.config.Model,
+		ResolvedProvider: "openrouter", ResolvedModel: a.config.ResolvedModel,
+		UpstreamProvider: a.config.UpstreamProvider, CapabilitySHA256: a.config.CapabilitySHA256,
+		PromptSHA256: a.config.PromptSHA256, SchemaSHA256: audioSchemaSHA256(a.config.Policy),
+		MaxChargeNanoUSD: a.config.MaxChargeNanoUSD,
+	}
+}
+
+func (a *openRouterAudioAdjudicator) adjudicate(
+	ctx context.Context,
+	candidate Candidate,
+	wav []byte,
+	reserve func(string) error,
+) (audioAttempt, error) {
 	attempt := audioAttempt{Assessment: AudioAssessment{CandidateID: candidate.ID, State: AudioFailed}, MatchedRuleIDs: []string{}}
-	if err := validateOpenRouterAudioInput(a, ctx, candidate, wav); err != nil {
+	if err := validateOpenRouterAudioInput(a, ctx, candidate, wav, reserve); err != nil {
 		return attempt, err
 	}
 	policyJSON, err := json.Marshal(a.config.Policy)
@@ -92,9 +106,7 @@ func (a *openRouterAudioAdjudicator) adjudicate(ctx context.Context, candidate C
 		MaxTokens:    audioMaxTokens, MaxChargeNanoUSD: a.config.MaxChargeNanoUSD,
 		DisableReasoning: a.config.DisableReasoning,
 		Title:            "Loomarr spoken-safety native-audio adjudication",
-		Reserve: func(requestSHA256 string) error {
-			return a.config.Reserve(candidate.ID, requestSHA256)
-		},
+		Reserve:          reserve,
 	})
 	attempt.Transport = transport
 	if err != nil {
@@ -120,6 +132,14 @@ func (a *openRouterAudioAdjudicator) adjudicate(ctx context.Context, candidate C
 	attempt.Assessment.State = state
 	attempt.MatchedRuleIDs = matched
 	return attempt, nil
+}
+
+func audioSchemaSHA256(policy Policy) string {
+	ruleIDs := make([]any, 0, len(policy.Rules))
+	for _, rule := range policy.Rules {
+		ruleIDs = append(ruleIDs, rule.ID)
+	}
+	return canonicalJSONSHA256(audioOutputSchema(ruleIDs))
 }
 
 func audioOutputSchema(ruleIDs []any) map[string]any {

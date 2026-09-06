@@ -582,6 +582,7 @@ type FillerDecisionStore interface {
 // spoken-safety shadow cascade. It is distinct from terminal admission policy.
 type FillerSafetyStore interface {
 	fillersafety.LedgerRepository
+	fillersafety.ExecutionRepository
 	ReserveSpokenSafetyInference(context.Context, SpokenSafetyInferenceReservation, InferenceEvaluation, InferenceBudget) (InferenceEvaluation, fillersafety.LedgerEvent, error)
 	SettleSpokenSafetyInference(context.Context, SpokenSafetyInferenceSettlement, InferenceSettlement) (InferenceEvaluation, fillersafety.LedgerEvent, error)
 	RecoverInterruptedSpokenSafetyRuns(context.Context, time.Time) (int, error)

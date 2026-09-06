@@ -133,7 +133,8 @@ func TestCallFailsClosedAfterSettlement(t *testing.T) {
 			t.Parallel()
 			client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: response(http.StatusOK, []byte(test.body))})}
 			result, err := Call(t.Context(), client, "https://openrouter.test/api/v1", validConfig(func(string) error { return nil }))
-			if err == nil || !strings.Contains(err.Error(), test.want) || result.ResponseSHA256 == "" {
+			if err == nil || !strings.Contains(err.Error(), test.want) || result.ResponseSHA256 == "" ||
+				test.want == "does not bind" && !errors.Is(err, ErrRouteMismatch) {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
 		})

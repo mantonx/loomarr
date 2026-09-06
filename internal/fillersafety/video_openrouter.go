@@ -50,7 +50,6 @@ type openRouterVideoConfig struct {
 	PromptSHA256     string
 	MaxChargeNanoUSD int64
 	DisableReasoning bool
-	Reserve          func(authoritySHA256, requestSHA256 string) error
 }
 
 type openRouterVideoCorroborator struct {
@@ -76,9 +75,23 @@ type videoAttempt struct {
 	Transport openroutermedia.Result
 }
 
-func (c *openRouterVideoCorroborator) corroborate(ctx context.Context, plan *CompleteMediaPlan) (videoAttempt, error) {
+func (c *openRouterVideoCorroborator) identity(durationMS int64) hostedCallIdentity {
+	return hostedCallIdentity{
+		RequestedProvider: "openrouter", RequestedModel: c.config.Model,
+		ResolvedProvider: "openrouter", ResolvedModel: c.config.ResolvedModel,
+		UpstreamProvider: c.config.UpstreamProvider, CapabilitySHA256: c.config.CapabilitySHA256,
+		PromptSHA256: c.config.PromptSHA256, SchemaSHA256: videoSchemaSHA256(durationMS),
+		MaxChargeNanoUSD: c.config.MaxChargeNanoUSD,
+	}
+}
+
+func (c *openRouterVideoCorroborator) corroborate(
+	ctx context.Context,
+	plan *CompleteMediaPlan,
+	reserve func(string) error,
+) (videoAttempt, error) {
 	attempt := videoAttempt{State: VideoFailed, Flags: []videoFlag{}}
-	if err := validateOpenRouterVideoInput(c, ctx, plan); err != nil {
+	if err := validateOpenRouterVideoInput(c, ctx, plan, reserve); err != nil {
 		return attempt, err
 	}
 	mimeType, valid := completeVideoMIME(plan.SourcePath)
@@ -110,9 +123,7 @@ func (c *openRouterVideoCorroborator) corroborate(ctx context.Context, plan *Com
 		MaxTokens:    videoMaxTokens, MaxChargeNanoUSD: c.config.MaxChargeNanoUSD,
 		DisableReasoning: c.config.DisableReasoning,
 		Title:            "Loomarr spoken-safety complete-video corroboration",
-		Reserve: func(requestSHA256 string) error {
-			return c.config.Reserve(plan.AuthoritySHA256, requestSHA256)
-		},
+		Reserve:          reserve,
 	})
 	attempt.Transport = transport
 	if err != nil {
@@ -133,6 +144,10 @@ func (c *openRouterVideoCorroborator) corroborate(ctx context.Context, plan *Com
 	state, flags, err := validateVideoModelOutput(output, plan.Video.EndMS)
 	attempt.State, attempt.Flags = state, flags
 	return attempt, err
+}
+
+func videoSchemaSHA256(durationMS int64) string {
+	return canonicalJSONSHA256(videoOutputSchema(durationMS))
 }
 
 func readBoundedCompleteVideo(path string) ([]byte, error) {
