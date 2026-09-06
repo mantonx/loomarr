@@ -72,6 +72,7 @@ ci-postgres-workflow	.github/workflows/ci-postgres.yml	postgres,policy
 ci-frontend-workflow	.github/workflows/ci-frontend.yml	web,policy
 ci-clients-workflow	.github/workflows/ci-clients.yml	clients,policy
 ci-apple-mobile-workflow	.github/workflows/ci-apple-mobile.yml	apple_mobile,policy
+ci-expo-android-mobile-workflow	.github/workflows/ci-expo-android-mobile.yml	expo_android_mobile,policy
 ci-apple-tv-workflow	.github/workflows/ci-apple-tv.yml	apple_tv,policy
 ci-apple-cache-validation-workflow	.github/workflows/ci-apple-cache-validation.yml	apple_mobile,apple_tv,policy
 apple-compilation-cache-publisher	.github/workflows/apple-compilation-cache.yml	apple_mobile,apple_tv,policy
