@@ -3,10 +3,13 @@ package fillerreview
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/loomarr/loomarr/internal/testkit/httpfixture"
 )
 
 func TestCallOpenRouterStructuredCarriesOneDataVideoOnPinnedRoute(t *testing.T) {
@@ -46,18 +49,12 @@ func TestCallOpenRouterStructuredCarriesOneDataVideoOnPinnedRoute(t *testing.T) 
 }
 
 func TestCallOpenRouterStructuredReturnsNestedChoiceErrorAsSettledProviderStatus(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": "generation", "model": "review/video-model",
-			"choices": []any{map[string]any{
-				"error":   map[string]any{"code": 429, "message": "temporarily rate-limited upstream"},
-				"message": map[string]any{"content": nil, "reasoning": "partial"},
-			}},
-			"usage": map[string]any{"prompt_tokens": 0, "completion_tokens": 0, "cost": 0},
-		})
-	}))
-	defer server.Close()
-	result, err := callOpenRouterStructured(t.Context(), server.Client(), server.URL, openRouterStructuredCallConfig{
+	client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"id":"generation","model":"review/video-model","choices":[{"error":{"code":429,"message":"temporarily rate-limited upstream"},"message":{"content":null,"reasoning":"partial"}}],"usage":{"prompt_tokens":0,"completion_tokens":0,"cost":0}}`)),
+		Header:     make(http.Header),
+	}})}
+	result, err := callOpenRouterStructured(t.Context(), client, "https://openrouter.test/api/v1", openRouterStructuredCallConfig{
 		APIKey: "key", Model: "review/video-model", ResolvedModel: "review/video-model-2026",
 		UpstreamProvider: "Video Route", ProviderSlug: "video/route", SchemaName: "video_test",
 		Schema: map[string]any{"type": "object"}, SystemPrompt: "screen", Content: "one video",
