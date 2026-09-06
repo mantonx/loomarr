@@ -116,6 +116,9 @@ func (m MediaAssetManifest) validateReuseFiles(ctx context.Context, clipDir, pla
 	if err := m.validate(); err != nil {
 		return err
 	}
+	if err := validateMediaAssetFile(ctx, clipDir, m.SourceMaster, MediaAssetSourceMaster, mediaMasterDirName); err != nil {
+		return err
+	}
 	if m.Evidence != nil {
 		if err := validateMediaAssetFile(ctx, clipDir, m.Evidence.Asset, MediaAssetEvidence, mediaEvidenceDirName); err != nil {
 			return err

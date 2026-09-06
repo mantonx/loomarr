@@ -294,6 +294,58 @@ func TestTranscodeStage_DerivativeReuseVerifiesCurrentBytes(t *testing.T) {
 	}
 }
 
+func TestTranscodeStage_CompletedReuseRejectsDriftedSourceMaster(t *testing.T) {
+	dir := t.TempDir()
+	stage, counts, clip := derivativeReuseFixture(t, dir)
+	out, err := stage.Run(context.Background(), clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clip = out.Clip
+	tags, state := ReadSidecarTagsState(filepath.Join(dir, filepath.FromSlash(clip.Path)))
+	if state != SidecarValid || tags.MediaAssets == nil || tags.MediaAssets.Evidence == nil || tags.MediaAssets.Playback == nil {
+		t.Fatalf("completed derivative manifest = %+v state=%v", tags.MediaAssets, state)
+	}
+	evidencePath := filepath.Join(dir, filepath.FromSlash(tags.MediaAssets.Evidence.Asset.Path))
+	playbackPath := filepath.Join(dir, filepath.FromSlash(tags.MediaAssets.Playback.Asset.Path))
+	evidenceBytes, err := os.ReadFile(evidencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	playbackBytes, err := os.ReadFile(playbackPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	masterPath := filepath.Join(dir, filepath.FromSlash(tags.MediaAssets.SourceMaster.Path))
+	master, err := os.OpenFile(masterPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := master.WriteAt([]byte("x"), 0); err != nil {
+		_ = master.Close()
+		t.Fatal(err)
+	}
+	if err := master.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if applies, reason := stage.Applies(context.Background(), clip); !applies {
+		t.Fatalf("drifted source master did not re-enter transcode: %s", reason)
+	}
+	if _, err := stage.Run(context.Background(), clip); err == nil {
+		t.Fatalf("drifted source master Run error = %v", err)
+	}
+	if counts.evidence != 1 || counts.playback != 1 {
+		t.Fatalf("drifted source master built or reused unverified derivatives: %+v", counts)
+	}
+	if got, err := os.ReadFile(evidencePath); err != nil || !bytes.Equal(got, evidenceBytes) {
+		t.Fatalf("evidence changed after source-master rejection: %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(playbackPath); err != nil || !bytes.Equal(got, playbackBytes) {
+		t.Fatalf("playback changed after source-master rejection: %q, %v", got, err)
+	}
+}
+
 func TestTranscodeStage_RunCannotReuseCachedQualityForDriftedDerivative(t *testing.T) {
 	for _, role := range []MediaAssetRole{MediaAssetEvidence, MediaAssetPlayback} {
 		t.Run(string(role), func(t *testing.T) {
