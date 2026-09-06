@@ -242,6 +242,11 @@ A closed, evidence-backed description of content relevant to Airworthiness, such
 nudity or hateful language. It is an observation, not the policy verdict that consumes it.
 _Avoid_: warning, rating, rejection reason
 
+**Audience profile**:
+A named policy that maps complete Suitability flags and context to an Airworthiness verdict for a
+class of viewers, such as all-ages or general-audience. It is not a claim about what the content is.
+_Avoid_: rating, safety level, maturity score
+
 ### Delivery
 
 **Playout**:

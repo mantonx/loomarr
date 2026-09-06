@@ -103,13 +103,89 @@ rights rows tied to the exact inventory and metadata SHA-256 values, reviewer, r
 redistribution decision, attribution, and restrictions; `held` rows remain out of the plan. Before the first request
 it proves the approved count and predicted bytes fit explicit ceilings. Downloads remain serial and identified,
 redirects stay within each authority's frozen and built-in host policy, and bodies cannot exceed
-their recorded size. Source checksums are checked when present, and the external ledger adds a
-locally computed SHA-256. Already-local direct-cohort cases are not downloaded again. A
+their recorded size. MP4, JPEG, and PNG are the only admitted representation types. Image responses must
+match the declared MIME type and exact byte count, decode completely as that format, end at the terminal
+JPEG/PNG boundary, and stay within the 50-million-pixel ceiling. Source checksums are checked when present,
+and the schema-3 external ledger adds a locally computed SHA-256, verified media type, image dimensions,
+capture identities, role hints, creator, source-family, subject-term, and exact profile/processor provenance.
+The downloader validates that completed ledger through the same shared `fillercorpus` interface used by
+downstream consumers before it publishes anything; the old command-private schema is not accepted.
+Exact duplicate media is rejected. Downloaded files are published without overwrite at mode `0600` beneath
+a mode-`0700` directory. Already-local direct-cohort cases are not downloaded again. A
 failed or stale approval writes no ledger and cannot silently widen the selected corpus.
 The caller must choose `development` or `certification` through
 `LOOMARR_FILLER_CORPUS_RIGHTS_PROFILE`. Certification additionally pins
 `LOOMARR_FILLER_CORPUS_PROCESSOR_ID` and `LOOMARR_FILLER_CORPUS_PROCESSOR_TERMS_SHA256`; a schema-v3
 development approval, changed processor, or changed terms snapshot fails before media access.
+
+`make filler-corpus-met-rights-propose` removes the repetitive mechanical portion of the Met review
+without bypassing it. The offline command reopens every exact raw object response, requires private
+regular cache files and complete declared coverage, reproduces the inventory projection, and holds
+missing or non-empty `rightsAndReproduction`, missing public-domain assertions, changed bytes, or
+source-field drift. Its policy-evidence input pins the official API documentation and the exact
+official Open Access repository commit while explicitly retaining the documented CC0/image and
+non-copyright limitations. The path-free output contains only case ids, metadata digests, closed
+status/reason codes, aggregate counts, and policy citations. Rights approval, download, truth,
+training, production, scheduling, and broadcast authority are always false; passing rows still need
+the existing independent item-level decision.
+
+`make filler-corpus-met-rights-attestation` turns a complete zero-hold pre-screen into one pending
+maintainer attestation bound to the exact inventory, inert worksheet, pre-screen, and pinned policy
+evidence digests. The maintainer reviews the recorded limitations once, names themself and the review
+time, changes `acceptance` from `pending` to `accepted`, and writes one versioned rationale. Then
+`make filler-corpus-met-rights-complete` expands that exact attestation into the ordinary completed
+CSV with a separate immutable identity and decision row for every item. Any held case, changed input,
+mixed authority, stale review, widened use, attribution requirement, or restriction rejects the whole
+batch. The CSV remains non-authorizing until `filler-corpus-rights-lock` independently revalidates all
+rows; certification, provider transfer, training, production, ingestion, scheduling, and broadcast
+remain excluded.
+
+The Met adapter has separate frozen discovery profiles for policy-positive and clean-control
+candidates. `met-clean-v1.json` deliberately supplies only search and exclusion predicates: a matching
+record is still a rights-reviewable candidate, never clean truth. Clean retention requires opening the
+exact materialized image, recording the no-sensitive-subject judgment and diagnostic slices, and locking
+that review through the ordinary visual nomination path. One independently sourced still work may count
+once after deterministic lossless wrapping; alternate carriers and transforms remain in that same family.
+
+`make filler-visual-corpus-nomination-prepare` is the narrow handoff for the institutional still-art lane.
+It strictly reopens the exact inventory, schema-3 materialization ledger, and every private image, then emits
+one inert JSON worksheet plus a spreadsheet-safe CSV. Immutable source, creator, family, rights-approval,
+file, media, and normalized-image identities are prefilled. The maintainer edits only `nomination`,
+`subject_status`, `generated_status`, and `slices_json`. The current closed projection accepts only Met JPEGs
+whose independent rights rationale starts with the versioned
+`met_cc0_open_access_object_reviewed_v1: ` basis and a non-empty explanation and carries no restriction; it does not infer a
+new licence from tags or search results. Preparation also emits a private `review.html` keyboard board. It
+shows the exact worksheet-bound image and source metadata and exports the same CSV. A separately selected local
+model-assistance JSON may prioritize proposals and explicitly exclude all non-proposals only after its worksheet,
+rank, case, and source-content bindings reproduce in the browser. It cannot author a positive or clean decision,
+and it is not consumed by the lock operation. When every worksheet row carries only the canonical
+`policy-clean-nomination` role, the board instead starts in a 12-image contact sheet. It permits one explicit
+human clean confirmation for the eligible undecided images on a page only after a fully bound clean-assistance
+manifest covers every exact case with two distinct local vision-model families and a local OCR text-safety
+screen, every exact source image loads, and the reviewer checks the page-level broadcast-safety attestation.
+Model-positive, age-risk, overlap-hold, and
+targeted-review rows are withheld from that action and must be opened for an individual decision; loading model
+assistance clears any earlier convenience clean decision on those rows. Positive decisions are always individual.
+The clean board also accepts the audience-aware v2 assistance contract. That version must embed one record for
+every worksheet case from the declared complete frontier-review ledger, using the closed suitability vocabulary
+and exact worksheet/rank/source bindings. The browser recomputes every record digest, the canonical JSONL ledger
+digest, per-action and per-flag counts, proposal-to-record observations and eligibility, and the sealed manifest
+digest. Any observed flag requires individual review and is shown only as a concise factual signal. The reviewer
+attestation names the visual suitability categories explicitly; spoken language remains a separate complete-source
+evaluator. A v2 record remains routing assistance: absence is not truth and neither the record nor the manifest can
+grant clean, Airworthiness, training, production, ingestion, scheduling, or broadcast authority.
+
+`make filler-visual-corpus-nomination-lock` reconstructs that worksheet from the original bytes before
+accepting the completed CSV. It rejects changed cells, blank or unknown dispositions, contradictory judgments,
+changed or symlinked media, exact and normalized duplicates, repeated published source-work/family identities,
+and repeated positive creators. An explicit `exclude` disposition requires the other three judgment cells to
+remain empty/`[]`; it publishes no candidate and cannot be confused with an unresolved blank row. The locked set
+binds the exact canonical decision digest and reviewed/excluded counts. A successful lock atomically publishes a
+private source root containing only accepted exact images, schema-2 rights evidence bound to inventory,
+materialization, approval, case, and content digests, and draft-compatible candidate records. Every output
+explicitly leaves model output, truth, training, production use, ingestion, scheduling, and broadcast authority
+false. Whole-corpus population, independence, model blindness, review, and certification remain owned by the
+visual corpus draft and V68 certificate.
 
 `make filler-corpus-rights-review` converts a frozen mixed-authority inventory into a deterministic worksheet
 bounded by explicit minimum and maximum item counts. It exposes the source assertions and selected

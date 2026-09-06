@@ -125,19 +125,19 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 | `diagnostics` | 8 | — |
 | `filler` | 10 | `diagnostics`, `filleradmission`, `fillerstructure`, `fillerstructurewindow`, `llm`, `mediatools`, `taxonomy` |
 | `filleradmission` | 8 | — |
-| `fillerbakeoff` | 5 | `filleradmission`, `fillereval`, `httpx`, `openroutermedia` |
-| `fillereval` | 5 | — |
+| `fillerbakeoff` | 7 | `filleradmission`, `fillereval`, `httpx`, `openroutermedia` |
+| `fillereval` | 6 | — |
 | `fillersafety` | 5 | `mediatools`, `openroutermedia` |
 | `fillerstructure` | 8 | — |
 | `fillerstructurewindow` | 6 | `fillerstructure` |
-| `httpx` | 11 | `metrics` |
+| `httpx` | 12 | `metrics` |
 | `invitation` | 6 | `contact` |
 | `library` | 8 | `filler`, `httpx`, `metrics` |
 | `llm` | 6 | `httpx`, `metrics` |
-| `mediatools` | 7 | `diagnostics` |
+| `mediatools` | 8 | `diagnostics` |
 | `metrics` | 8 | `provision` |
 | `notifications` | 5 | `httpx` |
-| `openroutermedia` | 6 | `fillereval` |
+| `openroutermedia` | 7 | `fillereval` |
 | `provision` | 18 | — |
 | `quality` | 7 | `provision` |
 | `recovery` | 5 | — |
@@ -165,9 +165,9 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   In-memory event bus behind SSE (§7 /v1/events, §8).
 - **`filleradmission`** · 8 importers
   Owns the deterministic semantic boundary between versioned filler evidence and a catalog-admission decision.
-- **`fillercorpus`** · 3 importers
+- **`fillercorpus`** · 4 importers
   Owns the source-neutral, non-authorizing inventory contract used to qualify certification corpus lanes.
-- **`fillereval`** · 5 importers
+- **`fillereval`** · 6 importers
   Owns the hermetic certification contract for filler admission.
 - **`fillerstructure`** · 8 importers
   Owns the provider-neutral complete-timeline agreement policy shared by certification and production.
@@ -220,7 +220,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns administrator admission decisions and their bearer grants (§11).
 - **`metrics`** · 8 importers · → `images/rustgen`, `provision`
   Owns Loomarr's generation-scoped Prometheus surface (design §7 /metrics, §17).
-- **`openroutermedia`** · 6 importers · → `fillereval`
+- **`openroutermedia`** · 7 importers · → `fillereval`
   Owns Loomarr's bounded OpenRouter structured-media transport.
 - **`prepared`** · 4 importers · → `diagnostics`, `media`
   Owns immutable, reusable playout publications.
@@ -229,7 +229,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 2**
 
-- **`httpx`** · 11 importers · → `metrics`
+- **`httpx`** · 12 importers · → `metrics`
   Shared outbound HTTP client factory (design §6, §21 phase 1).
 - **`plannerreference`** · → `quality`
   Binds a planner scorecard to the exact local model, runtime, host, and cold/warm protocol used to produce it.
@@ -238,7 +238,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 3**
 
-- **`fillerbakeoff`** · 5 importers · → `filleradmission`, `fillereval`, `httpx`, `openroutermedia`
+- **`fillerbakeoff`** · 7 importers · → `filleradmission`, `fillereval`, `httpx`, `openroutermedia`
   Runs bounded, inference-spending filler admission comparisons.
 - **`llm`** · 6 importers · → `httpx`, `metrics`
   LLM provider abstraction (design §8): one provider-neutral Chat primitive with tool-use, implemented by exactly TWO wire kinds — Ollama (the homelab default) and OpenAI-compatible.
@@ -253,7 +253,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 4**
 
-- **`mediatools`** · 7 importers · → `diagnostics`, `playout`, `proctree`
+- **`mediatools`** · 8 importers · → `diagnostics`, `playout`, `proctree`
   Ffmpeg / ffprobe / whisper layer (§10, §14.2): the exec calls, the parsers for what those binaries print, and the shapes they return.
 - **`recommend`** · → `llm`
   Defines inert Channel Concepts and the hermetic evaluator used to certify channel-recommendation models.
@@ -266,6 +266,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns the fail-closed spoken-safety cascade and its shadow evidence.
 - **`fillerstructuremedia`** · 4 importers · → `fillerstructure`, `mediatools`
   Owns the exact media contract shared by complete-timeline structure qualification and production assessment.
+- **`fillervisualsafety`** · 4 importers · → `fillerbakeoff`, `fillercorpus`, `fillereval`, `httpx`, `mediatools`, `openroutermedia`
+  Owns complete-source visual-sensitive-content evidence.
 
 **Layer 6**
 
@@ -273,6 +275,14 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns deterministic, non-authorizing certification of the durable spoken-safety cascade.
 - **`fillerstructurewindow`** · 6 importers · → `fillerstructure`, `fillerstructuremedia`
   Owns the complete-coverage plan used to assess long filler reels without pretending that independently processed windows are independent model votes.
+- **`fillervisualsafety/cmd/corpusdraft`** · → `fillervisualsafety`
+  Command corpusdraft prepares one private, candidate-model-blind visual corpus review package.
+- **`fillervisualsafety/cmd/diagnostic`** · → `fillervisualsafety`
+  Command diagnostic runs one explicitly configured, development-only complete-source portable visual inference.
+- **`fillervisualsafety/cmd/openrouterreview`** · → `fillerbakeoff`, `fillervisualsafety`
+  Command openrouterreview performs one serial, candidate-blind visual-policy review over a previously verified bundle.
+- **`fillervisualsafety/cmd/reviewbundle`** · → `fillervisualsafety`
+  Command reviewbundle creates one private candidate-output-blind visual review bundle.
 
 **Layer 7**
 
@@ -3754,6 +3764,26 @@ absence, or visual-model prose cannot satisfy any of those complete-coverage saf
 opaque reason code, and binds the SHA-256 of one immutable axis-evidence record. Raw restricted phrases and
 descriptions never enter proposal, catalog, or public admission records.
 
+Airworthiness is audience-policy evaluation over evidence, not a model synonym for `safe`. The three
+safety evaluators therefore preserve closed **suitability flags** separately from their axis verdicts:
+sexual or nude content; minor presence and age ambiguity; weapons, threats, non-graphic violence,
+graphic violence or gore, human death, animal harm, and self-harm; tobacco, alcohol, drugs, and gambling;
+hateful targeting, extremist symbols, slurs, profanity, explicit language, and threats; frightening or
+disturbing imagery; and regulated-product promotion. Where it changes the policy meaning, evidence also
+distinguishes presence or depiction from promotion and instruction, and records a closed severity. Company,
+brand, product, logo, and ordinary commercial presence remain enrichment facts unless a policy specifically
+consumes them. Religion, politics, war, and historical subject matter are descriptive context, never automatic
+prohibitions. `minor_present` is likewise not a prohibited verdict: it may exclude a case from an adult-only
+control while remaining acceptable under an audience policy.
+
+The first policy profiles are `all_ages`, `general_audience`, and `restricted_archive`. A deterministic policy
+maps complete, certified flags and context to `pass`, `reject`, or `hold`; it never asks a model to choose an
+audience verdict. `restricted_archive` permits deliberate retention, not unattended playout. An unknown flag,
+unsupported severity/context, missing modality coverage, or conflicting evidence holds. Public records expose
+only stable flag and reason identifiers; private raw evidence retains the restricted text or imagery needed for
+audit. Certification is policy- and category-specific: evidence that certifies adult-nudity detection cannot
+silently authorize violence, hateful-language, substance, or other audience-policy decisions.
+
 Each axis record binds the complete child subject described above, its outcome, and the evaluator's policy,
 certification, implementation, and evidence-contract profile, plus the SHA-256 of its private bounded raw
 ledger or measurement bytes. The axis record publishes only after those raw bytes are durable. A child
@@ -3796,6 +3826,74 @@ rights prohibitions and objective playback failures retain their closed outcomes
 enrichment or release while one of the three safety authorities is absent. An unavailable evidence root,
 rights repository, or runtime constructor leaves the existing missing-coordinator hold in place. The private
 content-addressed repository lives under the filler root's excluded `.loomarr/segment-screening` tree.
+
+#### Complete-source visual-sensitive-content authority (V68)
+
+The `visual_safety` axis is a complete-source safety question, not another use of the taxonomy vision
+rung. Four sampled frames, scene-selected OCR, logo classification, or confident multimodal prose cannot
+establish absence of restricted imagery between observations. One deep visual-safety module therefore owns
+source validation, the deterministic coverage plan, adapter observations, conservative reduction, and the
+canonical result. Its external interface accepts one path-free source authority plus a machine-local path
+and returns one content-addressed, non-admitting result. Callers never sequence detectors, interpret their
+confidence, or combine votes.
+
+The source authority binds an opaque source id, complete source SHA-256 and byte length, measured duration
+and video-stream identity, the private visual-policy SHA-256, measurement time, and the exact probing-tool
+identity. The local path is only a locator: the module snapshots a regular non-symlink file and reproduces
+the authority before extraction or spend. A source without a complete decodable video stream is a coverage
+hold. No filename, provider metadata, catalog tag, generated description, or parent classification enters
+the visual verdict.
+
+One versioned coverage profile declares the maximum source duration, target observation interval, maximum
+per-frame timestamp drift, maximum observation count, and the shortest restricted display duration it
+claims to cover. The deterministic planner always includes the first and last representable milliseconds,
+orders every requested timestamp, and rejects a profile whose claimed display floor is not strictly greater
+than its maximum planned or observed gap. Extraction evidence binds every requested and observed timestamp,
+decoded frame digest and dimensions, decoder identity, complete decode outcome, and the plan digest. A
+missing, duplicate, corrupt, out-of-order, excessively drifted, or unobserved frame makes coverage incomplete;
+it is never reconstructed as a negative. Certification locks the profile and display floor—production may
+use a denser compatible plan but may not claim a shorter floor without a new certificate.
+
+Visual observations use the closed states `prohibited`, `no_signal`, `incomplete`, and `failed`. Every
+observation binds the exact source authority, policy, producer family and implementation, certification or
+capability identity, immutable private evidence digest, assessment time, and zero or more source-relative
+intervals. Public evidence carries only opaque policy-match ids and reason codes; it never repeats a
+restricted description. A portable complete-coverage lane is mandatory. A bounded direct-video lane may
+run only for a declared escalation, and an optional Apple Sensitive Content Analysis lane may contribute a
+source-level observation only when its signed entitlement, enabled analysis policy, framework/OS identity,
+input digest, completion, and result are all bound. Apple supplies no timestamp and its negative is neither
+portable coverage nor a standalone clear. Unsupported platform, missing entitlement, disabled analysis,
+adapter error, stale capability, malformed timing, or identity drift is `incomplete` or `failed`, never
+`no_signal`.
+
+Reduction is asymmetric and contains no majority vote. Any valid prohibited observation quarantines the
+source and every mapped derivative, even when another lane reports no signal. With no prohibited
+observation, missing mandatory portable coverage, an incomplete or failed attempted lane, malformed
+evidence, or producer/certification drift holds. Only complete valid negative observations may produce
+`no_prohibited_visual_observed`, which remains evidence rather than ingestion, scheduling, training, or
+broadcast authority. Source projection is all-or-nothing: an incomplete mapping or a derivative that escapes
+one positive source verdict fails the operation closed.
+
+Certification uses rights-cleared, source-family-disjoint positive and clean controls and locks truth before
+candidate execution. Positive slices include short exposure, cuts, crop/letterbox, transcode, VFR/CFR,
+animation, monochrome, low light, multiple people, compilation placement, and damaged tails. Clean slices
+include programme, advertising, animation, historical graphics, and visually busy material. Every labeled
+positive at or above the locked display floor must quarantine; one miss fails. With zero misses, at least 59
+independent positive source families are required for a one-sided 95% exact lower recall bound of at least
+95%. Clean false positives must remain at or below the predeclared per-slice bound. Generated controls and
+transformed derivatives exercise implementation behavior but never inflate the independent-source
+denominator. One independently acquired, rights-reviewed still work may be carried through the complete-
+source evaluator by one deterministic lossless audiovisual wrapper and count as exactly one source family;
+the wrapper is transport, not generated semantic content. Every alternate duration, crop, encode, or other
+carrier of that work shares the same family and adds no independent sample. Still-work families supplement
+rather than replace natural programme, advertising, and animation video in the declared clean slices. Until
+that immutable certificate and a separate production release authority exist, the
+qualification evaluator continues to return `visual_safety_not_certified` and no catalog behavior changes.
+Every visual suitability flag enabled by a production audience policy additionally requires its own
+predeclared positive population, severity/context boundary, and confusable hard negatives. A corpus containing
+only adult nudity can certify only that narrow flag; historical battles, weapons, accidents, corpses, animal
+harm, frightening imagery, substance depiction, and regulated-product promotion are separate measured slices,
+not informal examples folded into a generic sensitive-content score.
 
 The file evidence adapter gives each subject/profile pair one deterministic operation identity pointing at
 its settled axis record. Once present, a different result cannot replace it; paid evaluators still own their
@@ -6310,6 +6408,11 @@ authority, authority-qualified stable case ID, all capture IDs that discovered i
 representation, acquisition-time campaign and source-family identity when known, and the adapter's
 explicit media-host allowlist. Capture-level request,
 response-byte, predicted-media-byte, and wall-clock ceilings remain visible beside actual usage.
+An adapter's configured snapshot time is the latest permitted source observation, not the time it
+pretends the capture occurred. The published inventory and capture snapshot equal the latest search,
+metadata, or representation-header observation actually consumed; crossing the configured ceiling
+fails before publication. Live requests and cache hits are reported separately so a cache-backed
+replay does not masquerade as either a fresh network capture or an unexplained zero-request result.
 The combiner strictly decodes every capture artifact, sorts captures and cases by their stable IDs,
 rejects duplicate capture identity, and folds a repeated case only when its frozen metadata and
 representation are identical; the merged case retains the sorted union of capture IDs and discovery
@@ -6457,6 +6560,64 @@ changed header, immutable cell, missing or duplicate row, incomplete decision, i
 unattributed BY/BY-SA approval, or inconsistent redistribution claim, and only then atomically emits
 the downloader's JSONL ledger. The completed ledger binds each row to both that inventory digest and
 the item's metadata digest; copying an approval between inventory snapshots fails closed.
+
+The development-only Met lane may reduce repetitive spreadsheet entry without reducing that item-level
+lock. Its batch-completion aid accepts only the exact current inventory and inert worksheet, a complete
+zero-hold Met metadata pre-screen bound to the pinned Open Access policy evidence, and one separately
+authored maintainer attestation bound to all three artifact digests. The attestation names the reviewer
+and review time, explicitly accepts the recorded non-copyright limitations, and authorizes only private
+development-corpus copying, technical transformation, and evidence extraction. The aid reconstructs
+every immutable worksheet row and fills the same decision columns for each independently identified
+item; the ordinary rights locker remains the sole producer of downloader authority and revalidates all
+rows. A held pre-screen case, mixed authority, incomplete coverage, stale time, changed artifact,
+unknown field, blank attestation, attribution requirement, or non-empty restriction refuses batch
+completion and returns the reviewer to the ordinary item-level exception path. The batch attestation
+does not grant certification, provider transfer, training, production, ingestion, scheduling, or
+broadcast authority and is not a model decision or chain-of-title warranty.
+
+The visual-corpus nomination lock accepts an explicit `exclude` disposition so a completed review
+does not have to mislabel an unsuitable or uncertain downloaded work as positive or clean. An
+excluded row makes no subject, generation, or diagnostic-slice assertion and publishes no candidate
+or rights file. Blank and unknown dispositions still fail the complete review. The nomination set
+binds the exact canonical completed-review digest, total reviewed count, excluded count, and every
+published candidate; the locker reopens the original inventory, materialization ledger, worksheet,
+and media before publication. This is a workflow exclusion only: it creates no truth, training,
+provider-transfer, certification, ingestion, scheduling, production, or broadcast authority.
+
+Nomination preparation also emits a private, non-blind keyboard review board beside the inert JSON
+and CSV. It shows the institution-authored identity and the worksheet-bound source image, and exports
+the ordinary completed CSV consumed by the locker. A reviewer may load a separate local model-
+assistance manifest only when its worksheet, case, rank, and exact content identities reproduce. The
+browser may then prioritize proposed positives and, after one explicit confirmation, mark every
+non-proposal as excluded; it never authors a positive or clean decision. Those decisions require an
+individual reviewer action except in a worksheet whose every row carries the sole canonical
+`policy-clean-nomination` role. For that clean-control worksheet, the board may render a bounded page
+of exact source images and let the reviewer explicitly confirm all eligible, previously undecided
+images on that page as clean only after a fully bound clean-assistance manifest covers every exact
+case with two distinct local vision-model families plus a local OCR text-safety screen, every image
+has loaded, and the reviewer attests that they
+checked the whole page for adult nudity, minors, sexual or graphic content, hate symbols or text, and
+other broadcast-unsuitable content. A version-two assistance manifest may add one complete, source-bound
+frontier audience-review ledger with a closed suitability-flag vocabulary. It records observations and routes
+cases only: every record binds the worksheet case, rank, exact source SHA-256, review method, and non-authority
+flags; absence is never truth. The board accepts the version-two manifest only when its ledger digest, reviewer,
+vocabulary, all per-case record digests, and complete worksheet coverage reproduce. Any observed suitability
+flag makes the case ineligible for page confirmation and is rendered as a concise factual candidate signal for
+individual inspection. Those digests are consistency seals, not reviewer-authentication signatures; the reviewer
+still explicitly selects the private manifest. The page attestation explicitly covers sexual content; minor or
+age-ambiguous sexual risk; violence, gore, death, self-harm, animal harm, weapons, and frightening imagery;
+tobacco, alcohol, drugs,
+gambling, and regulated-product promotion; hateful or extremist material; and prohibited visible written
+language. It does not call ordinary minor presence, religion, politics, war, historical context, or brand
+presence automatically prohibited.
+
+A model-positive, age-risk, overlap-hold, or targeted-review row
+is never eligible for that page action and must receive an individual decision; loading assistance
+also clears any earlier convenience clean decision on such a row. Positive decisions always remain
+individual. Every unresolved row remains blank so locking fails. The assistance bytes are neither
+copied into the worksheet nor accepted by the locker. The board is development ergonomics, not the
+candidate-blind certification review, and the locker still reopens every source byte after the
+review.
 
 The certification holdout uses a distinct schema-v4 rights contract; a schema-v3 approval remains
 readable development history but cannot authorize certification acquisition or preparation. The

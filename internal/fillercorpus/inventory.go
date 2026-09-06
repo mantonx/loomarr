@@ -31,6 +31,7 @@ var authorityMediaHosts = map[string][]string{
 	"images.nasa.gov":                 {"images-assets.nasa.gov"},
 	"cdc.gov":                         {"www.cdc.gov"},
 	"commons.wikimedia.org":           {"upload.wikimedia.org"},
+	MetAuthority:                      {metImageHost},
 }
 
 func mediaHostRules(authority string) ([]string, bool) {
@@ -80,6 +81,7 @@ type InventoryCase struct {
 	RoleHints               []string                `json:"roleHints"`
 	Collection              []string                `json:"collection,omitempty"`
 	Creator                 []string                `json:"creator,omitempty"`
+	SubjectTerms            []string                `json:"subjectTerms,omitempty"`
 	Campaign                string                  `json:"campaign,omitempty"`
 	SourceFamily            string                  `json:"sourceFamily,omitempty"`
 	Date                    string                  `json:"date,omitempty"`
@@ -344,6 +346,9 @@ func ValidateInventory(value Inventory) []string {
 		if strings.TrimSpace(item.Title) == "" || len(item.RoleHints) == 0 || slices.Contains(item.RoleHints, "") || len(item.RightsAssertions) == 0 || slices.Contains(item.RightsAssertions, "") || item.MetadataRetrievedAt.IsZero() || item.MetadataRetrievedAt.After(value.SnapshotAt) || !digest(item.MetadataSHA256, 64) {
 			failures = append(failures, fmt.Sprintf("case %q has incomplete frozen metadata", item.CaseID))
 		}
+		if !canonicalOptionalStrings(item.SubjectTerms) {
+			failures = append(failures, fmt.Sprintf("case %q has non-canonical subject terms", item.CaseID))
+		}
 		if (transport == TransportHTTPS && (!httpsURL(item.ItemURL) || !httpsURL(item.MetadataURL))) ||
 			(transport == TransportLocal && ((item.ItemURL != "" && !httpsURL(item.ItemURL)) || (item.MetadataURL != "" && !httpsURL(item.MetadataURL)))) ||
 			(item.LicenseURL != "" && !httpsURL(item.LicenseURL)) {
@@ -380,6 +385,20 @@ func ValidateInventory(value Inventory) []string {
 	}
 	slices.Sort(failures)
 	return failures
+}
+
+func canonicalOptionalStrings(values []string) bool {
+	if !slices.IsSorted(values) {
+		return false
+	}
+	previous := ""
+	for _, value := range values {
+		if value == "" || value != strings.TrimSpace(value) || value == previous {
+			return false
+		}
+		previous = value
+	}
+	return true
 }
 
 func validCaptureTransport(capture Capture) bool {
