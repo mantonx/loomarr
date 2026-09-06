@@ -42,13 +42,14 @@ func (o *evaluationOperation) Evaluate(ctx context.Context, request EvaluationRe
 	if o == nil || ctx == nil || ctx.Err() != nil || !boundedLedgerID(request.RunID) || request.StartedAt.IsZero() {
 		return EvaluationReport{}, ErrEvaluationInvalid
 	}
-	plan, err := PlanCompleteMedia(ctx, request.Source)
-	if err != nil {
+	if err := validateSourceAuthority(request.Source.Authority); err != nil {
 		return EvaluationReport{}, err
 	}
-	defer func() { _ = plan.Close() }()
-
-	run := evaluationLedgerRun(request, plan, proposerIdentitySHA256(o.cascade.proposerIdentity))
+	authoritySHA256, err := sourceAuthoritySHA256(request.Source.Authority)
+	if err != nil {
+		return EvaluationReport{}, ErrEvaluationInvalid
+	}
+	run := evaluationLedgerRun(request, authoritySHA256, proposerIdentitySHA256(o.cascade.proposerIdentity))
 	created, err := o.repository.BeginSpokenSafetyRun(ctx, run)
 	if err != nil {
 		return EvaluationReport{}, err
@@ -56,6 +57,11 @@ func (o *evaluationOperation) Evaluate(ctx context.Context, request EvaluationRe
 	if !created {
 		return o.completedReport(ctx, run)
 	}
+	plan, err := PlanCompleteMedia(ctx, request.Source)
+	if err != nil {
+		return EvaluationReport{}, err
+	}
+	defer func() { _ = plan.Close() }()
 
 	timeline := evaluationTimeline{last: run.CreatedAt, now: o.now}
 	source := LedgerEvent{
@@ -114,13 +120,14 @@ func (o *evaluationOperation) completedReport(ctx context.Context, run LedgerRun
 	return EvaluationReport{Run: run, Evidence: terminal.Evidence, Result: terminal.Result}, nil
 }
 
-func evaluationLedgerRun(request EvaluationRequest, plan CompleteMediaPlan, proposerSHA256 string) LedgerRun {
+func evaluationLedgerRun(request EvaluationRequest, authoritySHA256, proposerSHA256 string) LedgerRun {
+	authority := request.Source.Authority
 	return LedgerRun{
-		ID: request.RunID, ClipHash: plan.SourceSHA256,
-		AuthoritySHA256: plan.AuthoritySHA256, SourceSHA256: plan.SourceSHA256,
-		SourceBytes: plan.SourceBytes, DurationMS: plan.Audio.EndMS,
-		CertificationSHA256: request.Source.Authority.CertificationSHA256,
-		PolicySHA256:        request.Source.Authority.PolicySHA256, ProposerSHA256: proposerSHA256,
+		ID: request.RunID, ClipHash: authority.SourceSHA256,
+		AuthoritySHA256: authoritySHA256, SourceSHA256: authority.SourceSHA256,
+		SourceBytes: authority.SourceBytes, DurationMS: authority.DurationMS,
+		CertificationSHA256: authority.CertificationSHA256,
+		PolicySHA256:        authority.PolicySHA256, ProposerSHA256: proposerSHA256,
 		Implementation: evaluationImplementation, CreatedAt: request.StartedAt.UTC(),
 	}
 }

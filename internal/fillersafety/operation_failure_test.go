@@ -3,6 +3,7 @@ package fillersafety
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -78,6 +79,23 @@ func TestEvaluationOperationReservationFailureLeavesRunForRecovery(t *testing.T)
 	}
 	if _, err := fixture.operation.Evaluate(t.Context(), fixture.request); !errors.Is(err, ErrEvaluationIncomplete) {
 		t.Fatalf("in-place retry=%v, want ErrEvaluationIncomplete", err)
+	}
+}
+
+func TestEvaluationOperationPlanningFailureLeavesIncompleteHeader(t *testing.T) {
+	t.Parallel()
+	fixture := newOperationFixture(t, []proposedInterval{{StartMS: 100, EndMS: 800}})
+	if err := os.Remove(fixture.request.Source.Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.operation.Evaluate(t.Context(), fixture.request); err == nil {
+		t.Fatal("expected planning failure")
+	}
+	if !fixture.state.begun || len(fixture.state.events) != 0 || fixture.proposer.Calls() != 0 || fixture.audio.Calls() != 0 || fixture.video.Calls() != 0 {
+		t.Fatalf("header=%t events=%d calls=%d/%d/%d", fixture.state.begun, len(fixture.state.events), fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
+	}
+	if _, err := fixture.operation.Evaluate(t.Context(), fixture.request); !errors.Is(err, ErrEvaluationIncomplete) {
+		t.Fatalf("duplicate error=%v, want ErrEvaluationIncomplete", err)
 	}
 }
 

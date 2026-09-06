@@ -2,9 +2,12 @@ package fillersafety
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestEvaluationOperationRecordsSerialCascadeBeforeReturningEvidence(t *testing.T) {
@@ -68,6 +71,64 @@ func TestEvaluationOperationReturnsCompletedRunWithoutRepeatingWork(t *testing.T
 	if !reflectEvaluationReport(first, second) || len(fixture.state.events) != eventCount ||
 		fixture.proposer.Calls() != 1 || fixture.audio.Calls() != 1 || fixture.video.Calls() != 1 {
 		t.Fatalf("first=%+v second=%+v events=%d calls=%d/%d/%d", first, second, len(fixture.state.events), fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
+	}
+}
+
+func TestEvaluationOperationReplaysCompletedRunBeforeSourceWork(t *testing.T) {
+	t.Parallel()
+	fixture := newOperationFixture(t, []proposedInterval{{StartMS: 100, EndMS: 800}})
+	first, err := fixture.operation.Evaluate(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, reservations, settlements := len(fixture.state.events), len(fixture.repository.Reservations()), len(fixture.repository.Settlements())
+	if err := os.WriteFile(fixture.request.Source.Path, []byte("changed source bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := fixture.operation.Evaluate(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflectEvaluationReport(first, second) || len(fixture.state.events) != events ||
+		len(fixture.repository.Reservations()) != reservations || len(fixture.repository.Settlements()) != settlements ||
+		fixture.proposer.Calls() != 1 || fixture.audio.Calls() != 1 || fixture.video.Calls() != 1 {
+		t.Fatalf("first=%+v second=%+v events=%d reservations=%d settlements=%d calls=%d/%d/%d", first, second, len(fixture.state.events), len(fixture.repository.Reservations()), len(fixture.repository.Settlements()), fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
+	}
+}
+
+func TestEvaluationOperationDetectsHeaderConflictBeforeSourceWork(t *testing.T) {
+	t.Parallel()
+	mutations := map[string]func(*operationFixture){
+		"source": func(fixture *operationFixture) {
+			fixture.request.Source.Authority.SourceSHA256 = strings.Repeat("f", 64)
+		},
+		"policy": func(fixture *operationFixture) {
+			fixture.request.Source.Authority.PolicySHA256 = strings.Repeat("e", 64)
+		},
+		"proposer": func(fixture *operationFixture) {
+			fixture.operation.cascade.proposerIdentity.ConfigSHA256 = strings.Repeat("e", 64)
+		},
+		"started at": func(fixture *operationFixture) {
+			fixture.request.StartedAt = fixture.request.StartedAt.Add(time.Second)
+		},
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			fixture := newOperationFixture(t, []proposedInterval{{StartMS: 100, EndMS: 800}})
+			if _, err := fixture.operation.Evaluate(t.Context(), fixture.request); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(fixture.request.Source.Path); err != nil {
+				t.Fatal(err)
+			}
+			mutate(&fixture)
+			if _, err := fixture.operation.Evaluate(t.Context(), fixture.request); !errors.Is(err, ErrLedgerConflict) {
+				t.Fatalf("replay error=%v, want immutable conflict", err)
+			}
+			if fixture.proposer.Calls() != 1 || fixture.audio.Calls() != 1 || fixture.video.Calls() != 1 {
+				t.Fatalf("conflict repeated work: calls=%d/%d/%d", fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
+			}
+		})
 	}
 }
 
