@@ -52,6 +52,7 @@ type Source struct {
 	AcquisitionID string
 	Kind          Kind
 	URL           string
+	RemoteID      string
 	// PublicationDir is set only by the Ingestor while downloading into hidden staging. It lets
 	// adapters retain their provider-specific idempotency index without publishing into it.
 	PublicationDir string
@@ -265,7 +266,7 @@ func (i *Ingestor) manifests(src Source, outputDir string, outputs []Output) []f
 		identity := sha256.Sum256([]byte(src.AcquisitionID + "\x00" + src.URL + "\x00" + mediaPath + "\x00" + output.SHA256))
 		manifests = append(manifests, filler.AcquisitionArtifact{
 			ID: hex.EncodeToString(identity[:]), AcquisitionID: src.AcquisitionID, SourceID: src.ID,
-			Provider: string(src.Kind), SourceURL: src.URL, StagingPath: stagingPath,
+			Provider: string(src.Kind), SourceURL: src.URL, RemoteID: src.RemoteID, StagingPath: stagingPath,
 			MediaPath: mediaPath, SidecarPath: sidecarPath, MediaSHA256: output.SHA256,
 			MediaBytes: output.Bytes, ClipHash: output.ClipHash, State: state,
 			ProviderArchiveEntry: output.ArchiveEntry,

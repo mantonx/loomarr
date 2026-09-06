@@ -295,10 +295,20 @@ const pendingPull: PullDTO = {
   proposedBy: "ada",
   status: "pending",
   estimateClips: 52,
+  candidateCount: 2,
+  intent: {
+    version: "filler-acquisition-intent/v1",
+    rights: "prefer_declared",
+    count: 2,
+    catalogReason: "Saturday Mornings falls back to bumpers, because nothing in the catalog matches its era.",
+  },
+  rejected: [],
+  sources: [],
   createdAt: "2026-08-01T12:00:00Z",
   plan: [
     {
       sourceId: "classic",
+      candidateId: "candidate_classic",
       tag: "archive",
       name: "Classic TV commercials",
       why: "A source you added and left switched on.",
@@ -307,6 +317,7 @@ const pendingPull: PullDTO = {
     },
     {
       sourceId: "psa",
+      candidateId: "candidate_psa",
       tag: "archive",
       name: "Public service announcements",
       why: "A source you added and left switched on.",

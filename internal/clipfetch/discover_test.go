@@ -2,6 +2,7 @@ package clipfetch
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,6 +13,34 @@ import (
 	"sync"
 	"testing"
 )
+
+func TestEnumerateCollection_PaginatesWithinAHardMetadataBound(t *testing.T) {
+	var pages []int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/advancedsearch.php", func(w http.ResponseWriter, r *http.Request) {
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
+		pages = append(pages, page)
+		_, _ = fmt.Fprintf(w, `{"response":{"numFound":80,"docs":[`)
+		for i := 0; i < rows; i++ {
+			if i > 0 {
+				_, _ = fmt.Fprint(w, ",")
+			}
+			_, _ = fmt.Fprintf(w, `{"identifier":"page-%d-item-%d"}`, page, i)
+		}
+		_, _ = fmt.Fprint(w, `]}}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	result, err := discoverer(t, srv.URL).EnumerateCollection(t.Context(), "classic", 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 60 || !slices.Equal(pages, []int{1, 2, 3}) {
+		t.Fatalf("items/pages = %d/%v, want 60/[1 2 3]", len(result.Items), pages)
+	}
+}
 
 // Discovery is tested against the PINNED fixture, served by a local stub — never the live API
 // (AGENTS.md: unit tests never touch the network). The fixture is a real capture, and it keeps

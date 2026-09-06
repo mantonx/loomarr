@@ -27,30 +27,52 @@ const (
 	PullDismissed PullStatus = "dismissed"
 )
 
-// PullPlanRow is one source the pull would draw from.
+// PullPlanRow is one exact provider item the pull would acquire.
 type PullPlanRow struct {
 	// SourceID is the registered collection this row fetches from. A row whose source has
 	// since been removed or switched off is refused at approval rather than skipped.
-	SourceID string
+	SourceID string `json:"sourceId"`
+	Provider string `json:"provider,omitempty"`
+	RemoteID string `json:"remoteId,omitempty"`
+	// URL is the exact item payload approved for ingest. Collection URLs exist only on legacy
+	// pre-V66 pulls and are resolved by the approval compatibility path.
+	URL          string    `json:"url,omitempty"`
+	License      string    `json:"license,omitempty"`
+	ObservedYear int       `json:"observedYear,omitempty"`
+	PublishedAt  string    `json:"publishedAt,omitempty"`
+	DurationMS   int       `json:"durationMs,omitempty"`
+	Height       int       `json:"height,omitempty"`
+	Geography    Geography `json:"geography,omitempty"`
 	// Tag is a short label for the row's coloured chip ("1990s", "kids").
-	Tag string
+	Tag string `json:"tag"`
 	// Name is the collection's operator-facing name.
-	Name string
+	Name string `json:"name"`
 	// Why is why THIS source is in the plan — the per-row half of the pull's reason.
-	Why string
+	Why string `json:"why"`
 	// EstimateClips is how many clips this row is expected to bring in.
 	//
 	// ⚠ An ESTIMATE, and it must never be rendered as a promise. What a source actually yields
 	// depends on what is still there, what deduplicates against the catalog, and what the
 	// splitter makes of a compilation. A number presented as exact here becomes "Loomarr said
 	// 40 and downloaded 12" — a bug report about a forecast.
-	EstimateClips int
+	EstimateClips int `json:"estimateClips"`
 	// Dropped records that the operator excluded this row before approving.
 	//
 	// ⚠ Retained with a flag rather than removed from the slice, and that is a property of the
 	// gate rather than bookkeeping: the record must show what was PROPOSED as well as what was
 	// AGREED TO, or "we approved this" loses the half that matters.
-	Dropped bool
+	Dropped bool `json:"dropped"`
+}
+
+func (r PullPlanRow) Identity() RemoteIdentity {
+	return RemoteIdentity{Provider: r.Provider, SourceID: r.SourceID, RemoteID: r.RemoteID}
+}
+
+func (r PullPlanRow) CandidateID() string {
+	if r.Identity().Validate() != nil {
+		return ""
+	}
+	return r.Identity().Token()
 }
 
 // Pull is a proposed acquisition across filler sources, awaiting a human.
@@ -65,7 +87,12 @@ type Pull struct {
 	Status     PullStatus
 	// Note is the operator's narrowing instruction, captured at approval.
 	Note string
-	Plan []PullPlanRow
+	// Intent and Rejected were added in V66. Their zero values preserve readability of historical
+	// V35 source-level pull JSON without pretending those records had candidate evidence.
+	Intent   AcquisitionIntent           `json:"intent,omitempty"`
+	Plan     []PullPlanRow               `json:"plan"`
+	Rejected []AcquisitionDecision       `json:"rejected,omitempty"`
+	Sources  []AcquisitionSourceDecision `json:"sources,omitempty"`
 
 	CreatedAt time.Time
 	// DecidedAt is zero while pending.

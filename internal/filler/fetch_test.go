@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ type fetchStub struct {
 	paths       []string
 	offers      []filler.DiscoveredRef
 	queued      []string
+	queuedIDs   []string
 	sourceID    string
 	sourceKind  string
 	calls       int
@@ -45,6 +47,14 @@ func (f *fetchStub) IngestSource(_ context.Context, sourceID, sourceKind string,
 	f.queued = append(f.queued, urls...)
 	return "job-1", nil
 }
+func (f *fetchStub) IngestSourceItems(ctx context.Context, sourceID, sourceKind string, items []filler.DiscoveredRef) (string, error) {
+	urls := make([]string, 0, len(items))
+	for _, item := range items {
+		f.queuedIDs = append(f.queuedIDs, item.ID)
+		urls = append(urls, item.URL)
+	}
+	return f.IngestSource(ctx, sourceID, sourceKind, urls)
+}
 func (f *fetchStub) MarkFetched(_ context.Context, id string, at time.Time) error {
 	if f.stamped == nil {
 		f.stamped = map[string]time.Time{}
@@ -71,7 +81,38 @@ func limits(perRun, catalog, disk int) filler.FetchLimits {
 
 func newFetcher(t *testing.T, stub *fetchStub, l filler.FetchLimits) *filler.Fetcher {
 	t.Helper()
-	return filler.NewFetcher(stub, stub, stub, t.TempDir(), l, discardLog())
+	return newFetcherWithRemoteStates(t, stub, l, nil)
+}
+
+// fetchStoreWithRemoteStates adds the fetch port's typed-state call without turning the shared
+// fetch fixture into a second stateful catalog implementation.
+type fetchStoreWithRemoteStates struct {
+	*fetchStub
+	listRemoteStates func(context.Context) (map[string]filler.ExistingRemoteState, error)
+}
+
+func (s fetchStoreWithRemoteStates) ListAcquisitionRemoteStates(ctx context.Context) (map[string]filler.ExistingRemoteState, error) {
+	if s.listRemoteStates == nil {
+		return nil, nil
+	}
+	return s.listRemoteStates(ctx)
+}
+
+func newFetcherWithRemoteStates(t *testing.T, stub *fetchStub, l filler.FetchLimits, states map[string]filler.ExistingRemoteState) *filler.Fetcher {
+	t.Helper()
+	return filler.NewFetcher(fetchStoreWithRemoteStates{
+		fetchStub: stub,
+		listRemoteStates: func(context.Context) (map[string]filler.ExistingRemoteState, error) {
+			return states, nil
+		},
+	}, stub, stub, t.TempDir(), l, discardLog())
+}
+
+type sourceEnum func(filler.FetchSource) []filler.DiscoveredRef
+
+func (e sourceEnum) Enumerate(_ context.Context, source filler.FetchSource, _ int) ([]filler.DiscoveredRef, int, error) {
+	items := e(source)
+	return items, len(items), nil
 }
 
 // ⚠ THE bound that makes auto-fetch safe to enable by default: an archive.org collection is
@@ -92,6 +133,26 @@ func TestFetch_StopsAtMaxPerRun(t *testing.T) {
 	if stub.sourceID != "s1" {
 		t.Errorf("queued source id = %q, want s1 — admission provenance was dropped", stub.sourceID)
 	}
+	if len(stub.queuedIDs) != 3 {
+		t.Fatalf("queued remote ids = %v, want exact identities retained", stub.queuedIDs)
+	}
+}
+
+func TestFetch_RanksMetadataInsteadOfTakingProviderOrder(t *testing.T) {
+	stub := &fetchStub{
+		sources: []filler.FetchSource{{ID: "s1", Kind: "archive", URI: "coll", Enabled: true}},
+		offers: []filler.DiscoveredRef{
+			{ID: "first-low", URL: "https://archive.org/details/first-low", Height: 240},
+			{ID: "second-hd", URL: "https://archive.org/details/second-hd", Height: 1080, License: "cc-by"},
+		},
+	}
+	res, err := newFetcher(t, stub, limits(1, 2000, 20)).Run(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Queued != 1 || len(stub.queuedIDs) != 1 || stub.queuedIDs[0] != "second-hd" {
+		t.Fatalf("scheduled selection queued %v, want the declared-rights HD item", stub.queuedIDs)
+	}
 }
 
 func TestFetch_EnumeratesTheRegisteredProviderKind(t *testing.T) {
@@ -107,6 +168,73 @@ func TestFetch_EnumeratesTheRegisteredProviderKind(t *testing.T) {
 	}
 	if stub.sourceKind != "youtube" {
 		t.Fatalf("queued source kind = %q, want the registered YouTube kind", stub.sourceKind)
+	}
+}
+
+func TestFetch_ScheduledSelectionKeepsProviderNamespacesDistinct(t *testing.T) {
+	stub := &fetchStub{sources: []filler.FetchSource{
+		{ID: "archive:classic", Kind: "archive", URI: "https://archive.org/details/classic", Enabled: true},
+		{ID: "youtube:classic", Kind: "youtube", URI: "https://youtube.com/@classic/videos", Enabled: true},
+	}}
+	enum := sourceEnum(func(source filler.FetchSource) []filler.DiscoveredRef {
+		if source.Kind == "youtube" {
+			return []filler.DiscoveredRef{{ID: "abcdef12345", URL: "https://youtube.com/watch?v=abcdef12345", Height: 1080}}
+		}
+		return []filler.DiscoveredRef{{ID: "abcdef12345", URL: "https://archive.org/details/abcdef12345", Height: 1080}}
+	})
+	f := filler.NewFetcher(fetchStoreWithRemoteStates{fetchStub: stub}, enum, stub, t.TempDir(), limits(1, 2000, 20), discardLog())
+	res, err := f.Run(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Queued != 2 || len(stub.queued) != 2 {
+		t.Fatalf("queued=%d urls=%v, want both provider-specific candidates", res.Queued, stub.queued)
+	}
+}
+
+func TestFetch_PreservesCaseSensitiveYouTubeItemIdentity(t *testing.T) {
+	stub := &fetchStub{sources: []filler.FetchSource{{ID: "youtube:case", Kind: "youtube", URI: "https://youtube.com/@case/videos", Enabled: true}}, offers: []filler.DiscoveredRef{
+		{ID: "AbCd123", URL: "https://youtube.com/watch?v=AbCd123", Title: "Upper title"},
+		{ID: "abcd123", URL: "https://youtube.com/watch?v=abcd123", Title: "Lower title"},
+	}}
+	res, err := newFetcher(t, stub, limits(2, 2000, 20)).Run(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Queued != 2 || !reflect.DeepEqual(stub.queuedIDs, []string{"AbCd123", "abcd123"}) {
+		t.Fatalf("queued=%d ids=%v, want both case-sensitive IDs", res.Queued, stub.queuedIDs)
+	}
+}
+
+func TestFetch_TypedRemoteStatesExcludeOnlyExactIdentity(t *testing.T) {
+	upper := filler.RemoteIdentity{Provider: "youtube", SourceID: "youtube:case", RemoteID: "AbCd123"}
+	stub := &fetchStub{sources: []filler.FetchSource{{ID: upper.SourceID, Kind: upper.Provider, URI: "https://youtube.com/@case/videos", Enabled: true}}, offers: []filler.DiscoveredRef{{ID: upper.RemoteID, URL: "https://youtube.com/watch?v=AbCd123"}, {ID: "abcd123", URL: "https://youtube.com/watch?v=abcd123"}}}
+	res, err := newFetcherWithRemoteStates(t, stub, limits(2, 2000, 20), map[string]filler.ExistingRemoteState{upper.Key(): filler.RemoteCatalogued}).Run(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skipped != 1 || len(stub.queued) != 1 || stub.queued[0] != "https://youtube.com/watch?v=abcd123" {
+		t.Fatalf("result=%+v queued=%v, want only unrelated identity URL", res, stub.queued)
+	}
+}
+
+func TestFetch_FailedQueueLeavesIdentityEligibleForHealthyRetry(t *testing.T) {
+	states := map[string]filler.ExistingRemoteState{}
+	stub := &fetchStub{sources: []filler.FetchSource{{ID: "s1", Kind: "archive", URI: "coll", Enabled: true}}, offers: refs("retry"), ingestErr: errors.New("temporary")}
+	f := newFetcherWithRemoteStates(t, stub, limits(2, 2000, 20), states)
+	if _, err := f.Run(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 0 {
+		t.Fatalf("states mutated after failed queue: %v", states)
+	}
+	stub.ingestErr = nil
+	res, err := f.Run(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Queued != 1 || len(stub.queued) != 1 {
+		t.Fatalf("retry result=%+v queued=%v, want healthy retry", res, stub.queued)
 	}
 }
 
@@ -142,18 +270,19 @@ func TestFetch_SkipsFolderAndLibraryRows(t *testing.T) {
 	}
 }
 
-// ⚠ Without dedupe the job re-downloads its own output on every pass, forever. The catalog is the
-// high-water mark: there is no per-source cursor because archive.org discovery is a search, not a
-// feed, so "new" can only mean "not already here".
+// ⚠ Without dedupe the job re-downloads its own output on every pass, forever. The typed remote
+// state is the high-water mark; paths still count toward the catalog ceiling but cannot prove
+// provider/source identity.
 func TestFetch_SkipsWhatIsAlreadyInTheCatalog(t *testing.T) {
 	stub := &fetchStub{
 		sources: []filler.FetchSource{{ID: "s1", Kind: "archive", URI: "coll", Enabled: true}},
-		// Catalogued as FILES — `<id>.mp4`, possibly nested. Comparing raw strings against bare
-		// archive ids would never match, and every item would re-download every pass.
-		paths:  []string{"a.mp4", "nested/b.mp4"},
-		offers: refs("a", "b", "c"),
+		paths:   []string{"a.mp4", "nested/b.mp4"},
+		offers:  refs("a", "b", "c"),
 	}
-	res, _ := newFetcher(t, stub, limits(10, 2000, 20)).Run(context.Background())
+	res, _ := newFetcherWithRemoteStates(t, stub, limits(10, 2000, 20), map[string]filler.ExistingRemoteState{
+		(filler.RemoteIdentity{Provider: "archive", SourceID: "s1", RemoteID: "a"}).Key(): filler.RemoteCatalogued,
+		(filler.RemoteIdentity{Provider: "archive", SourceID: "s1", RemoteID: "b"}).Key(): filler.RemoteCatalogued,
+	}).Run(context.Background())
 	if res.Skipped != 2 {
 		t.Errorf("skipped %d, want 2 — a catalogued clip must be recognised as the item it came from", res.Skipped)
 	}
@@ -162,15 +291,16 @@ func TestFetch_SkipsWhatIsAlreadyInTheCatalog(t *testing.T) {
 	}
 }
 
-// Archive's downloader writes `<item ID> - <file>` to avoid collisions between source files with
-// the same name. The catalog high-water mark must recover that item ID before comparing offers.
+// A catalogued artifact remains excluded even when its stored path uses Archive's output template.
 func TestFetch_SkipsCataloguedArchiveOutputTemplatePath(t *testing.T) {
 	stub := &fetchStub{
 		sources: []filler.FetchSource{{ID: "s1", Kind: "archive", URI: "coll", Enabled: true}},
 		paths:   []string{"CampbellsSoupAdvert - Campbell's Soup Advert 1993.mp4"},
 		offers:  refs("CampbellsSoupAdvert", "new-ad"),
 	}
-	res, err := newFetcher(t, stub, limits(10, 2000, 20)).Run(context.Background())
+	res, err := newFetcherWithRemoteStates(t, stub, limits(10, 2000, 20), map[string]filler.ExistingRemoteState{
+		(filler.RemoteIdentity{Provider: "archive", SourceID: "s1", RemoteID: "CampbellsSoupAdvert"}).Key(): filler.RemoteCatalogued,
+	}).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,16 +327,16 @@ func TestFetch_DoesNotTreatAnOrdinaryNameAsArchiveOutput(t *testing.T) {
 	}
 }
 
-// yt-dlp's production output template is `<title> [<id>].<ext>`. The catalog is the durable
-// high-water mark, so this spelling must dedupe against the bare ID that flat-playlist
-// enumeration returns; its download archive is only a downloader-local optimization.
+// A catalogued artifact remains excluded even when its stored path uses yt-dlp's output template.
 func TestFetch_SkipsCataloguedYouTubeOutputTemplatePath(t *testing.T) {
 	stub := &fetchStub{
 		sources: []filler.FetchSource{{ID: "youtube:retro", Kind: "youtube", URI: "https://youtube.com/@retro/videos", Enabled: true}},
 		paths:   []string{"Title for a catalogued clip [video-id].mp4"},
 		offers:  []filler.DiscoveredRef{{ID: "video-id", URL: "https://youtube.com/watch?v=video-id"}},
 	}
-	res, err := newFetcher(t, stub, limits(10, 2000, 20)).Run(context.Background())
+	res, err := newFetcherWithRemoteStates(t, stub, limits(10, 2000, 20), map[string]filler.ExistingRemoteState{
+		(filler.RemoteIdentity{Provider: "youtube", SourceID: "youtube:retro", RemoteID: "video-id"}).Key(): filler.RemoteCatalogued,
+	}).Run(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +400,7 @@ func TestFetchStatus_UsesTheSameLimitPriorityAsRun(t *testing.T) {
 	if err := os.Truncate(large, 1024*1024*1024); err != nil {
 		t.Fatal(err)
 	}
-	f := filler.NewFetcher(stub, stub, stub, dir, limits(10, 1, 1), discardLog())
+	f := filler.NewFetcher(fetchStoreWithRemoteStates{fetchStub: stub}, stub, stub, dir, limits(10, 1, 1), discardLog())
 	f.WithEnabled(func() bool { return true })
 
 	status, err := f.Status(context.Background())
@@ -297,7 +427,7 @@ func TestFetch_StopsAtTheDiskCeiling(t *testing.T) {
 	// A 0 GB ceiling is below any real folder, which is the only way to exercise this without
 	// writing gigabytes. `positiveLimit` stops an operator setting it, but the job must still
 	// behave when a value arrives from an env pin or a hand-edited row.
-	f := filler.NewFetcher(stub, stub, stub, dir, filler.FetchLimits{
+	f := filler.NewFetcher(fetchStoreWithRemoteStates{fetchStub: stub}, stub, stub, dir, filler.FetchLimits{
 		MaxPerRun:       func() int { return 10 },
 		MaxCatalogClips: func() int { return 2000 },
 		MaxDiskGB:       func() int { return 1 },
@@ -333,10 +463,13 @@ func TestFetch_StampsASourceItQueuedFrom(t *testing.T) {
 func TestFetch_DoesNotStampASourceThatBroughtNothingIn(t *testing.T) {
 	stub := &fetchStub{
 		sources: []filler.FetchSource{{ID: "s1", Kind: "archive", URI: "coll", Enabled: true}},
-		paths:   []string{"a.mp4"}, // everything on offer is already catalogued
+		paths:   []string{"a.mp4"},
 		offers:  refs("a"),
 	}
-	if _, err := newFetcher(t, stub, limits(10, 2000, 20)).Run(context.Background()); err != nil {
+	states := map[string]filler.ExistingRemoteState{
+		(filler.RemoteIdentity{Provider: "archive", SourceID: "s1", RemoteID: "a"}).Key(): filler.RemoteCatalogued,
+	}
+	if _, err := newFetcherWithRemoteStates(t, stub, limits(10, 2000, 20), states).Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := stub.stamped["s1"]; ok {

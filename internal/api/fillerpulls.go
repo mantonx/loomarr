@@ -2,15 +2,11 @@ package api
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/loomarr/loomarr/internal/filler"
-	"github.com/loomarr/loomarr/internal/store"
 )
 
 // Filler pulls — the approval gate for filler acquisition (§10 V35).
@@ -25,32 +21,62 @@ import (
 // source and clicking "Queue download" on one result stays direct (`POST /v1/filler/ingest`),
 // mirroring §7 where an admin may `POST /v1/titles` because the admin *is* the gate.
 
-// PullPlanRowDTO is one source a pull would draw from.
+// FillerPullPlanner is the metadata-only candidate planner. It is intentionally narrower than
+// FillerService: proposal cannot reach ingest, which preserves "the machine proposes" structurally.
+type FillerPullPlanner interface {
+	PlanAcquisition(context.Context, filler.AcquisitionIntent) (filler.AcquisitionPlan, error)
+}
+
+// PullPlanRowDTO is one exact remote item a pull would acquire.
 type PullPlanRowDTO struct {
-	SourceID string `json:"sourceId" doc:"The registered collection this row fetches from"`
-	Tag      string `json:"tag" doc:"Short label for the row's chip (an era, an audience)"`
-	Name     string `json:"name"`
-	Why      string `json:"why" doc:"Why THIS source is in the plan"`
+	CandidateID  string           `json:"candidateId" doc:"Stable handle used to drop this exact candidate"`
+	SourceID     string           `json:"sourceId" doc:"The registered collection this item came from"`
+	Provider     string           `json:"provider,omitempty"`
+	RemoteID     string           `json:"remoteId,omitempty"`
+	URL          string           `json:"url,omitempty" doc:"Exact remote item URL; absent only on historical source-level pulls"`
+	License      string           `json:"license,omitempty" doc:"Provider/source-declared rights evidence; empty means unknown"`
+	ObservedYear int              `json:"observedYear,omitempty" doc:"Weak remote observation; never grounded clip era"`
+	PublishedAt  string           `json:"publishedAt,omitempty" doc:"Provider publication/upload date; never clip era"`
+	DurationMS   int              `json:"durationMs,omitempty"`
+	Height       int              `json:"height,omitempty"`
+	Geography    filler.Geography `json:"geography,omitempty"`
+	Tag          string           `json:"tag" doc:"Short label for the row's chip (an era, an audience)"`
+	Name         string           `json:"name"`
+	Why          string           `json:"why" doc:"Why THIS source is in the plan"`
 	// ⚠ An estimate, never a promise: what a source yields depends on what is still there,
 	// what deduplicates against the catalog, and what the splitter makes of a compilation.
 	EstimateClips int  `json:"estimateClips" doc:"Expected clips from this row. An ESTIMATE — render it as one."`
 	Dropped       bool `json:"dropped" doc:"The operator excluded this row before approving. Retained rather than removed, so the record shows what was proposed as well as what was agreed to."`
 }
 
+type PullRejectedCandidateDTO struct {
+	CandidateID string `json:"candidateId"`
+	SourceID    string `json:"sourceId"`
+	Provider    string `json:"provider"`
+	RemoteID    string `json:"remoteId"`
+	Name        string `json:"name"`
+	Disposition string `json:"disposition"`
+	Detail      string `json:"detail"`
+}
+
 // PullDTO is a proposed acquisition awaiting a human.
 type PullDTO struct {
-	ID         string           `json:"id"`
-	Title      string           `json:"title"`
-	Reason     string           `json:"reason" doc:"The gap this pull closes. Shown above the plan — 'approve this' without a reason is a button, not a decision."`
-	ProposedBy string           `json:"proposedBy"`
-	Status     string           `json:"status" enum:"pending,approved,dismissed"`
-	Note       string           `json:"note,omitempty" doc:"The operator's narrowing instruction, captured at approval"`
-	Plan       []PullPlanRowDTO `json:"plan"`
+	ID         string                             `json:"id"`
+	Title      string                             `json:"title"`
+	Reason     string                             `json:"reason" doc:"The gap this pull closes. Shown above the plan — 'approve this' without a reason is a button, not a decision."`
+	ProposedBy string                             `json:"proposedBy"`
+	Status     string                             `json:"status" enum:"pending,approved,dismissed"`
+	Note       string                             `json:"note,omitempty" doc:"The operator's narrowing instruction, captured at approval"`
+	Plan       []PullPlanRowDTO                   `json:"plan"`
+	Intent     filler.AcquisitionIntent           `json:"intent"`
+	Rejected   []PullRejectedCandidateDTO         `json:"rejected"`
+	Sources    []filler.AcquisitionSourceDecision `json:"sources"`
 	// EstimateClips totals the rows the operator has NOT dropped.
-	EstimateClips int    `json:"estimateClips"`
-	CreatedAt     string `json:"createdAt" doc:"RFC3339"`
-	DecidedAt     string `json:"decidedAt,omitempty" doc:"RFC3339; absent while pending"`
-	DecidedBy     string `json:"decidedBy,omitempty"`
+	EstimateClips  int    `json:"estimateClips"`
+	CandidateCount int    `json:"candidateCount" doc:"Exact number of remote items still selected; unlike estimateClips this does not predict how many clips segmentation will yield."`
+	CreatedAt      string `json:"createdAt" doc:"RFC3339"`
+	DecidedAt      string `json:"decidedAt,omitempty" doc:"RFC3339; absent while pending"`
+	DecidedBy      string `json:"decidedBy,omitempty"`
 }
 
 func pullToDTO(p filler.Pull) PullDTO {
@@ -59,16 +85,33 @@ func pullToDTO(p filler.Pull) PullDTO {
 	rows := make([]PullPlanRowDTO, 0, len(p.Plan))
 	for _, r := range p.Plan {
 		rows = append(rows, PullPlanRowDTO{
-			SourceID: r.SourceID, Tag: r.Tag, Name: r.Name, Why: r.Why,
+			CandidateID: r.CandidateID(), SourceID: r.SourceID, Provider: r.Provider,
+			RemoteID: r.RemoteID, URL: r.URL, Tag: r.Tag, Name: r.Name, Why: r.Why,
+			License: r.License, ObservedYear: r.ObservedYear, PublishedAt: r.PublishedAt,
+			DurationMS: r.DurationMS, Height: r.Height, Geography: r.Geography,
 			EstimateClips: r.EstimateClips, Dropped: r.Dropped,
 		})
 	}
+	rejected := make([]PullRejectedCandidateDTO, 0, len(p.Rejected))
+	for _, decision := range p.Rejected {
+		candidate := decision.Candidate
+		rejected = append(rejected, PullRejectedCandidateDTO{
+			CandidateID: candidate.Identity.Token(), SourceID: candidate.Identity.SourceID,
+			Provider: candidate.Identity.Provider, RemoteID: candidate.Identity.RemoteID,
+			Name:        orPlaceholder(candidate.Title, candidate.Identity.RemoteID),
+			Disposition: string(decision.Disposition), Detail: decision.Detail,
+		})
+	}
+	sources := make([]filler.AcquisitionSourceDecision, len(p.Sources))
+	copy(sources, p.Sources)
 	dto := PullDTO{
 		ID: p.ID, Title: p.Title, Reason: p.Reason, ProposedBy: p.ProposedBy,
-		Status: string(p.Status), Note: p.Note, Plan: rows,
-		EstimateClips: p.EstimatedClips(),
-		CreatedAt:     p.CreatedAt.UTC().Format(time.RFC3339),
-		DecidedBy:     p.DecidedBy,
+		Status: string(p.Status), Note: p.Note, Plan: rows, Intent: p.Intent,
+		Rejected: rejected, Sources: sources,
+		EstimateClips:  p.EstimatedClips(),
+		CandidateCount: len(p.Committed()),
+		CreatedAt:      p.CreatedAt.UTC().Format(time.RFC3339),
+		DecidedBy:      p.DecidedBy,
 	}
 	if !p.DecidedAt.IsZero() {
 		dto.DecidedAt = p.DecidedAt.UTC().Format(time.RFC3339)
@@ -80,10 +123,10 @@ func (s *Server) registerFillerPulls(api huma.API) {
 	huma.Register(api, withRole(huma.Operation{
 		OperationID: "propose-filler-pull", Method: http.MethodPost, Path: "/v1/filler/pulls",
 		Summary: "Propose a pull",
-		Description: "Admin only (§10 V35). Composes a plan across the ENABLED filler sources and writes it " +
-			"to the approval queue. ⚠ **Downloads nothing** — that is the whole point: the machine proposes, " +
-			"a human commits. Refused with 409 when every source the plan would need is switched off, naming " +
-			"the switch to flip rather than writing a pull that could never run.",
+		Description: "Admin only (§10 V66). Enumerates enabled registered sources without downloading, " +
+			"applies explicit acquisition intent, and persists exact selected item URLs plus rejected explanations. " +
+			"⚠ **Downloads nothing** — the machine proposes and a human commits. Refused with 409 when no " +
+			"source is eligible or no candidate satisfies the constraints.",
 		Tags: []string{"filler"},
 	}, RoleAdmin), s.proposeFillerPull)
 
@@ -98,10 +141,10 @@ func (s *Server) registerFillerPulls(api huma.API) {
 	huma.Register(api, withRole(huma.Operation{
 		OperationID: "approve-filler-pull", Method: http.MethodPost, Path: "/v1/filler/pulls/{id}/approve",
 		Summary: "Approve a pull — the commit point",
-		Description: "Admin only (§10 V35). THE gate: this is the only path on which a pull downloads anything, " +
+		Description: "Admin only (§10 V66). THE gate: this is the only path on which a pull downloads anything, " +
 			"and it enqueues through the EXISTING ingest job rather than a route of its own. The body carries the " +
-			"operator's edits — rows dropped, and a note narrowing what to fetch. Dropped rows are recorded, not " +
-			"erased. Approving an already-decided pull is a 409, so a double-click cannot enqueue twice.",
+			"operator's edits — exact candidates dropped, and a note narrowing what to fetch. Dropped rows are recorded, not " +
+			"erased. Approving an already-decided pull returns 409.",
 		Tags: []string{"filler"},
 	}, RoleAdmin), s.approveFillerPull)
 
@@ -113,74 +156,8 @@ func (s *Server) registerFillerPulls(api huma.API) {
 	}, RoleAdmin), s.dismissFillerPull)
 }
 
-type proposeFillerPullInput struct {
-	Body struct {
-		Title  string `json:"title,omitempty" doc:"Optional operator-supplied summary; Loomarr composes one when omitted"`
-		Reason string `json:"reason,omitempty" doc:"Optional; the gap this pull closes"`
-	}
-}
-
 type pullOutput struct {
 	Body PullDTO
-}
-
-// proposeFillerPull composes a plan and writes it to the queue. It downloads nothing.
-func (s *Server) proposeFillerPull(ctx context.Context, in *proposeFillerPullInput) (*pullOutput, error) {
-	if s.store == nil {
-		return nil, huma.Error501NotImplemented("no store configured")
-	}
-
-	srcs, err := s.store.ListFillerSources(ctx)
-	if err != nil {
-		return nil, huma.Error500InternalServerError("list filler sources", err)
-	}
-	// ⚠ Only ENABLED sources may enter a plan. This is the precondition the mock draws as its
-	// own empty state, and it belongs here rather than in the UI: a pull composed from a
-	// switched-off source is one that can never run, and discovering that at approval time —
-	// after a human agreed to it — is the worst moment to find out.
-	// ⚠ `Fetchable()` as well as `Enabled` (V37). The flat table now also holds the config-backed
-	// singletons, which are SCANNED rather than downloaded from — including one in a plan would
-	// enqueue a fetch of an empty URL at approval time.
-	var enabled []store.FillerSource
-	home := s.fillerHomeGeography()
-	for _, src := range srcs {
-		if src.Enabled && src.Fetchable() && src.GeographicallyEligible(home) {
-			enabled = append(enabled, src)
-		}
-	}
-	if len(enabled) == 0 {
-		return nil, errConflict("No eligible filler source is available",
-			"Loomarr can't plan a pull because every source is off, unclassified, or outside this installation's geography. Review Filler → Sources, then try again.")
-	}
-
-	now := time.Now().UTC()
-	plan := make([]filler.PullPlanRow, 0, len(enabled))
-	for _, src := range enabled {
-		plan = append(plan, filler.PullPlanRow{
-			SourceID: src.ID,
-			Tag:      src.Kind,
-			Name:     orPlaceholder(src.Label, src.URI),
-			Why:      "A source you added and left switched on.",
-			// ⚠ Deliberately 0, and the DTO says an estimate is an estimate. A real per-source
-			// forecast is an upstream search per row at propose time; inventing a number here
-			// would put a figure in front of an operator that nothing measured. See §6.5.
-			EstimateClips: 0,
-		})
-	}
-
-	p := filler.Pull{
-		ID:         "pull_" + fmt.Sprintf("%d", now.UnixNano()),
-		Title:      orPlaceholder(strings.TrimSpace(in.Body.Title), "Pull filler from your sources"),
-		Reason:     orPlaceholder(strings.TrimSpace(in.Body.Reason), "Your catalog can be topped up from the sources you have switched on."),
-		ProposedBy: auditActor(ctx),
-		Status:     filler.PullPending,
-		Plan:       plan,
-		CreatedAt:  now,
-	}
-	if err := s.store.UpsertPull(ctx, p); err != nil {
-		return nil, huma.Error500InternalServerError("save pull", err)
-	}
-	return &pullOutput{Body: pullToDTO(p)}, nil
 }
 
 type listFillerPullsInput struct {
@@ -211,105 +188,6 @@ func (s *Server) listFillerPulls(ctx context.Context, in *listFillerPullsInput) 
 	return out, nil
 }
 
-type approveFillerPullInput struct {
-	ID   string `path:"id"`
-	Body struct {
-		// DropSourceIDs are the rows the operator excluded. Recorded on the pull rather than
-		// removed from it, so the audit shows what was proposed as well as what was agreed to.
-		DropSourceIDs []string `json:"dropSourceIds,omitempty"`
-		Note          string   `json:"note,omitempty" doc:"Narrowing instruction, e.g. 'no local dealers, no PSAs'"`
-	}
-}
-
-// approveFillerPull is THE commit point — the only path on which a pull downloads anything.
-func (s *Server) approveFillerPull(ctx context.Context, in *approveFillerPullInput) (*pullOutput, error) {
-	if s.store == nil {
-		return nil, huma.Error501NotImplemented("no store configured")
-	}
-	if s.filler == nil {
-		return nil, errNotImplemented("Filler isn't set up",
-			"Set up commercials and filler before approving a pull.")
-	}
-
-	p, err := s.store.GetPull(ctx, in.ID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, errNotFound("Pull not found", "That pull doesn't exist — it may have been removed.")
-		}
-		return nil, huma.Error500InternalServerError("read pull", err)
-	}
-	// ⚠ A decided pull cannot be approved again. Without this a double-click, a retried
-	// request, or a second admin on the same queue enqueues the same downloads twice.
-	if p.Status != filler.PullPending {
-		return nil, errConflict("That pull has already been decided",
-			"Someone already "+string(p.Status)+" this pull. Propose a new one if you still want the clips.")
-	}
-
-	dropped := make(map[string]bool, len(in.Body.DropSourceIDs))
-	for _, id := range in.Body.DropSourceIDs {
-		dropped[id] = true
-	}
-	for i := range p.Plan {
-		if dropped[p.Plan[i].SourceID] {
-			p.Plan[i].Dropped = true
-		}
-	}
-
-	committed := p.Committed()
-	if len(committed) == 0 {
-		// Refused rather than recorded as an approval that fetched nothing — "approved" with
-		// an empty commit set is indistinguishable in the history from an approval that failed.
-		return nil, errConflict("Nothing left to pull",
-			"Every source in this plan was dropped, so there's nothing to fetch. Dismiss it instead.")
-	}
-
-	// ⚠ Re-checked at the COMMIT point, not trusted from propose time. A source can be switched
-	// off or removed while a pull sits in the queue, and approving into a disabled source would
-	// either fail obscurely or quietly fetch from something the operator turned off.
-	srcs, err := s.store.ListFillerSources(ctx)
-	if err != nil {
-		return nil, huma.Error500InternalServerError("list filler sources", err)
-	}
-	// Same pair of conditions as propose — deliberately the same predicate, via the same method,
-	// so the commit-time re-check cannot drift from what was plannable at propose time.
-	live := make(map[string]store.FillerSource, len(srcs))
-	home := s.fillerHomeGeography()
-	for _, src := range srcs {
-		if src.Enabled && src.Fetchable() && src.GeographicallyEligible(home) {
-			live[src.ID] = src
-		}
-	}
-	targets := make([]filler.AcquisitionTarget, 0, len(committed))
-	for _, row := range committed {
-		src, ok := live[row.SourceID]
-		if !ok {
-			return nil, errConflict("A source in this pull is no longer available",
-				"“"+row.Name+"” has been switched off or removed since this pull was proposed. Dismiss it and propose a new one.")
-		}
-		targets = append(targets, filler.AcquisitionTarget{SourceID: src.ID, Kind: src.Kind, URL: src.URI})
-	}
-
-	// THE gate's other half: the work goes through the ordinary ingest job. A pull never
-	// downloads by a route of its own.
-	if _, err := s.filler.IngestPull(ctx, p.ID, targets); err != nil {
-		if errors.Is(err, ErrIngestUnavailable) {
-			return nil, errConflict("Downloading isn't available on this install",
-				"This build can't run the download tooling, so an approved pull would have nothing to fetch with.")
-		}
-		return nil, apiErrWithCause(http.StatusBadGateway, "Couldn't start the pull",
-			"Loomarr couldn't start downloading. Check the Filler sources and try again.", err)
-	}
-
-	p.Status = filler.PullApproved
-	p.Note = strings.TrimSpace(in.Body.Note)
-	p.DecidedAt = time.Now().UTC()
-	p.DecidedBy = auditActor(ctx)
-	if err := s.store.UpsertPull(ctx, p); err != nil {
-		return nil, huma.Error500InternalServerError("save pull decision", err)
-	}
-	return &pullOutput{Body: pullToDTO(p)}, nil
-}
-
 func (s *Server) fillerHomeGeography() filler.Geography {
 	if s.liveConfig == nil {
 		return filler.Geography{}
@@ -318,32 +196,4 @@ func (s *Server) fillerHomeGeography() filler.Geography {
 		Country: s.liveConfig("filler.home_country"),
 		Market:  s.liveConfig("filler.home_market"),
 	}.Normalize()
-}
-
-type dismissFillerPullInput struct {
-	ID string `path:"id"`
-}
-
-func (s *Server) dismissFillerPull(ctx context.Context, in *dismissFillerPullInput) (*pullOutput, error) {
-	if s.store == nil {
-		return nil, huma.Error501NotImplemented("no store configured")
-	}
-	p, err := s.store.GetPull(ctx, in.ID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, errNotFound("Pull not found", "That pull doesn't exist — it may have been removed.")
-		}
-		return nil, huma.Error500InternalServerError("read pull", err)
-	}
-	if p.Status != filler.PullPending {
-		return nil, errConflict("That pull has already been decided",
-			"Someone already "+string(p.Status)+" this pull.")
-	}
-	p.Status = filler.PullDismissed
-	p.DecidedAt = time.Now().UTC()
-	p.DecidedBy = auditActor(ctx)
-	if err := s.store.UpsertPull(ctx, p); err != nil {
-		return nil, huma.Error500InternalServerError("save pull decision", err)
-	}
-	return &pullOutput{Body: pullToDTO(p)}, nil
 }

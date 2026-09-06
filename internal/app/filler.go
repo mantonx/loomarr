@@ -470,6 +470,10 @@ func (a fetchStoreAdapter) CatalogPaths(ctx context.Context) ([]string, error) {
 	return paths, nil
 }
 
+func (a fetchStoreAdapter) ListAcquisitionRemoteStates(ctx context.Context) (map[string]filler.ExistingRemoteState, error) {
+	return a.st.ListAcquisitionRemoteStates(ctx)
+}
+
 func (a fetchStoreAdapter) MarkFetched(ctx context.Context, id string, at time.Time) error {
 	return a.st.MarkFillerSourceFetched(ctx, id, at)
 }
@@ -481,13 +485,17 @@ type registeredSourceEnumerator struct{ youtube *clipfetch.YouTubeEnumerator }
 func (e registeredSourceEnumerator) Enumerate(ctx context.Context, source filler.FetchSource, limit int) ([]filler.DiscoveredRef, int, error) {
 	switch source.Kind {
 	case "archive":
-		res, err := clipfetch.NewArchiveDownloader(false).DiscoverCollection(ctx, source.URI, limit)
+		res, err := clipfetch.NewArchiveDownloader(false).EnumerateCollection(ctx, source.URI, limit)
 		if err != nil {
 			return nil, 0, err
 		}
 		out := make([]filler.DiscoveredRef, 0, len(res.Items))
 		for _, it := range res.Items {
-			out = append(out, filler.DiscoveredRef{ID: it.ID, URL: "https://archive.org/details/" + it.ID})
+			out = append(out, filler.DiscoveredRef{
+				ID: it.ID, URL: "https://archive.org/details/" + it.ID,
+				Title: it.Title, License: it.License, ObservedYear: it.Year,
+				PublishedAt: it.Date, DurationMS: it.DurationMS, Height: it.Height,
+			})
 		}
 		return out, res.Total, nil
 	case "youtube":
@@ -500,7 +508,11 @@ func (e registeredSourceEnumerator) Enumerate(ctx context.Context, source filler
 		}
 		out := make([]filler.DiscoveredRef, len(items))
 		for i, item := range items {
-			out[i] = filler.DiscoveredRef{ID: item.ID, URL: item.URL}
+			out[i] = filler.DiscoveredRef{
+				ID: item.ID, URL: item.URL, Title: item.Title, License: item.License,
+				ObservedYear: item.ReleaseYear, PublishedAt: item.PublishedAt,
+				DurationMS: item.DurationMS, Height: item.Height,
+			}
 		}
 		return out, total, nil
 	default:
@@ -676,6 +688,11 @@ type fillerServiceAdapter struct {
 	// came from. Narrow interface, not the whole store: this adapter has no other reason
 	// to reach persistence.
 	sources fillerSourceRegistry
+	// pullPlanning is the read side of candidate-level pull composition. It is separate from
+	// sources because approval history is evidence for "already queued/declined" selection.
+	pullPlanning fillerPullPlanningStore
+	sourceEnum   filler.SourceEnumerator
+	home         func() filler.Geography
 	// acquisitions is the reconnect truth for background downloads. nil is allowed only in
 	// narrow tests; production always supplies the store before any job can be accepted.
 	acquisitions fillerAcquisitionWriter
@@ -814,6 +831,16 @@ func (a fillerServiceAdapter) IngestSource(ctx context.Context, sourceID, source
 	return a.ingest(ctx, filler.AcquisitionSource, "", acquisitionTargets(sourceID, sourceKind, urls))
 }
 
+func (a fillerServiceAdapter) IngestSourceItems(ctx context.Context, sourceID, sourceKind string, items []filler.DiscoveredRef) (string, error) {
+	targets := make([]filler.AcquisitionTarget, 0, len(items))
+	for _, item := range items {
+		targets = append(targets, filler.AcquisitionTarget{
+			SourceID: sourceID, RemoteID: item.ID, Kind: sourceKind, URL: item.URL,
+		})
+	}
+	return a.ingest(ctx, filler.AcquisitionSource, "", targets)
+}
+
 // IngestAsked downloads AND remembers the target, for the one path where an operator named it.
 func (a fillerServiceAdapter) IngestAsked(ctx context.Context, urls []string) (string, error) {
 	a.rememberSources(ctx, urls)
@@ -865,7 +892,7 @@ func (a fillerServiceAdapter) ingest(
 		}
 		sources = append(sources, clipfetch.Source{
 			ID: target.SourceID, AcquisitionID: jobID,
-			Kind: kind, URL: target.URL,
+			Kind: kind, URL: target.URL, RemoteID: target.RemoteID,
 		})
 	}
 	sourceID := commonAcquisitionSource(targets)

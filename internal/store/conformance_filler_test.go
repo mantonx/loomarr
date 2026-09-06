@@ -1237,7 +1237,7 @@ func testFillerAcquisitionArtifacts(t *testing.T, newStore NewStoreFunc) {
 	artifacts := []filler.AcquisitionArtifact{
 		{
 			ID: "artifact-one", AcquisitionID: run.ID, SourceID: run.SourceID,
-			Provider: "youtube", SourceURL: "https://youtube.com/watch?v=artifact-one",
+			Provider: "youtube", SourceURL: "https://youtube.com/watch?v=artifact-one", RemoteID: "artifact-one",
 			StagingPath: ".loomarr-acquisitions/acq-manifest/one.mp4", MediaPath: "one.mp4",
 			SidecarPath: "one.info.json", MediaSHA256: strings.Repeat("a", 64), MediaBytes: 42,
 			ProviderArchiveEntry: "youtube artifact-one", ProviderArchiveCommitted: true,
@@ -1245,7 +1245,7 @@ func testFillerAcquisitionArtifacts(t *testing.T, newStore NewStoreFunc) {
 		},
 		{
 			ID: "artifact-two", AcquisitionID: run.ID, SourceID: run.SourceID,
-			Provider: "archive", SourceURL: "https://archive.org/details/two",
+			Provider: "archive", SourceURL: "https://archive.org/details/two", RemoteID: "two",
 			StagingPath: ".loomarr-acquisitions/acq-manifest/two.mp4", MediaPath: "two.mp4",
 			SidecarPath: "two.info.json", MediaSHA256: strings.Repeat("b", 64), MediaBytes: 84,
 			State: filler.ArtifactPublished, CompletedAt: now, UpdatedAt: now,
@@ -1279,6 +1279,14 @@ func testFillerAcquisitionArtifacts(t *testing.T, newStore NewStoreFunc) {
 	}
 	if len(recoverable) != 1 || recoverable[0].ID != artifacts[1].ID {
 		t.Fatalf("recoverable artifacts = %+v, want only published artifact", recoverable)
+	}
+	remoteStates, err := s.ListAcquisitionRemoteStates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remoteStates[(filler.RemoteIdentity{Provider: "youtube", SourceID: run.SourceID, RemoteID: "artifact-one"}).Key()] != filler.RemoteCatalogued ||
+		remoteStates[(filler.RemoteIdentity{Provider: "archive", SourceID: run.SourceID, RemoteID: "two"}).Key()] != filler.RemoteQueued {
+		t.Fatalf("remote acquisition states = %v", remoteStates)
 	}
 	runs, err := s.ListAcquisitionRuns(ctx, 10, now)
 	if err != nil {
@@ -2876,10 +2884,13 @@ func testFillerPulls(t *testing.T, newStore NewStoreFunc) {
 	p := filler.Pull{
 		ID: "pull_1", Title: "Top up the 1990s", Reason: "Saturday Mornings falls back to bumpers.",
 		ProposedBy: "admin-1", Status: filler.PullPending, CreatedAt: created,
+		Intent: filler.AcquisitionIntent{Version: filler.AcquisitionIntentVersion, EraStart: 1990, EraEnd: 1999, Count: 2, Rights: filler.RightsPreferDeclared},
 		Plan: []filler.PullPlanRow{
-			{SourceID: "classic", Tag: "1990s", Name: "Classic TV commercials", Why: "Era match", EstimateClips: 40},
-			{SourceID: "psa", Tag: "psa", Name: "Public service", Why: "Filler variety", EstimateClips: 12},
+			{SourceID: "classic", Provider: "archive", RemoteID: "ad-one", URL: "https://archive.org/details/ad-one", Tag: "1990s", Name: "Classic TV commercials", Why: "Era match", EstimateClips: 1},
+			{SourceID: "psa", Provider: "archive", RemoteID: "psa-one", URL: "https://archive.org/details/psa-one", Tag: "psa", Name: "Public service", Why: "Filler variety", EstimateClips: 1},
 		},
+		Rejected: []filler.AcquisitionDecision{{Candidate: filler.AcquisitionCandidate{Identity: filler.RemoteIdentity{Provider: "archive", SourceID: "classic", RemoteID: "old"}, URL: "https://archive.org/details/old"}, Disposition: filler.CandidateAlreadyCatalogued, Detail: "already present"}},
+		Sources:  []filler.AcquisitionSourceDecision{{SourceID: "classic", Provider: "archive", Disposition: filler.AcquisitionSourceEnumerated, CandidateCount: 2, Detail: "enumerated metadata"}},
 	}
 	if err := s.UpsertPull(ctx, p); err != nil {
 		t.Fatal(err)
@@ -2889,8 +2900,11 @@ func testFillerPulls(t *testing.T, newStore NewStoreFunc) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Plan) != 2 || got.Plan[0].SourceID != "classic" || got.Plan[0].EstimateClips != 40 {
+	if len(got.Plan) != 2 || got.Plan[0].RemoteID != "ad-one" || got.Plan[0].EstimateClips != 1 {
 		t.Errorf("plan did not round-trip: %+v", got.Plan)
+	}
+	if got.Intent.EraStart != 1990 || len(got.Rejected) != 1 || got.Rejected[0].Disposition != filler.CandidateAlreadyCatalogued || len(got.Sources) != 1 {
+		t.Errorf("intent/evidence did not round-trip: %+v", got)
 	}
 	if !got.CreatedAt.Equal(created) {
 		t.Errorf("CreatedAt = %v, want %v", got.CreatedAt, created)
@@ -2900,8 +2914,8 @@ func testFillerPulls(t *testing.T, newStore NewStoreFunc) {
 	if !got.DecidedAt.IsZero() {
 		t.Errorf("a pending pull has DecidedAt %v, want zero", got.DecidedAt)
 	}
-	if got.EstimatedClips() != 52 {
-		t.Errorf("EstimatedClips = %d, want 52", got.EstimatedClips())
+	if got.EstimatedClips() != 2 {
+		t.Errorf("EstimatedClips = %d, want 2", got.EstimatedClips())
 	}
 
 	// Approve with one row dropped.
@@ -2930,8 +2944,8 @@ func testFillerPulls(t *testing.T, newStore NewStoreFunc) {
 	if n := len(after.Committed()); n != 1 {
 		t.Errorf("Committed() = %d rows, want 1", n)
 	}
-	if after.EstimatedClips() != 40 {
-		t.Errorf("EstimatedClips after drop = %d, want 40", after.EstimatedClips())
+	if after.EstimatedClips() != 1 {
+		t.Errorf("EstimatedClips after drop = %d, want 1", after.EstimatedClips())
 	}
 	if !after.DecidedAt.Equal(decided) || after.DecidedBy != "admin-2" || after.Note != "no local dealers" {
 		t.Errorf("decision not recorded: %+v", after)

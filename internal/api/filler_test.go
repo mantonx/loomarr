@@ -19,10 +19,12 @@ import (
 	"github.com/loomarr/loomarr/internal/filler"
 	"github.com/loomarr/loomarr/internal/images"
 	"github.com/loomarr/loomarr/internal/store"
+	"github.com/loomarr/loomarr/internal/testkit"
 )
 
 // fakeFiller records sync/tag calls.
 type fakeFiller struct {
+	testkit.FillerAcquisitionPlanner
 	syncs, tags, fetches int
 	fetchedSourceIDs     []string
 	rewinds              []struct {
@@ -230,7 +232,7 @@ func newFillerServerWithConfig(t *testing.T, imageService api.ImageService, live
 	t.Helper()
 	st := openTestStore(t, t.TempDir()+"/f.db")
 	t.Cleanup(func() { _ = st.Close() })
-	ff := &fakeFiller{}
+	ff := &fakeFiller{FillerAcquisitionPlanner: testkit.FillerAcquisitionPlanner{Store: st}}
 	h := api.Router(slog.New(slog.DiscardHandler), api.Options{
 		Store: st,
 		// ⚠ `testAuthorizer`, not `NewTokenAuthorizer(adminToken)`. The production authorizer

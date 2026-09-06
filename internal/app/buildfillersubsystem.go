@@ -121,7 +121,10 @@ func buildFillerSubsystem(
 		syncer: syncer, tagger: tagger, fetcher: fetcher,
 		bus: eventBus, log: log, newID: newID, timeout: set.dur("ingest.timeout"),
 		start: owner.startInteractiveOperation, operations: st,
-		sources: st, acquisitions: st, readiness: st, now: time.Now,
+		sources: st, pullPlanning: st, acquisitions: st, readiness: st, now: time.Now,
+		home: func() filler.Geography {
+			return filler.Geography{Country: set.str("filler.home_country"), Market: set.str("filler.home_market")}
+		},
 		splitter: splitter, splitClips: fillerSplitStoreAdapter{st: st, wake: wake},
 	}
 
@@ -156,6 +159,8 @@ func buildFillerSubsystem(
 		fillerSweepStoreAdapter{st}, layout.ClipDir(),
 		func() time.Duration { return set.dur("filler.split.review_window") }, time.Now, log,
 	)))
+	sourceEnumerator := registeredSourceEnumerator{youtube: clipfetch.NewYouTubeEnumerator(resolveTool(set.str("ingest.ytdlp_path"), "yt-dlp"))}
+	adapter.sourceEnum = sourceEnumerator
 	autoFetch := filler.NewFetcher(
 		fetchStoreAdapter{
 			st:         st,
@@ -164,7 +169,7 @@ func buildFillerSubsystem(
 				return filler.Geography{Country: set.str("filler.home_country"), Market: set.str("filler.home_market")}
 			},
 		},
-		registeredSourceEnumerator{youtube: clipfetch.NewYouTubeEnumerator(resolveTool(set.str("ingest.ytdlp_path"), "yt-dlp"))}, adapter, layout.ClipDir(),
+		sourceEnumerator, adapter, layout.ClipDir(),
 		filler.FetchLimits{
 			MaxPerRun:       func() int { return set.intv("filler.fetch.max_per_run") },
 			MaxCatalogClips: func() int { return set.intv("filler.fetch.max_catalog_clips") },

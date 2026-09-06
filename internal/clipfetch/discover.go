@@ -67,10 +67,39 @@ const maxDiscoverRows = 25
 // spellings `Download` accepts, because an operator pasting a URL should not have to know which
 // form a given field wants.
 func (d *ArchiveDownloader) DiscoverCollection(ctx context.Context, ref string, limit int) (DiscoveryResult, error) {
-	return d.client.discover(ctx, ref, limit)
+	return d.client.discoverPage(ctx, ref, limit, 1)
 }
 
-func (c *archiveClient) discover(ctx context.Context, ref string, limit int) (DiscoveryResult, error) {
+// EnumerateCollection is the bounded multi-page variant used by acquisition planning. The
+// operator-facing discovery endpoint above intentionally remains one request; a planner may read
+// at most four metadata pages to find enough unseen candidates behind an already-known prefix.
+func (d *ArchiveDownloader) EnumerateCollection(ctx context.Context, ref string, limit int) (DiscoveryResult, error) {
+	if limit <= 0 {
+		return DiscoveryResult{Items: []DiscoveredItem{}}, nil
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	out := DiscoveryResult{Items: []DiscoveredItem{}}
+	for page := 1; len(out.Items) < limit && page <= 4; page++ {
+		pageSize := min(maxDiscoverRows, limit-len(out.Items))
+		result, err := d.client.discoverPage(ctx, ref, pageSize, page)
+		if err != nil {
+			return DiscoveryResult{}, err
+		}
+		out.Total = result.Total
+		out.Items = append(out.Items, result.Items...)
+		if len(result.Items) < pageSize || len(out.Items) >= result.Total {
+			break
+		}
+	}
+	if len(out.Items) > limit {
+		out.Items = out.Items[:limit]
+	}
+	return out, nil
+}
+
+func (c *archiveClient) discoverPage(ctx context.Context, ref string, limit, page int) (DiscoveryResult, error) {
 	id := archiveIDFromURL(ref)
 	if id == "" {
 		return DiscoveryResult{}, fmt.Errorf("archive discover: %q is not an archive.org collection or item", ref)
@@ -89,6 +118,7 @@ func (c *archiveClient) discover(ctx context.Context, ref string, limit int) (Di
 	// that would make N+1 requests to show N rows.
 	q["fl[]"] = []string{"identifier", "title", "licenseurl", "year", "date"}
 	q.Set("rows", strconv.Itoa(limit))
+	q.Set("page", strconv.Itoa(page))
 	q.Set("output", "json")
 
 	var out searchResp
@@ -273,7 +303,7 @@ func (c *archiveClient) searchCollection(ctx context.Context, ref, query string,
 	}
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return c.discover(ctx, ref, limit)
+		return c.discoverPage(ctx, ref, limit, 1)
 	}
 	if limit <= 0 || limit > maxDiscoverRows {
 		limit = maxDiscoverRows

@@ -53,6 +53,9 @@ type AcquisitionRun struct {
 // because one approved pull may deliberately draw from several registered sources.
 type AcquisitionTarget struct {
 	SourceID string
+	// RemoteID is the provider's stable item id for candidate-level pulls. Empty is allowed for
+	// historical source-level pulls and deliberate one-off URLs.
+	RemoteID string
 	// Kind is the registered source provider. Empty is reserved for a one-off URL an admin typed,
 	// where the ingest boundary must infer the downloader because no source policy exists.
 	Kind string
