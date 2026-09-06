@@ -442,18 +442,6 @@ func ValidateOpenRouterRunSnapshot(run fillereval.RunIdentity, routes []Route, s
 	return nil
 }
 
-func canonicalStrings(values []string) bool {
-	if len(values) == 0 || !slices.IsSorted(values) {
-		return false
-	}
-	for index, value := range values {
-		if value == "" || len(value) > maxFieldBytes || (index > 0 && values[index-1] == value) {
-			return false
-		}
-	}
-	return true
-}
-
 func snapshotModel(snapshot OpenRouterSnapshot, id string) (OpenRouterModelSnapshot, bool) {
 	for _, model := range snapshot.Models {
 		if model.ID == id {
