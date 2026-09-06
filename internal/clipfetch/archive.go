@@ -27,9 +27,8 @@ import (
 //     {server, dir, files[], metadata{mediatype, title, description}}.
 //  2. If mediatype == "collection": list member items via the advancedsearch
 //     API (q=collection:<id>) and walk each item.
-//  3. If an item: pick the smallest suitable VIDEO derivative from files[]
-//     (prefer Archive's .ia.mp4 / 512Kb over the huge original — a bumper doesn't
-//     need the 246MB master), download it to the drop-folder, and write an
+//  3. If an item: deterministically select the best declared source representation from files[],
+//     download it to the drop-folder, and write an
 //     info-JSON sidecar preserving title/description (the text signals the core's
 //     AI tagging reads, §10 — same shape yt-dlp's --write-info-json produces).
 //  4. Skip files already in the drop-folder (idempotent re-runs).
@@ -44,14 +43,6 @@ type archiveClient struct {
 	http   *http.Client
 	fs     fileSink
 	maxPer int // cap items pulled per collection per pass (density guard)
-	// preferOriginal selects the full-quality source file instead of Archive's
-	// small derivative. DEFAULT false: for FILLER (commercials/bumpers/station
-	// IDs — mostly short broadcast-era SD clips that Tunarr re-encodes at playout
-	// anyway), the ~27x-smaller derivative is the right call — the original stores
-	// grain, not detail, and a filler library of thousands of clips at hundreds of
-	// MB each is absurd. Set INGEST_PREFER_ORIGINAL=true to keep masters. (Program
-	// content wants quality, but that's the *arr pipeline, not this sidecar.)
-	preferOriginal bool
 }
 
 // fileSink abstracts writing downloaded media + sidecars (real = disk).
@@ -118,6 +109,9 @@ type archiveFile struct {
 	// Height is the vertical resolution, as a string, and is what the Sources search renders as
 	// a quality hint (480 → "480p"). Absent alongside Length on non-video files.
 	Height string `json:"height"`
+	// Width is less consistently present than Height but participates when Archive declares it.
+	// Missing remains unknown and never becomes a fabricated square pixel count.
+	Width string `json:"width"`
 }
 
 type searchResp struct {
@@ -234,7 +228,7 @@ func (c *archiveClient) walkCollection(ctx context.Context, collID, dropDir stri
 
 // downloadItem picks the best video derivative and downloads it + a sidecar.
 func (c *archiveClient) downloadItem(ctx context.Context, id string, meta metadataResp, dropDir string) (int, int, []Output, error) {
-	file, ok := pickVideoFile(meta.Files, c.preferOriginal)
+	file, ok := pickVideoFile(meta.Files)
 	if !ok {
 		return 0, 0, nil, nil // no video file (e.g. audio-only) → nothing to fetch
 	}
@@ -265,11 +259,12 @@ func (c *archiveClient) downloadItem(ctx context.Context, id string, meta metada
 	output := Output{MediaPath: mediaPath, SidecarPath: sidecarPath, SHA256: digest, Bytes: size, ClipHash: clipHash}
 	// Write the info-JSON sidecar (title/description → AI-tagging text signals, §10).
 	fields := map[string]any{
-		"id":          id,
-		"title":       meta.Metadata.Title,
-		"description": meta.Metadata.Description,
-		"source":      "archive.org",
-		"webpage_url": c.base + "/details/" + id,
+		"id":                     id,
+		"title":                  meta.Metadata.Title,
+		"description":            meta.Metadata.Description,
+		"source":                 "archive.org",
+		"webpage_url":            c.base + "/details/" + id,
+		"archive_representation": archiveRepresentationEvidence(file),
 	}
 	// ⚠ OMITTED when Archive declares none, rather than written as "". About 92% of items
 	// carry no licence, and an empty string in a sidecar reads as "we looked and it is
@@ -353,60 +348,6 @@ func (c *archiveClient) fetchTo(ctx context.Context, u, path string) error {
 		return fmt.Errorf("GET %s: status %d", u, resp.StatusCode)
 	}
 	return c.fs.WriteStream(path, resp.Body)
-}
-
-// --- pure helpers ---
-
-// pickVideoFile chooses a VIDEO file from an item's files (§10). By default it
-// takes the SMALLEST — Archive's small derivative — which is right for filler (a
-// bumper/ad Tunarr re-encodes anyway; the original just stores grain). With
-// preferOriginal it takes the LARGEST (the full-quality master) for anyone who
-// wants to preserve source quality. Non-video files (thumbnails, torrents,
-// metadata) are ignored. Ties broken by name so the pick is deterministic.
-func pickVideoFile(files []archiveFile, preferOriginal bool) (archiveFile, bool) {
-	var best archiveFile
-	var bestSize int64 = -1
-	found := false
-	for _, f := range files {
-		if !isVideoFormat(f.Format) {
-			continue
-		}
-		size, _ := strconv.ParseInt(f.Size, 10, 64)
-		if size <= 0 {
-			// Unknown size: sorts last for smallest-pick, first for largest-pick, so
-			// a sized candidate always wins.
-			if preferOriginal {
-				size = -1
-			} else {
-				size = 1 << 62
-			}
-		}
-		better := false
-		switch {
-		case !found:
-			better = true
-		case preferOriginal:
-			better = size > bestSize || (size == bestSize && f.Name < best.Name)
-		default:
-			better = size < bestSize || (size == bestSize && f.Name < best.Name)
-		}
-		if better {
-			best, bestSize = f, size
-			found = true
-		}
-	}
-	return best, found
-}
-
-// isVideoFormat reports whether an Archive `format` is a video we can use.
-func isVideoFormat(format string) bool {
-	f := strings.ToLower(format)
-	for _, v := range []string{"mpeg4", "h.264", "matroska", "quicktime", "ogg video", "webm", "512kb", "hi-mp4"} {
-		if strings.Contains(f, v) {
-			return true
-		}
-	}
-	return false
 }
 
 // archiveIDFromURL extracts the Archive item/collection id from a URL or bare id.

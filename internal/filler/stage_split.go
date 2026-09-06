@@ -136,14 +136,42 @@ type TaxaLister interface {
 // confirmed on missing data. That direction is the safety property, so every error path here
 // degrades toward review and never toward confirm.
 func (s *SplitStage) ground(ctx context.Context, c StoreClip, segs []SplitSegment) groundPass {
-	pending := func() int {
-		n := 0
-		for i := range segs {
-			if !segs[i].Looked {
-				n++
-			}
+	file := ""
+	if s.vision != nil {
+		file = filepath.Join(s.vision.ClipDir, filepath.FromSlash(c.Path))
+	}
+	return s.groundAt(ctx, c, file, segs)
+}
+
+func (s *SplitStage) groundFromSource(ctx context.Context, c StoreClip, source SplitSourceAsset, segs []SplitSegment) groundPass {
+	if s.vision == nil {
+		return s.groundAt(ctx, c, "", segs)
+	}
+	resolveSource := resolveSplitSource
+	if s.splitter != nil && s.splitter.resolveSource != nil {
+		resolveSource = s.splitter.resolveSource
+	}
+	_, file, err := resolveSource(ctx, s.vision.ClipDir, c, source)
+	if err != nil {
+		s.groundSkipped(ctx, c, "the proposal's evidence derivative is unavailable", "err", err)
+		return groundPass{Pending: countPendingGrounding(segs)}
+	}
+	return s.groundAt(ctx, c, file, segs)
+}
+
+func countPendingGrounding(segs []SplitSegment) int {
+	n := 0
+	for i := range segs {
+		if !segs[i].Looked {
+			n++
 		}
-		return n
+	}
+	return n
+}
+
+func (s *SplitStage) groundAt(ctx context.Context, c StoreClip, file string, segs []SplitSegment) groundPass {
+	pending := func() int {
+		return countPendingGrounding(segs)
 	}
 	if s.vision == nil || s.vision.Provider == nil || s.vision.Tools == nil {
 		s.groundSkipped(ctx, c, "vision is not wired on this install")
@@ -173,7 +201,6 @@ func (s *SplitStage) ground(ctx context.Context, c StoreClip, segs []SplitSegmen
 		}
 		forest = taxonomy.New(taxa)
 	}
-	file := filepath.Join(s.vision.ClipDir, filepath.FromSlash(c.Path))
 	looked := 0
 	// The pass tally. Counted rather than logged per segment: 60 lines a pass is noise, and the
 	// question an operator has is about the pass, not any one cut.
@@ -416,7 +443,7 @@ func (s *SplitStage) Run(ctx context.Context, c StoreClip) (StageResult, error) 
 	}
 
 	// Ground the segments from their own frames BEFORE the gate reads them (§10 V54).
-	pass := s.ground(ctx, c, p.Segments)
+	pass := s.groundFromSource(ctx, c, p.Source, p.Segments)
 
 	// Persist what this pass learned, so the next one resumes instead of starting over.
 	if pass.Looked > 0 {

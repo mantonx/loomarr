@@ -2,6 +2,7 @@ package filler_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -664,7 +665,26 @@ func newSplitter(st filler.SplitStore, tools filler.MediaTools, provider *testki
 	return filler.NewSplitter(st, tools, p, dropDir,
 		func() time.Duration { return 10 * time.Second },
 		func() string { n++; return fmt.Sprintf("sp_%d", n) },
-		func() time.Time { return time.Unix(1_800_000_000, 0).UTC() }, nil)
+		func() time.Time { return time.Unix(1_800_000_000, 0).UTC() }, nil).WithSplitSourceResolver(fixtureSplitSourceResolver)
+}
+
+func fixtureSplitSourceResolver(_ context.Context, root string, clip filler.StoreClip, bound filler.SplitSourceAsset) (filler.SplitSourceAsset, string, error) {
+	path := filepath.Join(root, filepath.FromSlash(clip.Path))
+	if bound.Role != "" {
+		return bound, filepath.Join(root, filepath.FromSlash(bound.Path)), nil
+	}
+	digest := sha256.Sum256([]byte(clip.Hash))
+	identity := fmt.Sprintf("%x", digest)
+	size := int64(1)
+	if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+		fullDigest, fullSize, digestErr := filler.FileSHA256(path)
+		clipHash, clipErr := filler.ClipID(path)
+		if digestErr != nil || clipErr != nil {
+			return filler.SplitSourceAsset{}, "", errors.Join(digestErr, clipErr)
+		}
+		return filler.SplitSourceAsset{Role: filler.SplitSourceLegacyPlayback, SHA256: fullDigest, Bytes: fullSize, ClipHash: clipHash, Path: clip.Path, DurationMs: clip.DurationMs}, path, nil
+	}
+	return filler.SplitSourceAsset{Role: filler.SplitSourceLegacyPlayback, SHA256: fmt.Sprintf("%x", digest), Bytes: size, ClipHash: identity, Path: clip.Path, DurationMs: clip.DurationMs}, path, nil
 }
 
 func TestSplitStage_LongBoundaryScanResumesFromDurableChunkAfterRestartAndTimeout(t *testing.T) {
@@ -1389,6 +1409,10 @@ func TestConfirm_WritesReviewedSegments(t *testing.T) {
 		tags, ok := filler.ReadSidecarTags(filepath.Join(drop, seg.Path))
 		if !ok || tags.ConditioningLineage == nil || tags.ConditioningLineage.ChildHash != seg.Hash {
 			t.Errorf("confirmed segment %q child identity binding = %+v, ok=%v", seg.Name, tags.ConditioningLineage, ok)
+		} else if tags.ConditioningLineage.ParentAssetRole != string(filler.SplitSourceLegacyPlayback) ||
+			tags.ConditioningLineage.ParentAssetSHA256 != prop.Source.SHA256 {
+			t.Errorf("confirmed segment %q parent asset binding = %+v, want role %q digest %q",
+				seg.Name, tags.ConditioningLineage, filler.SplitSourceLegacyPlayback, prop.Source.SHA256)
 		}
 	}
 	// The cut files exist at cataloged paths (segments only; the composite keeps its own file).

@@ -124,6 +124,7 @@ type Splitter struct {
 	now             func() time.Time
 	newID           func() string
 	log             *slog.Logger
+	resolveSource   func(context.Context, string, StoreClip, SplitSourceAsset) (SplitSourceAsset, string, error)
 }
 
 // NewSplitter builds the splitter. dropDir is the filler drop-folder root. minClipDuration may be
@@ -132,7 +133,16 @@ func NewSplitter(store SplitStore, tools MediaTools, provider llm.Provider, drop
 	if now == nil {
 		now = time.Now
 	}
-	return &Splitter{store: store, tools: tools, provider: provider, dropDir: dropDir, minClipDuration: minClipDuration, newID: newID, now: now, log: log}
+	return &Splitter{store: store, tools: tools, provider: provider, dropDir: dropDir, minClipDuration: minClipDuration, newID: newID, now: now, log: log, resolveSource: resolveSplitSource}
+}
+
+// WithSplitSourceResolver replaces only the exact-byte lookup boundary. Production never calls
+// this; fixture stores use it because their synthetic clip identities deliberately have no media.
+func (sp *Splitter) WithSplitSourceResolver(resolve func(context.Context, string, StoreClip, SplitSourceAsset) (SplitSourceAsset, string, error)) *Splitter {
+	if sp != nil && resolve != nil {
+		sp.resolveSource = resolve
+	}
+	return sp
 }
 
 // Reground writes a grounding pass back onto an existing proposal WITHOUT re-detecting (§10 V54).
@@ -251,17 +261,26 @@ func (sp *Splitter) advanceProposal(ctx context.Context, clipHash string, p *Spl
 	if clip.DurationMs <= 0 {
 		return p, false, fmt.Errorf("clip %s has no probed duration — sync the catalog first", clipHash)
 	}
-	file := filepath.Join(sp.dropDir, clip.Path)
+	sourceWasUnbound := p != nil && p.Source.empty()
+	var boundSource SplitSourceAsset
+	if p != nil {
+		boundSource = p.Source
+	}
+	source, file, err := sp.resolveSource(ctx, sp.dropDir, clip, boundSource)
+	if err != nil {
+		return p, false, err
+	}
+	durationMs := source.DurationMs
 	floor := sp.floor()
 
 	if p == nil {
-		p = &SplitProposal{ID: sp.newID(), ClipHash: clip.Hash, CreatedAt: sp.now().UTC(), Detection: &SplitDetectionProgress{}}
+		p = &SplitProposal{ID: sp.newID(), ClipHash: clip.Hash, CreatedAt: sp.now().UTC(), Source: source, Detection: &SplitDetectionProgress{}}
 		chapters, chapterErr := sp.tools.Chapters(ctx, file)
 		if chapterErr != nil && sp.log != nil {
 			sp.log.Warn("chapter triage failed, falling back to coarse split", "file", file, "err", chapterErr)
 		}
 		if segs, dropped := segmentsFromChapters(chapters, floor); len(segs) > 0 {
-			p.Detection.ScannedThroughMs = clip.DurationMs
+			p.Detection.ScannedThroughMs = durationMs
 			p.Detection.Chapters = true
 			p.Detection.CoarseSegments = segs
 			p.Dropped = dropped
@@ -274,6 +293,12 @@ func (sp *Splitter) advanceProposal(ctx context.Context, clipHash string, p *Spl
 		if p.ClipHash != clipHash {
 			return p, false, fmt.Errorf("split proposal %s belongs to %s, not %s", p.ID, p.ClipHash, clipHash)
 		}
+		if sourceWasUnbound {
+			p.Source = source
+			if err := sp.saveProposal(ctx, *p); err != nil {
+				return p, false, err
+			}
+		}
 		if p.Ready() {
 			return p, true, nil
 		}
@@ -281,8 +306,8 @@ func (sp *Splitter) advanceProposal(ctx context.Context, clipHash string, p *Spl
 
 	if len(p.Detection.CoarseSegments) == 0 {
 		start := max(p.Detection.ScannedThroughMs, 0)
-		if start < clip.DurationMs {
-			end := min(start+boundaryScanChunkMs, clip.DurationMs)
+		if start < durationMs {
+			end := min(start+boundaryScanChunkMs, durationMs)
 			black, silence, detectErr := sp.tools.Boundaries(ctx, file, start, end)
 			if detectErr != nil {
 				if ctx.Err() != nil {
@@ -292,17 +317,17 @@ func (sp *Splitter) advanceProposal(ctx context.Context, clipHash string, p *Spl
 					sp.log.Warn("boundary detection failed, falling back to transcript rescue of the whole file",
 						"file", file, "startMs", start, "endMs", end, "err", detectErr)
 				}
-				p.Detection.ScannedThroughMs = clip.DurationMs
-				p.Detection.CoarseSegments, p.Dropped = segmentsFromBoundaries(clip.DurationMs, nil, floor)
+				p.Detection.ScannedThroughMs = durationMs
+				p.Detection.CoarseSegments, p.Dropped = segmentsFromBoundaries(durationMs, nil, floor)
 			} else {
 				p.Detection.Black = append(p.Detection.Black, black...)
 				p.Detection.Silence = append(p.Detection.Silence, silence...)
 				p.Detection.ScannedThroughMs = end
 			}
 		}
-		if p.Detection.ScannedThroughMs >= clip.DurationMs && len(p.Detection.CoarseSegments) == 0 {
+		if p.Detection.ScannedThroughMs >= durationMs && len(p.Detection.CoarseSegments) == 0 {
 			gaps := sourcedGaps(p.Detection.Black, p.Detection.Silence)
-			p.Detection.CoarseSegments, p.Dropped = segmentsFromBoundaries(clip.DurationMs, gaps, floor)
+			p.Detection.CoarseSegments, p.Dropped = segmentsFromBoundaries(durationMs, gaps, floor)
 			if len(p.Detection.CoarseSegments) == 0 {
 				return p, false, fmt.Errorf("no usable segments detected in %s (everything was under %dms — filler.min_duration)", clipHash, floor.ms())
 			}
@@ -318,7 +343,7 @@ func (sp *Splitter) advanceProposal(ctx context.Context, clipHash string, p *Spl
 	// the detection facts that ARE persisted before the confidence ladder reads them. Without this
 	// restore every resumed boundary scored 0 and even black+silence agreement could never clear
 	// the default auto-split threshold.
-	restoreCoarseBoundarySources(p.Detection, clip.DurationMs)
+	restoreCoarseBoundarySources(p.Detection, durationMs)
 	segs := append([]SplitSegment(nil), p.Detection.CoarseSegments...)
 
 	// 2. Names for the unnamed (chapters bring their own).
@@ -691,15 +716,18 @@ func (sp *Splitter) confirm(ctx context.Context, proposalID string, segments, ho
 	if len(segments) == 0 {
 		return nil, fmt.Errorf("%w: zero segments — reject the proposal instead of gutting the compilation", ErrSplitValidation)
 	}
-	if err := validateConfirmedSegments(segments, clip.DurationMs, sp.floor()); err != nil {
+	// V66 freezes the exact evidence location and full digest in the proposal. Pre-V66 proposals
+	// resolve once through the catalog row and are upgraded to the same bound source shape.
+	source, src, err := sp.resolveSource(ctx, sp.dropDir, clip, p.Source)
+	if err != nil {
+		return nil, fmt.Errorf("split confirm: %w", err)
+	}
+	if err := validateConfirmedSegments(segments, source.DurationMs, sp.floor()); err != nil {
 		return nil, err
 	}
-	// ⚠ The LOCATION comes from the row, not from the proposal — the same rule (and the same
-	// join) `Propose` states above. The proposal carries an identity; joining a hash onto the
-	// drop dir would build a path that does not exist.
-	ext := filepath.Ext(clip.Path)
-	src := filepath.Join(sp.dropDir, clip.Path)
-	parentTags, _ := ReadSidecarTags(src)
+	ext := filepath.Ext(source.Path)
+	parentPlayable := filepath.Join(sp.dropDir, filepath.FromSlash(clip.Path))
+	parentTags, _ := ReadSidecarTags(parentPlayable)
 
 	// Segments are cut inside a hidden directory on the filler filesystem. Same-filesystem staging
 	// makes final publication atomic, while ScanDir's dot-directory rule keeps partial bytes out of
@@ -714,7 +742,7 @@ func (sp *Splitter) confirm(ctx context.Context, proposalID string, segments, ho
 		return nil, fmt.Errorf("split confirm: temp dir: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
-	sourceSnapshot, err := snapshotSplitComposite(ctx, src, tmpDir, ext, clip.Hash)
+	sourceSnapshot, err := snapshotSplitComposite(ctx, src, tmpDir, ext, source.ClipHash)
 	if err != nil {
 		return nil, err
 	}
@@ -745,10 +773,12 @@ func (sp *Splitter) confirm(ctx context.Context, proposalID string, segments, ho
 			OriginalName:          seg.Name + ext,
 			SplitPublicationToken: claimToken,
 			ConditioningLineage: &ConditioningLineage{
-				ChildHash:       id,
-				ParentHash:      clip.Hash,
-				IntendedStartMs: seg.StartMs,
-				IntendedEndMs:   seg.EndMs,
+				ChildHash:         id,
+				ParentHash:        clip.Hash,
+				ParentAssetRole:   string(source.Role),
+				ParentAssetSHA256: source.SHA256,
+				IntendedStartMs:   seg.StartMs,
+				IntendedEndMs:     seg.EndMs,
 			},
 		}
 		if err := WriteSidecarTags(tmp, childTags, false); err != nil {

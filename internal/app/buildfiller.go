@@ -172,7 +172,7 @@ func buildFetcher(set resolved, layout filler.Layout, log *slog.Logger, artifact
 		ytDL = clipfetch.NewYtDlpDownloader(ytPath, ffPath)
 	}
 	log.Info("filler ingest available", "ytdlp", orNone(ytPath), "ffmpeg", ffPath)
-	return clipfetch.New(ytDL, clipfetch.NewArchiveDownloader(false), layout.WatchDir(), log).WithArtifactWriter(artifacts)
+	return clipfetch.New(ytDL, clipfetch.NewArchiveDownloader(), layout.WatchDir(), log).WithArtifactWriter(artifacts)
 }
 
 // buildSplitter constructs the compilation splitter (§10, V34). Nil without a drop-folder — clip
@@ -369,7 +369,7 @@ func buildPipeline(st store.Store, set resolved, layout filler.Layout, log *slog
 					return 0
 				}
 				return lufs
-			}, time.Now).WithConditioning(fillerTools.MeasureConditioning).WithDiagnostics(processDiagnostics),
+			}, time.Now).WithMediaDerivatives().WithConditioning(fillerTools.MeasureConditioning).WithDiagnostics(processDiagnostics),
 		filler.NewLanguageStage(langDetect, fillerLanguageStoreAdapter{st}, clipDir,
 			func() string { return set.str("filler.language") }, time.Now),
 		filler.NewTranscribeStage(fillerTools, fillerTranscribeStoreAdapter{st}, clipDir, fillerDrop,

@@ -485,7 +485,7 @@ type registeredSourceEnumerator struct{ youtube *clipfetch.YouTubeEnumerator }
 func (e registeredSourceEnumerator) Enumerate(ctx context.Context, source filler.FetchSource, limit int) ([]filler.DiscoveredRef, int, error) {
 	switch source.Kind {
 	case "archive":
-		res, err := clipfetch.NewArchiveDownloader(false).EnumerateCollection(ctx, source.URI, limit)
+		res, err := clipfetch.NewArchiveDownloader().EnumerateCollection(ctx, source.URI, limit)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -1322,7 +1322,7 @@ func (a podPreviewAdapter) PreviewDraft(ctx context.Context, channelID string, s
 // see what exists — they simply cannot fetch it. Refusing the search too would hide the reason
 // the fetch is unavailable behind a second, unrelated-looking wall.
 func (a fillerServiceAdapter) Discover(ctx context.Context, query string, limit int) ([]api.DiscoveredClip, int, error) {
-	res, err := clipfetch.NewArchiveDownloader(false).Search(ctx, query, limit)
+	res, err := clipfetch.NewArchiveDownloader().Search(ctx, query, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1340,7 +1340,7 @@ func (a fillerServiceAdapter) Discover(ctx context.Context, query string, limit 
 // `filler_sources` (V33) and the eight instances before it. Worth naming, because the
 // function looking finished is exactly what made it easy to leave unwired.
 func (a fillerServiceAdapter) DiscoverCollection(ctx context.Context, ref, query string, limit int) ([]api.DiscoveredClip, int, error) {
-	discoverer := clipfetch.NewArchiveDownloader(false)
+	discoverer := clipfetch.NewArchiveDownloader()
 	var (
 		res clipfetch.DiscoveryResult
 		err error
@@ -1367,7 +1367,7 @@ func (a fillerServiceAdapter) EnrichDiscovered(ctx context.Context, ids []string
 	for i, id := range ids {
 		items[i].ID = id
 	}
-	clipfetch.NewArchiveDownloader(false).Enrich(ctx, items)
+	clipfetch.NewArchiveDownloader().Enrich(ctx, items)
 	return discoveredStats(items), nil
 }
 

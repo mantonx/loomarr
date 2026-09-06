@@ -448,19 +448,17 @@ func inspectOutput(path string) (digest string, size int64, clipHash string, err
 
 // ArchiveDownloader fetches an Archive.org item/collection via plain net/http
 // (no special tooling — §10). It walks Archive's public JSON APIs (metadata +
-// advancedsearch), picks the smallest video derivative, and writes the media +
+// advancedsearch), selects the strongest declared source representation, and writes the media +
 // an info-JSON sidecar into the drop-folder. The walk logic lives in
 // archiveClient (injectable HTTP + fs → unit-tested against a mock server).
 type ArchiveDownloader struct {
 	client *archiveClient
 }
 
-// NewArchiveDownloader builds the Archive.org downloader against the real host.
-// preferOriginal keeps full-quality masters instead of the small derivative
-// (default false — the derivative is right for filler; §10).
-func NewArchiveDownloader(preferOriginal bool) *ArchiveDownloader {
+// NewArchiveDownloader builds the Archive.org downloader against the real host. Representation
+// selection is a source-evidence policy rather than a caller toggle; see design §10 V66.
+func NewArchiveDownloader() *ArchiveDownloader {
 	c := newArchiveClient("https://archive.org", nil, diskSink{})
-	c.preferOriginal = preferOriginal
 	return &ArchiveDownloader{client: c}
 }
 

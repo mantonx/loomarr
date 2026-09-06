@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/loomarr/loomarr/internal/diagnostics"
@@ -17,8 +20,8 @@ import (
 	"github.com/loomarr/loomarr/internal/proctree"
 )
 
-// Mezzanine transcoding (§10 V51b) — every clip is re-encoded once, to one profile, so that
-// everything downstream can rely on what it is holding.
+// Derivative transcoding (§10 V66) — source masters feed separately identified evidence and
+// playback recipes so downstream code can rely on both the bytes and their intended role.
 //
 // ⚠ **This is a MEZZANINE normalisation, not a BROADCAST one, and the distinction is the whole
 // design.** The obvious-looking move is to reuse `playout.DefaultProfile()`. Do not: that is
@@ -32,7 +35,8 @@ import (
 // What this stage owes playout is a file that is decodable, seekable, loudness-correct and cheap
 // to copy or re-encode. Nothing else.
 
-// MezzanineProfile is the one shape every clip is re-encoded to.
+// MezzanineProfile is the codec-level shape shared by a derivative recipe. Recipe identity and
+// measured QC live separately so this type does not become a grab bag of provenance fields.
 type MezzanineProfile struct {
 	// VideoCodec is the universal floor — everything decodes h264.
 	VideoCodec string
@@ -72,7 +76,7 @@ func (p MezzanineProfile) ID() string {
 	return fmt.Sprintf("%s-crf%d-%s%dk", p.VideoCodec, p.CRF, p.AudioCodec, p.AudioKbps)
 }
 
-// TranscodeRequest is one clip's re-encode.
+// TranscodeRequest is one derivative encode from an immutable input.
 type TranscodeRequest struct {
 	// In is the absolute path of the file to read.
 	In string
@@ -82,6 +86,9 @@ type TranscodeRequest struct {
 	// DurationMs is the probed duration, used both for the progress percentage and for the
 	// output verification.
 	DurationMs int64
+	// InputProbe carries optional preservation facts. V66 derivative builders always provide it;
+	// legacy callers may leave it nil.
+	InputProbe *Probed
 	// HadAudio is whether the INPUT carried an audio stream, so the verification can require one
 	// in the output only when there was one to begin with.
 	HadAudio bool
@@ -110,53 +117,7 @@ func Transcode(ctx context.Context, req TranscodeRequest, onProgress func(percen
 	tmp := req.Out + ".mezz.tmp" + filepath.Ext(req.Out)
 	defer func() { _ = os.Remove(tmp) }()
 
-	// Detector facts share this encode. `-v info` is required because the three filters report on
-	// stderr at info level; `-nostats` keeps that capture bounded to diagnostics and measurements.
-	args := []string{"-nostdin", "-hide_banner", "-nostats", "-v", "info"}
-	// ⚠ stdout carries the progress stream. `-progress pipe:1` keeps it OFF stderr, which is where
-	// ffmpeg also writes real errors — scraping the two out of one stream is what viewra did, and
-	// a chunked read there can split a token across the buffer boundary. This also works on Windows,
-	// where Go deliberately does not support Cmd.ExtraFiles.
-	args = append(args, "-progress", "pipe:1")
-	args = append(args, "-i", req.In)
-
-	p := req.Profile
-	args = append(args,
-		"-c:v", "libx264", "-crf", strconv.Itoa(p.CRF), "-preset", p.Preset,
-		"-pix_fmt", p.PixelFormat,
-		"-vf", qualityVideoFilters)
-	if p.KeyframeSeconds > 0 {
-		// A keyframe at frame 0 and every N seconds. `expr:gte(t,n_forced*N)` is the form that
-		// also guarantees the FIRST frame is an IDR — a clip whose first keyframe arrives late is
-		// the black-screen-on-start class §9.1 records.
-		args = append(args, "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", p.KeyframeSeconds))
-	}
-	if req.HadAudio {
-		args = append(args, "-c:a", p.AudioCodec,
-			"-b:a", strconv.Itoa(p.AudioKbps)+"k",
-			"-ar", strconv.Itoa(p.AudioRateHz), "-ac", strconv.Itoa(p.AudioCh))
-		audioFilter := qualityAudioFilter
-		if req.TargetLUFS != 0 {
-			// ⚠ Loudness rides along in the pass that is already re-encoding the audio, rather
-			// than as a second rewrite of the same file. V42's standalone loudness pass existed
-			// for the case where only the audio changes and the video is copied; here we are
-			// re-encoding anyway, so a separate pass would be a second generation of loss for
-			// nothing. (That pass is retired — it had no production caller, so this is the first
-			// time `filler.autofile.normalize_loudness` has actually done anything.)
-			//
-			// Single-pass loudnorm, unlike the two-pass form that pass used: two-pass wants a
-			// measurement run over the whole file, which here would mean decoding the source
-			// twice on top of an already-expensive encode. The first-second ramp single-pass
-			// leaves is the accepted cost, and playout normalises again anyway.
-			audioFilter += ",loudnorm=I=" + strconv.FormatFloat(req.TargetLUFS, 'f', -1, 64) + ":TP=-1:LRA=11"
-		}
-		args = append(args, "-af", audioFilter)
-	} else {
-		args = append(args, "-an")
-	}
-	// faststart puts the moov atom first, so a player (and Tunarr's probe) can start without
-	// reading to the end of the file.
-	args = append(args, "-movflags", "+faststart", "-y", tmp)
+	args := transcodeArguments(req, tmp)
 
 	cmd := exec.Command(FFmpegOr(req.FFmpegPath), args...) //nolint:gosec // args are built by this package
 	var stderr boundedBytes
@@ -247,6 +208,47 @@ func Transcode(ctx context.Context, req TranscodeRequest, onProgress func(percen
 	return qualityFromDetectorOutput(stderr.String(), req.DurationMs), nil
 }
 
+func transcodeArguments(req TranscodeRequest, output string) []string {
+	// Detector facts share this encode. `-v info` is required because the three filters report on
+	// stderr at info level; `-nostats` keeps that capture bounded to diagnostics and measurements.
+	args := []string{"-nostdin", "-hide_banner", "-nostats", "-v", "info"}
+	// stdout carries progress; stderr remains exclusively diagnostics and detector evidence.
+	args = append(args, "-progress", "pipe:1", "-i", req.In)
+	// One explicit A/V pair is part of the recipe identity. Metadata, chapters, subtitles and data
+	// are not semantic media and cannot silently cross into a derivative.
+	args = append(args, "-map", "0:v:0", "-map", "0:a:0?", "-map_metadata", "-1", "-map_chapters", "-1", "-sn", "-dn")
+
+	p := req.Profile
+	args = append(args,
+		"-c:v", "libx264", "-crf", strconv.Itoa(p.CRF), "-preset", p.Preset,
+		"-pix_fmt", p.PixelFormat,
+		"-vf", qualityVideoFilters)
+	if p.KeyframeSeconds > 0 {
+		// A keyframe at frame 0 and every N seconds. `expr:gte(t,n_forced*N)` is the form that
+		// also guarantees the FIRST frame is an IDR — a clip whose first keyframe arrives late is
+		// the black-screen-on-start class §9.1 records.
+		args = append(args, "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", p.KeyframeSeconds))
+	}
+	if req.HadAudio {
+		args = append(args, "-c:a", p.AudioCodec,
+			"-b:a", strconv.Itoa(p.AudioKbps)+"k",
+			"-ar", strconv.Itoa(p.AudioRateHz), "-ac", strconv.Itoa(p.AudioCh))
+		audioFilter := qualityAudioFilter
+		if req.TargetLUFS != 0 {
+			// Loudness belongs only to the playback recipe. It rides the one audio encode rather
+			// than creating another lossy generation.
+			audioFilter += ",loudnorm=I=" + strconv.FormatFloat(req.TargetLUFS, 'f', -1, 64) + ":TP=-1:LRA=11"
+		}
+		args = append(args, "-af", audioFilter)
+	} else {
+		args = append(args, "-an")
+	}
+	// Preserve cadence and geometry, normalize negative timestamp origin without independently
+	// resetting A/V streams, and put the moov atom first for bounded startup/seek behavior.
+	args = append(args, "-fps_mode", "passthrough", "-avoid_negative_ts", "make_zero", "-movflags", "+faststart", "-y", output)
+	return args
+}
+
 type boundedBytes struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -316,5 +318,62 @@ func verifyTranscode(ctx context.Context, req TranscodeRequest, tmp string) erro
 				filepath.Base(req.In), float64(out.DurationMs)/1000, float64(req.DurationMs)/1000)
 		}
 	}
+	if req.InputProbe != nil {
+		if err := verifyPreservedMedia(*req.InputProbe, out); err != nil {
+			return fmt.Errorf("transcode %s: %w", filepath.Base(req.In), err)
+		}
+	}
 	return nil
+}
+
+func verifyPreservedMedia(input, output Probed) error {
+	if (input.Width > 0 && output.Width != input.Width) || (input.Height > 0 && output.Height != input.Height) {
+		return fmt.Errorf("geometry changed from %dx%d to %dx%d", input.Width, input.Height, output.Width, output.Height)
+	}
+	for _, value := range []struct {
+		name   string
+		before string
+		after  string
+	}{
+		{name: "cadence", before: input.Cadence, after: output.Cadence},
+		{name: "sample aspect", before: input.SampleAspect, after: output.SampleAspect},
+		{name: "display aspect", before: input.DisplayAspect, after: output.DisplayAspect},
+	} {
+		if value.before != "" && !equivalentMediaRatio(value.before, value.after) {
+			return fmt.Errorf("%s changed from %q to %q", value.name, value.before, value.after)
+		}
+	}
+	if input.FieldOrder != "" && output.FieldOrder != input.FieldOrder {
+		return fmt.Errorf("field order changed from %q to %q without a declared interlace recipe", input.FieldOrder, output.FieldOrder)
+	}
+	if input.VideoTimingKnown && input.AudioTimingKnown {
+		if !output.VideoTimingKnown || !output.AudioTimingKnown {
+			return errors.New("A/V timing became unavailable")
+		}
+		inputStartSkew := input.AudioStartMs - input.VideoStartMs
+		outputStartSkew := output.AudioStartMs - output.VideoStartMs
+		if math.Abs(float64(outputStartSkew-inputStartSkew)) > 50 {
+			return fmt.Errorf("A/V start skew changed from %dms to %dms", inputStartSkew, outputStartSkew)
+		}
+		inputEndSkew := input.AudioStartMs + input.AudioDurationMs - input.VideoStartMs - input.VideoDurationMs
+		outputEndSkew := output.AudioStartMs + output.AudioDurationMs - output.VideoStartMs - output.VideoDurationMs
+		if math.Abs(float64(outputEndSkew-inputEndSkew)) > verifyTranscodeToleranceMs {
+			return fmt.Errorf("A/V end skew changed from %dms to %dms", inputEndSkew, outputEndSkew)
+		}
+	}
+	return nil
+}
+
+func equivalentMediaRatio(before, after string) bool {
+	if before == "" || after == "" {
+		return false
+	}
+	parse := func(value string) (*big.Rat, bool) {
+		value = strings.ReplaceAll(value, ":", "/")
+		ratio, ok := new(big.Rat).SetString(value)
+		return ratio, ok && ratio.Sign() > 0
+	}
+	left, leftOK := parse(before)
+	right, rightOK := parse(after)
+	return leftOK && rightOK && left.Cmp(right) == 0
 }

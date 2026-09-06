@@ -1219,6 +1219,17 @@ func TestTranscodeStage_RekeysBytesAndPreservesHumanMetadata(t *testing.T) {
 	if tags.Mezzanine != mediatools.DefaultMezzanine().ID() || tags.Era != in.Era || tags.Category != in.Category {
 		t.Errorf("sidecar did not carry the transform metadata: %+v", tags)
 	}
+	if tags.MediaAssets == nil || tags.MediaAssets.SourceMaster.ClipHash != oldHash {
+		t.Fatalf("playable sidecar lost source-master lineage: %+v", tags.MediaAssets)
+	}
+	masterPath := filepath.Join(dir, filepath.FromSlash(tags.MediaAssets.SourceMaster.Path))
+	masterBytes, err := os.ReadFile(masterPath)
+	if err != nil {
+		t.Fatalf("retained source master is unavailable after replacement: %v", err)
+	}
+	if !bytes.Equal(masterBytes, oldBytes) {
+		t.Fatalf("retained source master = %q, want exact input %q", masterBytes, oldBytes)
+	}
 
 	// Drive the real scanner over the transformed layout. This is the lifecycle seam that
 	// originally replaced the title with the stale hash on the pass after transcode.

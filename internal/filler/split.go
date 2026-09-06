@@ -322,12 +322,15 @@ type SplitProposal struct {
 	// splitter's test store keys its map on `Path`, so the fixture answered a question
 	// production's store does not (the same collapsed-key class `conformance_filler.go` records).
 	//
-	// ⚠ The FILE PATH is DERIVED from this, never stored beside it: `ClipPath(dropDir, hash, ext)`
-	// is the containment boundary, and one identity with a derived location is what stops the two
-	// disagreeing again.
+	// ⚠ The CATALOG PATH still comes from the clip row rather than being reconstructed from this
+	// identity. V66 additionally persists `Source` below: that is the exact evidence/playback asset
+	// reviewed by detection, not a second competing catalog location.
 	ClipHash  string         `json:"clipHash"`
 	CreatedAt time.Time      `json:"createdAt"`
 	Segments  []SplitSegment `json:"segments"`
+	// Source binds detection and confirmation to one exact derivative. It is internal durable
+	// state rather than review UI; zero is a pre-V66 proposal that resolves through legacy rules.
+	Source SplitSourceAsset `json:"-"`
 	// Spawned remembers children already produced by partial auto-confirm. It is private durable
 	// state, not review UI: final confirmation needs the whole new generation so it can retire
 	// superseded children without also retiring cuts produced on an earlier pass.

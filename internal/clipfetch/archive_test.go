@@ -102,7 +102,7 @@ func TestArchive_DownloadsItemAndSidecar(t *testing.T) {
 		t.Fatalf("walk = fetched %d skipped %d, want 1/0", fetched, skipped)
 	}
 
-	// The SMALL derivative was chosen (not the 246MB original).
+	// The source representation is chosen for retained evidence, not minimum download size.
 	var mediaPath, sidecarPath string
 	for p := range fs.files {
 		if strings.HasSuffix(p, ".info.json") {
@@ -111,11 +111,11 @@ func TestArchive_DownloadsItemAndSidecar(t *testing.T) {
 			mediaPath = p
 		}
 	}
-	if !strings.Contains(mediaPath, "small.ia.mp4") {
-		t.Errorf("should download the small derivative, got %q", mediaPath)
+	if !strings.Contains(mediaPath, "big.mp4") {
+		t.Errorf("should download the source original, got %q", mediaPath)
 	}
-	if strings.Contains(mediaPath, "big.mp4") {
-		t.Error("downloaded the 246MB original instead of the derivative")
+	if strings.Contains(mediaPath, "small.ia.mp4") {
+		t.Error("downloaded the playback-sized derivative instead of the source original")
 	}
 	// The sidecar preserves title/description (AI-tagging text signals, §10).
 	if sidecarPath == "" {
@@ -198,33 +198,47 @@ func TestArchive_WalksCollection(t *testing.T) {
 	}
 }
 
-func TestPickVideoFile_PrefersSmallestDerivative(t *testing.T) {
+func TestPickVideoFile_PrefersMeasuredSourceRepresentation(t *testing.T) {
 	files := []archiveFile{
-		{Name: "orig.mp4", Format: "MPEG4", Size: "246000000"},
-		{Name: "deriv.ia.mp4", Format: "h.264 IA", Size: "9000000"},
+		{Name: "orig-low.mp4", Format: "MPEG4", Size: "246000000", Source: "original", Length: "91", Width: "640", Height: "480"},
+		{Name: "orig-best.mp4", Format: "MPEG4", Size: "490000000", Source: "original", Length: "91.00", Width: "1280", Height: "960"},
+		{Name: "deriv.ia.mp4", Format: "h.264 IA", Size: "9000000", Source: "derivative", Length: "91", Width: "1920", Height: "1080"},
 		{Name: "thumb.jpg", Format: "Thumbnail", Size: "12000"},
 		{Name: "meta.xml", Format: "Metadata", Size: "500"},
 	}
-	// Default (filler): smallest derivative.
-	f, ok := pickVideoFile(files, false)
+	f, ok := pickVideoFile(files)
 	if !ok {
 		t.Fatal("expected a video file")
 	}
-	if f.Name != "deriv.ia.mp4" {
-		t.Errorf("default picked %q, want the small derivative deriv.ia.mp4", f.Name)
+	if f.Name != "orig-best.mp4" {
+		t.Errorf("picked %q, want the best measured original orig-best.mp4", f.Name)
 	}
-	// preferOriginal: the full-quality master.
-	f, ok = pickVideoFile(files, true)
-	if !ok {
-		t.Fatal("expected a video file")
+}
+
+func TestPickVideoFile_UnknownNeverBeatsObservedWithinSourceClass(t *testing.T) {
+	files := []archiveFile{
+		{Name: "unknown.mp4", Format: "MPEG4", Source: "original", Size: "999999999"},
+		{Name: "measured.mp4", Format: "MPEG4", Source: "original", Size: "1000000", Length: "30", Width: "640", Height: "480"},
 	}
-	if f.Name != "orig.mp4" {
-		t.Errorf("preferOriginal picked %q, want the 246MB original orig.mp4", f.Name)
+	f, ok := pickVideoFile(files)
+	if !ok || f.Name != "measured.mp4" {
+		t.Fatalf("picked %#v, want measured original", f)
+	}
+}
+
+func TestPickVideoFile_UsesStableFilenameTieBreak(t *testing.T) {
+	files := []archiveFile{
+		{Name: "z.mp4", Format: "MPEG4", Source: "derivative", Size: "1000000", Length: "30", Width: "640", Height: "480"},
+		{Name: "A.mp4", Format: "MPEG4", Source: "derivative", Size: "1000000", Length: "30", Width: "640", Height: "480"},
+	}
+	f, ok := pickVideoFile(files)
+	if !ok || f.Name != "A.mp4" {
+		t.Fatalf("picked %#v, want A.mp4", f)
 	}
 }
 
 func TestPickVideoFile_NoneWhenNoVideo(t *testing.T) {
-	if _, ok := pickVideoFile([]archiveFile{{Name: "x.jpg", Format: "Thumbnail"}}, false); ok {
+	if _, ok := pickVideoFile([]archiveFile{{Name: "x.jpg", Format: "Thumbnail"}}); ok {
 		t.Error("a thumbnail-only item should yield no video file")
 	}
 }
