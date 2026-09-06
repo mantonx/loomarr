@@ -4777,8 +4777,10 @@ to derivatives that had no direct flag, and keeps `trainingAllowed`, `ingestionA
 write, media mutation, or admission decision.
 
 The private projection also retains the verified immutable challenge-v1 evidence contract required
-by #903. This is an archived diagnostic input, not a current challenge or certification. Only the
-projection seam may load it; the public challenge, assessment, and rendering interfaces remain on
+by #903 and the retained complete-source spoken diagnostic in #912. This is an archived diagnostic
+input, not a current challenge or certification. Only the source-suitability and spoken-safety
+projection seams may load it through the same private strict decoder; public challenge, assessment,
+and rendering interfaces remain on
 the current challenge and plan contracts. Separate strict archived input shapes reject fields
 introduced by later contracts even when empty or null. They require the original explicit negative
 production disposition, complete media/authority/alias/segment bindings, and the exact immutable
