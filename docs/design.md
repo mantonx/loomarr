@@ -4925,6 +4925,17 @@ are forbidden. Request/response SHA-256 values plus the provider generation id b
 without copying them into an ordinary application database or operator projection. No ledger read model is
 ordinary-user-facing in this slice.
 
+Ledger-owned run, event, evaluation, candidate, reservation, generation, clip, and implementation
+identifiers are bounded opaque ASCII tokens using letters, digits, underscores, and hyphens. They
+reject filesystem separators, dotted filename forms, URLs, whitespace, and control characters. A clip identity
+remains the existing opaque clip key; this boundary does not invent a different digest format for it.
+Public model/provider identities use a separate bounded representation that preserves legitimate route
+slashes, revision dots, and provider display-name spaces. These values must come from the validated
+route and response identities recorded by the atomic V62 helpers, never from source metadata or free-form
+provider output. Their syntax is not evidence of route authority: the completed runtime integration must
+retain the validated capability and response binding before writing those fields. The generic event
+append operation cannot create reservation or settlement authority.
+
 Restricted spoken language and broad visual suitability remain separate claims. Complete-video
 suitability must ultimately cover every source, including a source for which the acoustic proposer emits
 no interval; a video corroboration performed only on spoken candidates cannot satisfy that obligation.
