@@ -34,6 +34,8 @@ func TestFillerReadinessReturnsOneServerOwnedActionAndItsEvidence(t *testing.T) 
 			Outcome:   filler.AcquisitionOutcome{Enrolled: 3, Preparing: 1, Admitted: 2},
 			Artifacts: filler.AcquisitionArtifactOutcome{Consumed: 3},
 		}},
+		// Two repair rows are higher-priority actionable work than the recoverable pipeline row.
+		Repairs: filler.AcquisitionRepairSummary{Count: 2, LatestReason: "latest retained repair"},
 	})
 
 	res := sourceReq(t, http.MethodGet, srv.URL+"/v1/filler/readiness", "", memberToken)
@@ -45,8 +47,8 @@ func TestFillerReadinessReturnsOneServerOwnedActionAndItsEvidence(t *testing.T) 
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
 		t.Fatal(err)
 	}
-	if body.NextAction != "retry_failed_work" || body.ActionCount != 1 {
-		t.Fatalf("next action = %q (%d), want the one recoverable failure", body.NextAction, body.ActionCount)
+	if body.NextAction != "retry_acquisition" || body.ActionCount != 2 {
+		t.Fatalf("next action = %q (%d), want the two repair actions", body.NextAction, body.ActionCount)
 	}
 	if body.Pipeline.NeedsDecision != 3 || body.Pipeline.Rejected != 4 || body.Pipeline.Recoverable != 1 {
 		t.Fatalf("pipeline ownership collapsed: %+v", body.Pipeline)
@@ -59,5 +61,8 @@ func TestFillerReadinessReturnsOneServerOwnedActionAndItsEvidence(t *testing.T) 
 	}
 	if body.Acquisitions[0].Artifacts.Consumed != 3 {
 		t.Fatalf("acquisition artifact outcome = %+v", body.Acquisitions[0].Artifacts)
+	}
+	if body.Repairs.Count != 2 || body.Repairs.LatestReason != "latest retained repair" {
+		t.Fatalf("repair summary = %+v", body.Repairs)
 	}
 }

@@ -25,6 +25,7 @@ type ReadinessInput struct {
 	Pipeline PipelineOverview
 	Pool     PoolReport
 	Runs     []AcquisitionRun
+	Repairs  AcquisitionRepairSummary
 }
 
 // Readiness is the server-owned summary shown at the simple Filler entry point. The detailed
@@ -40,12 +41,13 @@ type Readiness struct {
 	Pipeline PipelineOverview
 	Pool     PoolReport
 	Runs     []AcquisitionRun
+	Repairs  AcquisitionRepairSummary
 }
 
 // ProjectReadiness chooses one next action in impact order. Machine blockage precedes operator
 // decisions, and an empty airable pool precedes quality improvements to a pool that already works.
 func ProjectReadiness(in ReadinessInput) Readiness {
-	out := Readiness{Fetch: in.Fetch, Pipeline: in.Pipeline, Pool: in.Pool, Runs: in.Runs}
+	out := Readiness{Fetch: in.Fetch, Pipeline: in.Pipeline, Pool: in.Pool, Runs: in.Runs, Repairs: in.Repairs}
 	switch {
 	case !in.Fetch.Enabled:
 		out.Next = ReadinessEnableFetch
@@ -53,6 +55,8 @@ func ProjectReadiness(in ReadinessInput) Readiness {
 		out.Next, out.Count = ReadinessFreeCatalog, in.Fetch.CatalogClips
 	case in.Fetch.StoppedBy == "disk":
 		out.Next = ReadinessFreeDisk
+	case in.Repairs.Count > 0:
+		out.Next, out.Count = ReadinessRetryAcquisition, in.Repairs.Count
 	case len(in.Runs) > 0 && (in.Runs[0].Status == AcquisitionError || in.Runs[0].Artifacts.Repair > 0):
 		out.Next, out.Count = ReadinessRetryAcquisition, in.Runs[0].Failed+in.Runs[0].Artifacts.Repair
 	case in.Pipeline.Recoverable > 0:

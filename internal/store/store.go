@@ -562,6 +562,9 @@ type FillerAcquisitionStore interface {
 	RecoverInterruptedAcquisitionRuns(ctx context.Context, at time.Time) (int, error)
 	GetAcquisitionRun(ctx context.Context, id string, at time.Time) (filler.AcquisitionRun, error)
 	ListAcquisitionRuns(ctx context.Context, limit int, at time.Time) ([]filler.AcquisitionRun, error)
+	// AcquisitionRepairSummary reports all currently unresolved artifact repairs without loading
+	// the bounded acquisition history page.
+	AcquisitionRepairSummary(ctx context.Context) (filler.AcquisitionRepairSummary, error)
 }
 
 // InteractiveOperationStore is the reconnect truth for request-launched asynchronous work. It

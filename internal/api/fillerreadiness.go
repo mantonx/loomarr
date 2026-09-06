@@ -24,6 +24,11 @@ type AcquisitionArtifactOutcomeDTO struct {
 	RepairReason string `json:"repairReason,omitempty"`
 }
 
+type AcquisitionRepairSummaryDTO struct {
+	Count        int    `json:"count"`
+	LatestReason string `json:"latestReason,omitempty"`
+}
+
 type FillerAcquisitionRunDTO struct {
 	ID       string `json:"id"`
 	Trigger  string `json:"trigger" enum:"scheduled,source,pull,manual"`
@@ -51,10 +56,11 @@ type FillerReadinessDTO struct {
 	ChannelID   string `json:"channelId,omitempty"`
 	ActionCount int    `json:"actionCount,omitempty"`
 
-	Fetch        FillerFetchStatusDTO      `json:"fetch"`
-	Pipeline     PipelineOverviewDTO       `json:"pipeline"`
-	Pool         PoolDTO                   `json:"pool"`
-	Acquisitions []FillerAcquisitionRunDTO `json:"acquisitions"`
+	Fetch        FillerFetchStatusDTO        `json:"fetch"`
+	Pipeline     PipelineOverviewDTO         `json:"pipeline"`
+	Pool         PoolDTO                     `json:"pool"`
+	Acquisitions []FillerAcquisitionRunDTO   `json:"acquisitions"`
+	Repairs      AcquisitionRepairSummaryDTO `json:"repairs"`
 }
 
 type fillerReadinessOutput struct {
@@ -87,6 +93,7 @@ func fillerReadinessDTO(readiness filler.Readiness) FillerReadinessDTO {
 		},
 		Pipeline: pipelineOverviewDTO(readiness.Pipeline), Pool: poolDTO(readiness.Pool),
 		Acquisitions: runs,
+		Repairs:      AcquisitionRepairSummaryDTO{Count: readiness.Repairs.Count, LatestReason: readiness.Repairs.LatestReason},
 	}
 }
 
