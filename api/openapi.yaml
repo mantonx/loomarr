@@ -1,5 +1,28 @@
 components:
   schemas:
+    AcquisitionArtifactOutcomeDTO:
+      additionalProperties: false
+      properties:
+        consumed:
+          format: int64
+          type: integer
+        published:
+          format: int64
+          type: integer
+        repair:
+          format: int64
+          type: integer
+        repairReason:
+          type: string
+        staged:
+          format: int64
+          type: integer
+      required:
+        - staged
+        - published
+        - consumed
+        - repair
+      type: object
     AcquisitionOutcomeDTO:
       additionalProperties: false
       properties:
@@ -2732,6 +2755,8 @@ components:
     FillerAcquisitionRunDTO:
       additionalProperties: false
       properties:
+        artifacts:
+          $ref: "#/components/schemas/AcquisitionArtifactOutcomeDTO"
         completedAt:
           format: date-time
           type: string
@@ -2792,6 +2817,7 @@ components:
         - startedAt
         - updatedAt
         - outcome
+        - artifacts
       type: object
     FillerClipEvent:
       additionalProperties: false
