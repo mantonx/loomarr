@@ -93,6 +93,9 @@ func scanSpokenSafetyRun(row scannable) (fillersafety.LedgerRun, error) {
 }
 
 func (s *sqlStore) AppendSpokenSafetyEvent(ctx context.Context, event fillersafety.LedgerEvent) error {
+	if event.Kind == fillersafety.LedgerInferenceReserved || event.Kind == fillersafety.LedgerInferenceSettled {
+		return fillersafety.ErrLedgerInvalid
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin spoken-safety event: %w", err)

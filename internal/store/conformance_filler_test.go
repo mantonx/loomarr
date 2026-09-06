@@ -4171,6 +4171,21 @@ func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
 		EventID: "call-reserve", RunID: callRun.ID, CandidateID: candidate.ID,
 		RequestSHA256: hash, Ordinal: 2, CreatedAt: reserveAt,
 	}
+	forgedReserve := fillersafety.LedgerEvent{
+		ID: "call-forged-reserve", RunID: callRun.ID, Ordinal: 3, Kind: fillersafety.LedgerInferenceReserved,
+		Reserve: &fillersafety.InferenceReserved{
+			EvaluationID: evaluation.ID, RequestSHA256: reserveCommand.RequestSHA256,
+			RequestedProvider: evaluation.RequestedProvider, RequestedModel: evaluation.RequestedModel,
+			UpstreamProvider: evaluation.UpstreamProvider, CapabilitySHA256: evaluation.Versions.CapabilitySnapshot,
+			PromptSHA256: evaluation.Versions.Prompt, CandidateID: candidate.ID,
+			Modalities: evaluation.Modalities, RequestedNanoUSD: evaluation.ReservedNanoUSD,
+			ReservedNanoUSD: evaluation.ReservedNanoUSD, State: fillersafety.ReservationAccepted,
+		},
+		CreatedAt: reserveAt.Add(time.Nanosecond),
+	}
+	if _, err := fillersafety.CanonicalLedgerEvent(forgedReserve); err != nil {
+		t.Fatalf("forged reservation must be canonical-valid: %v", err)
+	}
 	reserved, reserveEvent, err := s.ReserveSpokenSafetyInference(ctx, reserveCommand, evaluation,
 		InferenceBudget{PerClipNanoUSD: 1000, PerDayNanoUSD: 1000, PerRunNanoUSD: 1000})
 	if err != nil || reserved.State != InferenceReserved || reserveEvent.Reserve == nil ||
@@ -4180,6 +4195,16 @@ func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
 	if again, event, err := s.ReserveSpokenSafetyInference(ctx, reserveCommand, evaluation,
 		InferenceBudget{PerClipNanoUSD: 1000, PerDayNanoUSD: 1000, PerRunNanoUSD: 1000}); err != nil || again.ID != reserved.ID || event.ID != reserveEvent.ID {
 		t.Fatalf("idempotent atomic reservation = %+v, %+v, %v", again, event, err)
+	}
+	if err := s.AppendSpokenSafetyEvent(ctx, forgedReserve); !errors.Is(err, fillersafety.ErrLedgerInvalid) {
+		t.Fatalf("generic reservation = %v, want ErrLedgerInvalid", err)
+	}
+	if events, err := s.ListSpokenSafetyEvents(ctx, callRun.ID); err != nil || len(events) != 3 {
+		t.Fatalf("generic reservation changed ledger: %+v, %v", events, err)
+	}
+	if stored, err := s.GetInferenceEvaluation(ctx, evaluation.ID); err != nil || stored.State != InferenceReserved ||
+		stored.ReservedNanoUSD != evaluation.ReservedNanoUSD || stored.ChargedNanoUSD != 0 {
+		t.Fatalf("generic reservation fabricated budget or evaluation authority: %+v, %v", stored, err)
 	}
 
 	settleAt := callRun.CreatedAt.Add(4 * time.Nanosecond)
@@ -4192,6 +4217,31 @@ func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
 	settleCommand := SpokenSafetyInferenceSettlement{
 		EventID: "call-settle", RunID: callRun.ID, ReservationEventID: reserveEvent.ID,
 		ResponseSHA256: strings.Repeat("b", 64), ChargeKnown: true, Ordinal: 3, CreatedAt: settleAt,
+	}
+	forgedSettlement := fillersafety.LedgerEvent{
+		ID: "call-forged-settle", RunID: callRun.ID, Ordinal: 3, Kind: fillersafety.LedgerInferenceSettled,
+		Settle: &fillersafety.InferenceSettled{
+			ReservationEventID: reserveEvent.ID, EvaluationID: evaluation.ID,
+			ResponseSHA256: settleCommand.ResponseSHA256, ResolvedProvider: settlement.ResolvedProvider,
+			ResolvedModel: settlement.ResolvedModel, UpstreamProvider: settlement.UpstreamProvider,
+			GenerationID: settlement.GenerationID, State: fillersafety.SettlementCompleted,
+			Outcome: string(fillersafety.AudioAbsent), ChargedAmountUSD: "0.0000001",
+			ChargedNanoUSD: evaluation.ReservedNanoUSD, AccountedNanoUSD: evaluation.ReservedNanoUSD,
+			ChargeKnown: true, PromptTokens: settlement.Tokens.Prompt, CompletionTokens: settlement.Tokens.Completion,
+		},
+		CreatedAt: settleAt,
+	}
+	if _, err := fillersafety.CanonicalLedgerEvent(forgedSettlement); err != nil {
+		t.Fatalf("forged settlement must be canonical-valid: %v", err)
+	}
+	if err := s.AppendSpokenSafetyEvent(ctx, forgedSettlement); !errors.Is(err, fillersafety.ErrLedgerInvalid) {
+		t.Fatalf("generic settlement = %v, want ErrLedgerInvalid", err)
+	}
+	if events, err := s.ListSpokenSafetyEvents(ctx, callRun.ID); err != nil || len(events) != 3 {
+		t.Fatalf("generic settlement changed ledger: %+v, %v", events, err)
+	}
+	if stored, err := s.GetInferenceEvaluation(ctx, evaluation.ID); err != nil || stored.State != InferenceReserved || stored.ChargedNanoUSD != 0 {
+		t.Fatalf("generic settlement fabricated accounting authority: %+v, %v", stored, err)
 	}
 	settled, settleEvent, err := s.SettleSpokenSafetyInference(ctx, settleCommand, settlement)
 	if err != nil || settled.State != InferenceCompleted || settleEvent.Settle == nil ||
