@@ -6547,7 +6547,11 @@ before its first request, stays serial and identified, checks the initial URL an
 against both the case's frozen allowlist and the built-in policy for that authority, bounds each body
 by the inventoried size, verifies source checksums when present, and adds SHA-256. Query strings may
 remain when they are part of the exact frozen representation URL; credentials and fragments never
-may. Media and its download ledger remain external to Git.
+may. For Met original images, the inventory freezes a metadata-digest cache key, and each bounded
+GET attempt may add its deterministic run/case/attempt cache key to avoid inconsistent CDN cache
+entries. These keys cannot change the selected host or image path, relax exact byte counts or
+available source checksums, or expand the existing request and byte ceilings. Media and its download
+ledger remain external to Git.
 An incomplete, stale, oversized, or checksum-mismatched plan fails without producing a completed
 ledger and cannot flow into blind semantic review.
 
@@ -6564,12 +6568,17 @@ the item's metadata digest; copying an approval between inventory snapshots fail
 The development-only Met lane may reduce repetitive spreadsheet entry without reducing that item-level
 lock. Its batch-completion aid accepts only the exact current inventory and inert worksheet, a complete
 zero-hold Met metadata pre-screen bound to the pinned Open Access policy evidence, and one separately
-authored maintainer attestation bound to all three artifact digests. The attestation names the reviewer
+authored maintainer attestation bound to all three artifact digests. Met search and object metadata
+must have unambiguous field identities: duplicate JSON keys, including alternate casing that would
+bind the same decoded field, fail discovery or hold pre-screening. Legitimate additional provider
+fields remain allowed; they do not become rights assertions. The attestation names the reviewer
 and review time, explicitly accepts the recorded non-copyright limitations, and authorizes only private
 development-corpus copying, technical transformation, and evidence extraction. The aid reconstructs
 every immutable worksheet row and fills the same decision columns for each independently identified
 item; the ordinary rights locker remains the sole producer of downloader authority and revalidates all
-rows. A held pre-screen case, mixed authority, incomplete coverage, stale time, changed artifact,
+rows. The attestation time must be canonical UTC and no earlier than its bound pre-screen; this
+offline development artifact has no rolling production-certificate lifetime. A held pre-screen case,
+mixed authority, incomplete coverage, stale time, changed artifact,
 unknown field, blank attestation, attribution requirement, or non-empty restriction refuses batch
 completion and returns the reviewer to the ordinary item-level exception path. The batch attestation
 does not grant certification, provider transfer, training, production, ingestion, scheduling, or
