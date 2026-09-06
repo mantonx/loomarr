@@ -350,6 +350,114 @@ func (fixture temporalSpokenSafetyFixture) config(output string) TemporalSpokenS
 	}
 }
 
+func (fixture temporalSpokenSafetyFixture) archiveStructure(t *testing.T) {
+	t.Helper()
+	manifest := readStrictTestJSON[TemporalStructureChallengeManifest](t, fixture.structureManifest)
+	authority := readStrictTestJSON[TemporalStructureChallengeAuthority](t, fixture.structureAuthority)
+	productionAllowed := false
+	archivedManifest := temporalStructureChallengeArchiveV1Manifest{SchemaVersion: manifest.SchemaVersion, ContractVersion: temporalStructureChallengeArchiveV1Contract, ChallengeID: manifest.ChallengeID, GeneratedAt: manifest.GeneratedAt, ProductionAdmissionAllowed: &productionAllowed}
+	for _, item := range manifest.Cases {
+		archivedManifest.Cases = append(archivedManifest.Cases, temporalStructureChallengeArchiveV1PublicCase{Alias: item.Alias, Video: item.Video})
+	}
+	writeTemporalSpokenSafetyJSON(t, fixture.structureManifest, archivedManifest)
+	manifestSHA, err := hashFile(fixture.structureManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivedAuthority := temporalStructureChallengeArchiveV1Authority{SchemaVersion: authority.SchemaVersion, ContractVersion: temporalStructureChallengeArchiveV1Contract, ChallengeID: authority.ChallengeID, GeneratedAt: authority.GeneratedAt, AuthoringSHA256: authority.AuthoringSHA256, SeedSHA256: authority.SeedSHA256, PublicManifestSHA256: manifestSHA, MediaTools: authority.MediaTools, Cases: authority.Cases}
+	writeTemporalSpokenSafetyJSON(t, fixture.structureAuthority, archivedAuthority)
+}
+
+func (fixture temporalSpokenSafetyFixture) rewriteArchivedStructure(t *testing.T, mutate func(*temporalStructureChallengeArchiveV1Manifest)) {
+	t.Helper()
+	manifest := readStrictTestJSON[temporalStructureChallengeArchiveV1Manifest](t, fixture.structureManifest)
+	mutate(&manifest)
+	writeTemporalSpokenSafetyJSON(t, fixture.structureManifest, manifest)
+	manifestSHA, err := hashFile(fixture.structureManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority := readStrictTestJSON[temporalStructureChallengeArchiveV1Authority](t, fixture.structureAuthority)
+	authority.PublicManifestSHA256 = manifestSHA
+	writeTemporalSpokenSafetyJSON(t, fixture.structureAuthority, authority)
+}
+
+func TestPublishTemporalSpokenSafetyRejectsMalformedArchivedStructureWithoutOutput(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(t *testing.T, fixture temporalSpokenSafetyFixture)
+		want   string
+	}{
+		{
+			name: "unknown field", want: "unknown field",
+			mutate: func(t *testing.T, fixture temporalSpokenSafetyFixture) {
+				raw, err := os.ReadFile(fixture.structureManifest)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw = bytes.Replace(raw, []byte("{"), []byte("{\"unknown\":true,"), 1)
+				if err := os.WriteFile(fixture.structureManifest, raw, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "duplicate field", want: "duplicate JSON object key",
+			mutate: func(t *testing.T, fixture temporalSpokenSafetyFixture) {
+				raw, err := os.ReadFile(fixture.structureManifest)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw = bytes.Replace(raw, []byte("{\n"), []byte("{\n  \"schemaVersion\": 1,\n"), 1)
+				if err := os.WriteFile(fixture.structureManifest, raw, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "true production", want: "explicit negative production disposition",
+			mutate: func(t *testing.T, fixture temporalSpokenSafetyFixture) {
+				fixture.rewriteArchivedStructure(t, func(manifest *temporalStructureChallengeArchiveV1Manifest) {
+					allowed := true
+					manifest.ProductionAdmissionAllowed = &allowed
+				})
+			},
+		},
+		{
+			name: "missing production", want: "explicit negative production disposition",
+			mutate: func(t *testing.T, fixture temporalSpokenSafetyFixture) {
+				fixture.rewriteArchivedStructure(t, func(manifest *temporalStructureChallengeArchiveV1Manifest) { manifest.ProductionAdmissionAllowed = nil })
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newTemporalSpokenSafetyFixture(t)
+			fixture.archiveStructure(t)
+			test.mutate(t, fixture)
+			output := filepath.Join(t.TempDir(), "spoken-safety.json")
+			_, _, err := PublishTemporalSpokenSafety(fixture.config(output))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+			if _, err := os.Stat(output); !os.IsNotExist(err) {
+				t.Fatalf("refused projection wrote output: %v", err)
+			}
+		})
+	}
+}
+
+func TestPublishTemporalSpokenSafetyReplaysArchivedStructureV1(t *testing.T) {
+	fixture := newTemporalSpokenSafetyFixture(t)
+	fixture.archiveStructure(t)
+	report, _, err := PublishTemporalSpokenSafety(fixture.config(filepath.Join(t.TempDir(), "spoken-safety.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.TrainingAllowed || report.IngestionAllowed || report.SchedulingAllowed || report.ProductionAdmissionAllowed {
+		t.Fatalf("archived replay permissions = %+v", report)
+	}
+}
+
 func writeTemporalSpokenSafetyPacketJSONL(t *testing.T, path string, values []fillerbakeoff.Packet) {
 	t.Helper()
 	var raw []byte

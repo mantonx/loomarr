@@ -95,7 +95,7 @@ func loadTemporalSpokenSafety(config TemporalSpokenSafetyConfig) (temporalSpoken
 	if err := validateTemporalSpokenSafetyTranscriptJoins(evidence, privateMap, corpusCases, transcripts); err != nil {
 		return temporalSpokenSafetyLoaded{}, err
 	}
-	_, structure, structureSHA, authoritySHA, err := LoadTemporalStructureChallenge(config.StructureManifestPath, config.StructureAuthorityPath, config.ExpectedStructureCases)
+	_, structure, structureSHA, authoritySHA, err := loadTemporalStructureChallengeForProjection(config.StructureManifestPath, config.StructureAuthorityPath, config.ExpectedStructureCases)
 	if err != nil {
 		return temporalSpokenSafetyLoaded{}, err
 	}
