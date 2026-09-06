@@ -127,7 +127,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 | `filleradmission` | 8 | — |
 | `fillerbakeoff` | 7 | `filleradmission`, `fillereval`, `httpx`, `openroutermedia` |
 | `fillereval` | 6 | — |
-| `fillersafety` | 5 | `mediatools`, `openroutermedia` |
+| `fillersafety` | 6 | `mediatools`, `openroutermedia` |
 | `fillerstructure` | 8 | — |
 | `fillerstructurewindow` | 6 | `fillerstructure` |
 | `httpx` | 12 | `metrics` |
@@ -165,7 +165,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   In-memory event bus behind SSE (§7 /v1/events, §8).
 - **`filleradmission`** · 8 importers
   Owns the deterministic semantic boundary between versioned filler evidence and a catalog-admission decision.
-- **`fillerairworthiness`** · 1 importer
+- **`fillerairworthiness`** · 2 importers
   Owns deterministic audience-policy evaluation over closed, authority-bound filler suitability evidence.
 - **`fillercorpus`** · 4 importers
   Owns the source-neutral, non-authorizing inventory contract used to qualify certification corpus lanes.
@@ -264,7 +264,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 - **`fillerreference`** · 1 importer · → `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `mediatools`, `taxonomy`
   Owns the deterministic pre-screen for the production-ready filler reference cohort.
-- **`fillersafety`** · 5 importers · → `mediatools`, `openroutermedia`, `proctree`
+- **`fillersafety`** · 6 importers · → `mediatools`, `openroutermedia`, `proctree`
   Owns the fail-closed spoken-safety cascade and its shadow evidence.
 - **`fillerstructuremedia`** · 4 importers · → `fillerstructure`, `mediatools`
   Owns the exact media contract shared by complete-timeline structure qualification and production assessment.
@@ -273,6 +273,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 6**
 
+- **`fillerairworthinessprojection`** · → `fillerairworthiness`, `fillersafety`
+  Authenticates safety-producer output and translates opaque certified matches into closed Airworthiness evidence.
 - **`fillersafetycert`** · 2 importers · → `fillersafety`
   Owns deterministic, non-authorizing certification of the durable spoken-safety cascade.
 - **`fillerstructurewindow`** · 6 importers · → `fillerstructure`, `fillerstructuremedia`
@@ -3819,6 +3821,17 @@ unattended playout. It is a retention profile, not a permissive audience profile
 closed modality, severity, context, source-relative half-open interval, and opaque id. The public policy result
 may expose those closed values and evidence digests, but never raw restricted language, imagery descriptions,
 model prose, or chain-of-thought.
+
+Producer projection is an authenticated translation, not a string switch. A visual policy-match id or spoken
+restricted-rule id becomes a suitability flag only through an immutable projection authority that binds the
+producer policy, certification and implementation identities, the exact opaque id, and its closed flag,
+severity, and context. The projector first reproduces the producer's complete canonical result. A known valid
+positive may then publish a source-relative observation and retain positive-wins rejection even when other
+coverage is incomplete. An unknown id, missing timing, stale producer identity, irreproducible result, or
+unprojectable source/child relationship yields conflicting or incomplete Airworthiness evidence. A negative
+producer result supplies complete coverage only for flags explicitly claimed by the matching category-specific
+certificate; it cannot clear another flag merely because both originated in one model call. Private raw
+producer reports remain digest-bound evidence and public projections contain no matched words or descriptions.
 
 Each axis record binds the complete child subject described above, its outcome, and the evaluator's policy,
 certification, implementation, and evidence-contract profile, plus the SHA-256 of its private bounded raw

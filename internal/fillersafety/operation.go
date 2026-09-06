@@ -129,10 +129,17 @@ func evaluationReport(run LedgerRun, terminal LedgerEvent) (EvaluationReport, er
 	if err != nil {
 		return EvaluationReport{}, ErrEvaluationIncomplete
 	}
-	return EvaluationReport{
+	report := EvaluationReport{
+		SchemaVersion: EvaluationReportSchemaVersion, ContractVersion: EvaluationReportContractVersion,
 		Run: run, Evidence: terminal.Terminal.Evidence, Result: terminal.Terminal.Result,
-		TerminalEventID: terminal.ID, TerminalSHA256: digest,
-	}, nil
+		TerminalEventID: terminal.ID, TerminalEventIDs: slices.Clone(terminal.Terminal.EventIDs),
+		TerminalCreatedAt: terminal.CreatedAt.UTC(), TerminalSHA256: digest,
+	}
+	report.SHA256 = EvaluationReportSHA256(report)
+	if ValidateEvaluationReport(report) != nil {
+		return EvaluationReport{}, ErrEvaluationIncomplete
+	}
+	return report, nil
 }
 
 func evaluationLedgerRun(request EvaluationRequest, authoritySHA256, proposerSHA256 string) LedgerRun {

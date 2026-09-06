@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+const (
+	EvaluationReportSchemaVersion   = 1
+	EvaluationReportContractVersion = "filler-spoken-safety-evaluation-report-v1"
+)
+
 var (
 	// ErrEvaluationInvalid reports an invalid operation dependency or request
 	// without carrying source identity, paths, or provider detail.
@@ -33,11 +38,16 @@ type EvaluationRequest struct {
 
 // EvaluationReport is the canonical path-free result of one terminal run.
 type EvaluationReport struct {
-	Run             LedgerRun
-	Evidence        Evidence
-	Result          Result
-	TerminalEventID string
-	TerminalSHA256  string
+	SchemaVersion     int       `json:"schemaVersion"`
+	ContractVersion   string    `json:"contractVersion"`
+	Run               LedgerRun `json:"run"`
+	Evidence          Evidence  `json:"evidence"`
+	Result            Result    `json:"result"`
+	TerminalEventID   string    `json:"terminalEventId"`
+	TerminalEventIDs  []string  `json:"terminalEventIds"`
+	TerminalCreatedAt time.Time `json:"terminalCreatedAt"`
+	TerminalSHA256    string    `json:"terminalSha256"`
+	SHA256            string    `json:"sha256"`
 }
 
 // HostedCallBudget carries the existing V62 spend ceilings into the domain-
