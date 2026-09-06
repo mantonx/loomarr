@@ -14,59 +14,24 @@ import (
 	"github.com/loomarr/loomarr/internal/filler"
 	"github.com/loomarr/loomarr/internal/store"
 	"github.com/loomarr/loomarr/internal/testkit"
+	"github.com/loomarr/loomarr/internal/testkit/recordfixture"
 )
 
-// fakeDL records which sources it was handed and returns scripted results.
-type fakeDL struct {
-	got     []clipfetch.Source
-	fetched int
-	err     error
+type downloaderFunc func(context.Context, clipfetch.Source, string) (clipfetch.DownloadResult, error)
+
+func (f downloaderFunc) Download(ctx context.Context, src clipfetch.Source, dir string) (clipfetch.DownloadResult, error) {
+	return f(ctx, src, dir)
 }
 
-type outputDL struct{ missingSidecar bool }
+type artifactWriterFunc func(context.Context, []filler.AcquisitionArtifact) error
 
-func (d outputDL) Download(_ context.Context, _ clipfetch.Source, dir string) (clipfetch.DownloadResult, error) {
-	media := filepath.Join(dir, "download.mp4")
-	if err := os.WriteFile(media, []byte("downloaded video bytes"), 0o600); err != nil {
-		return clipfetch.DownloadResult{}, err
-	}
-	digest, clipHash := strings.Repeat("a", 64), strings.Repeat("b", 64)
-	output := clipfetch.Output{MediaPath: media, SHA256: digest, Bytes: 22, ClipHash: clipHash}
-	if d.missingSidecar {
-		output.Repair = "missing sidecar"
-		return clipfetch.DownloadResult{Fetched: 1, Outputs: []clipfetch.Output{output}}, errors.New("missing sidecar")
-	}
-	sidecar := filepath.Join(dir, "download.info.json")
-	if err := os.WriteFile(sidecar, []byte(`{"loomarr":{"fetchedBy":"loomarr"}}`), 0o600); err != nil {
-		return clipfetch.DownloadResult{}, err
-	}
-	output.SidecarPath = sidecar
-	return clipfetch.DownloadResult{Fetched: 1, Outputs: []clipfetch.Output{output}}, nil
+type downloadRequest struct {
+	source clipfetch.Source
+	dir    string
 }
 
-type recordingArtifactWriter struct {
-	t          *testing.T
-	root       string
-	snapshots  [][]filler.AcquisitionArtifact
-	targetSeen bool
-}
-
-func (w *recordingArtifactWriter) UpsertAcquisitionArtifacts(_ context.Context, artifacts []filler.AcquisitionArtifact) error {
-	if len(w.snapshots) == 0 {
-		if _, err := os.Stat(filepath.Join(w.root, "download.mp4")); err == nil {
-			w.targetSeen = true
-		}
-	}
-	w.snapshots = append(w.snapshots, append([]filler.AcquisitionArtifact(nil), artifacts...))
-	return nil
-}
-
-func (f *fakeDL) Download(_ context.Context, src clipfetch.Source, _ string) (clipfetch.DownloadResult, error) {
-	f.got = append(f.got, src)
-	if f.err != nil {
-		return clipfetch.DownloadResult{}, f.err
-	}
-	return clipfetch.DownloadResult{Fetched: f.fetched}, nil
+func (f artifactWriterFunc) UpsertAcquisitionArtifacts(ctx context.Context, artifacts []filler.AcquisitionArtifact) error {
+	return f(ctx, artifacts)
 }
 
 func discardLog() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -87,18 +52,28 @@ func TestKindForURL(t *testing.T) {
 
 // Run dispatches each source to the downloader for its kind.
 func TestRun_DispatchesByKind(t *testing.T) {
-	yt, arch := &fakeDL{fetched: 2}, &fakeDL{fetched: 5}
-	ing := clipfetch.New(yt, arch, "/drop", discardLog())
+	var yt, arch recordfixture.Recorder[clipfetch.Source, clipfetch.DownloadResult]
+	yt.Respond = func(clipfetch.Source) (clipfetch.DownloadResult, error) {
+		return clipfetch.DownloadResult{Fetched: 2}, nil
+	}
+	arch.Respond = func(clipfetch.Source) (clipfetch.DownloadResult, error) {
+		return clipfetch.DownloadResult{Fetched: 5}, nil
+	}
+	ing := clipfetch.New(downloaderFunc(func(_ context.Context, src clipfetch.Source, attemptDir string) (clipfetch.DownloadResult, error) {
+		return yt.Call(src)
+	}), downloaderFunc(func(_ context.Context, src clipfetch.Source, _ string) (clipfetch.DownloadResult, error) {
+		return arch.Call(src)
+	}), "/drop", discardLog())
 
 	res := ing.Run(context.Background(), []clipfetch.Source{
 		{Kind: clipfetch.YouTube, URL: "https://youtube.com/playlist?list=a"},
 		{Kind: clipfetch.Archive, URL: "https://archive.org/details/x"},
 	})
-	if len(yt.got) != 1 || yt.got[0].Kind != clipfetch.YouTube {
-		t.Errorf("youtube downloader got %+v", yt.got)
+	if len(yt.Inputs()) != 1 || yt.Inputs()[0].Kind != clipfetch.YouTube {
+		t.Errorf("youtube downloader got %+v", yt.Inputs())
 	}
-	if len(arch.got) != 1 || arch.got[0].Kind != clipfetch.Archive {
-		t.Errorf("archive downloader got %+v", arch.got)
+	if len(arch.Inputs()) != 1 || arch.Inputs()[0].Kind != clipfetch.Archive {
+		t.Errorf("archive downloader got %+v", arch.Inputs())
 	}
 	if res.Fetched != 7 { // 2 + 5
 		t.Errorf("fetched = %d, want 7", res.Fetched)
@@ -107,9 +82,18 @@ func TestRun_DispatchesByKind(t *testing.T) {
 
 // A failing source is counted and logged, never fatal — the rest still run.
 func TestRun_ResilientToSourceFailure(t *testing.T) {
-	yt := &fakeDL{err: errors.New("playlist gone")}
-	arch := &fakeDL{fetched: 3}
-	ing := clipfetch.New(yt, arch, "/drop", discardLog())
+	var yt, arch recordfixture.Recorder[clipfetch.Source, clipfetch.DownloadResult]
+	yt.Respond = func(clipfetch.Source) (clipfetch.DownloadResult, error) {
+		return clipfetch.DownloadResult{}, errors.New("playlist gone")
+	}
+	arch.Respond = func(clipfetch.Source) (clipfetch.DownloadResult, error) {
+		return clipfetch.DownloadResult{Fetched: 3}, nil
+	}
+	ing := clipfetch.New(downloaderFunc(func(_ context.Context, src clipfetch.Source, attemptDir string) (clipfetch.DownloadResult, error) {
+		return yt.Call(src)
+	}), downloaderFunc(func(_ context.Context, src clipfetch.Source, _ string) (clipfetch.DownloadResult, error) {
+		return arch.Call(src)
+	}), "/drop", discardLog())
 
 	res := ing.Run(context.Background(), []clipfetch.Source{
 		{Kind: clipfetch.YouTube, URL: "https://youtube.com/bad"},
@@ -128,9 +112,16 @@ func TestRun_ResilientToSourceFailure(t *testing.T) {
 // as Empty, not silently reported as success. Otherwise the operator sees
 // "fetched:0 failed:0" with no reason why nothing landed.
 func TestRun_EmptySourceIsSurfaced(t *testing.T) {
-	empty := &fakeDL{fetched: 0} // no error, nothing fetched — the silent case
-	good := &fakeDL{fetched: 2}
-	ing := clipfetch.New(empty, good, "/drop", discardLog())
+	var empty, good recordfixture.Recorder[clipfetch.Source, clipfetch.DownloadResult]
+	empty.Respond = func(clipfetch.Source) (clipfetch.DownloadResult, error) { return clipfetch.DownloadResult{}, nil } // no error, nothing fetched — the silent case
+	good.Respond = func(clipfetch.Source) (clipfetch.DownloadResult, error) {
+		return clipfetch.DownloadResult{Fetched: 2}, nil
+	}
+	ing := clipfetch.New(downloaderFunc(func(_ context.Context, src clipfetch.Source, attemptDir string) (clipfetch.DownloadResult, error) {
+		return empty.Call(src)
+	}), downloaderFunc(func(_ context.Context, src clipfetch.Source, _ string) (clipfetch.DownloadResult, error) {
+		return good.Call(src)
+	}), "/drop", discardLog())
 
 	res := ing.Run(context.Background(), []clipfetch.Source{
 		{Kind: clipfetch.YouTube, URL: "https://youtube.com/nonexistent"},
@@ -149,8 +140,35 @@ func TestRun_EmptySourceIsSurfaced(t *testing.T) {
 
 func TestRun_PersistsExactManifestBeforePublishing(t *testing.T) {
 	dir := t.TempDir()
-	writer := &recordingArtifactWriter{t: t, root: dir}
-	ing := clipfetch.New(outputDL{}, nil, dir, discardLog()).WithArtifactWriter(writer)
+	var writer recordfixture.Recorder[[]filler.AcquisitionArtifact, struct{}]
+	targetSeen := false
+	writer.Respond = func(artifacts []filler.AcquisitionArtifact) (struct{}, error) {
+		if writer.Calls() == 1 {
+			if _, err := os.Stat(filepath.Join(dir, "download.mp4")); err == nil {
+				targetSeen = true
+			}
+		}
+		return struct{}{}, nil
+	}
+	var downloader recordfixture.Recorder[downloadRequest, clipfetch.DownloadResult]
+	downloader.Respond = func(req downloadRequest) (clipfetch.DownloadResult, error) {
+		media := filepath.Join(req.dir, "download.mp4")
+		if err := os.WriteFile(media, []byte("downloaded video bytes"), 0o600); err != nil {
+			return clipfetch.DownloadResult{}, err
+		}
+		digest, clipHash := strings.Repeat("a", 64), strings.Repeat("b", 64)
+		sidecar := filepath.Join(req.dir, "download.info.json")
+		if err := os.WriteFile(sidecar, []byte(`{"loomarr":{"fetchedBy":"loomarr"}}`), 0o600); err != nil {
+			return clipfetch.DownloadResult{}, err
+		}
+		return clipfetch.DownloadResult{Fetched: 1, Outputs: []clipfetch.Output{{MediaPath: media, SidecarPath: sidecar, SHA256: digest, Bytes: 22, ClipHash: clipHash}}}, nil
+	}
+	ing := clipfetch.New(downloaderFunc(func(_ context.Context, src clipfetch.Source, attemptDir string) (clipfetch.DownloadResult, error) {
+		return downloader.Call(downloadRequest{source: src, dir: attemptDir})
+	}), nil, dir, discardLog()).WithArtifactWriter(artifactWriterFunc(func(ctx context.Context, artifacts []filler.AcquisitionArtifact) error {
+		_, err := writer.Call(append([]filler.AcquisitionArtifact(nil), artifacts...))
+		return err
+	}))
 
 	res := ing.Run(t.Context(), []clipfetch.Source{{
 		ID: "youtube:classic", AcquisitionID: "acq-1", Kind: clipfetch.YouTube,
@@ -159,11 +177,12 @@ func TestRun_PersistsExactManifestBeforePublishing(t *testing.T) {
 	if res.Failed != 0 || res.Fetched != 1 || len(res.Artifacts) != 1 {
 		t.Fatalf("result = %+v, want one published artifact", res)
 	}
-	if writer.targetSeen {
+	if targetSeen {
 		t.Fatal("download became intake-visible before its manifest was durable")
 	}
-	if len(writer.snapshots) != 2 || writer.snapshots[0][0].State != filler.ArtifactStaged || writer.snapshots[1][0].State != filler.ArtifactPublished {
-		t.Fatalf("manifest snapshots = %+v, want staged then published", writer.snapshots)
+	snapshots := writer.Inputs()
+	if len(snapshots) != 2 || snapshots[0][0].State != filler.ArtifactStaged || snapshots[1][0].State != filler.ArtifactPublished {
+		t.Fatalf("manifest snapshots = %+v, want staged then published", snapshots)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "download.mp4")); err != nil {
 		t.Fatalf("published media: %v", err)
@@ -172,8 +191,22 @@ func TestRun_PersistsExactManifestBeforePublishing(t *testing.T) {
 
 func TestRun_MissingProvenanceRemainsInHiddenRepairQuarantine(t *testing.T) {
 	dir := t.TempDir()
-	writer := &recordingArtifactWriter{t: t, root: dir}
-	ing := clipfetch.New(outputDL{missingSidecar: true}, nil, dir, discardLog()).WithArtifactWriter(writer)
+	var writer recordfixture.Recorder[[]filler.AcquisitionArtifact, struct{}]
+	writer.Respond = func([]filler.AcquisitionArtifact) (struct{}, error) { return struct{}{}, nil }
+	var downloader recordfixture.Recorder[downloadRequest, clipfetch.DownloadResult]
+	downloader.Respond = func(req downloadRequest) (clipfetch.DownloadResult, error) {
+		media := filepath.Join(req.dir, "download.mp4")
+		if err := os.WriteFile(media, []byte("downloaded video bytes"), 0o600); err != nil {
+			return clipfetch.DownloadResult{}, err
+		}
+		return clipfetch.DownloadResult{Fetched: 1, Outputs: []clipfetch.Output{{MediaPath: media, SHA256: strings.Repeat("a", 64), Bytes: 22, ClipHash: strings.Repeat("b", 64), Repair: "missing sidecar"}}}, errors.New("missing sidecar")
+	}
+	ing := clipfetch.New(downloaderFunc(func(_ context.Context, src clipfetch.Source, attemptDir string) (clipfetch.DownloadResult, error) {
+		return downloader.Call(downloadRequest{source: src, dir: attemptDir})
+	}), nil, dir, discardLog()).WithArtifactWriter(artifactWriterFunc(func(ctx context.Context, artifacts []filler.AcquisitionArtifact) error {
+		_, err := writer.Call(append([]filler.AcquisitionArtifact(nil), artifacts...))
+		return err
+	}))
 
 	res := ing.Run(t.Context(), []clipfetch.Source{{
 		ID: "youtube:classic", AcquisitionID: "acq-1", Kind: clipfetch.YouTube,

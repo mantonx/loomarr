@@ -101,6 +101,17 @@ func (s *sqlStore) AcquisitionArtifactForClip(
 // ListRecoverableAcquisitionArtifacts returns bounded non-consumed rows for startup and explicit
 // repair. It includes repair rows because they retain bytes and an actionable reason.
 func (s *sqlStore) ListRecoverableAcquisitionArtifacts(ctx context.Context, limit int) ([]filler.AcquisitionArtifact, error) {
+	return s.listRecoverableAcquisitionArtifacts(ctx, filler.AcquisitionArtifactCursor{}, limit)
+}
+
+// ListRecoverableAcquisitionArtifactsAfter continues a stable oldest-first scan. Recovery may
+// update a row's timestamp, so its cursor is captured before processing rather than inferred from
+// the row subsequently persisted.
+func (s *sqlStore) ListRecoverableAcquisitionArtifactsAfter(ctx context.Context, after filler.AcquisitionArtifactCursor, limit int) ([]filler.AcquisitionArtifact, error) {
+	return s.listRecoverableAcquisitionArtifacts(ctx, after, limit)
+}
+
+func (s *sqlStore) listRecoverableAcquisitionArtifacts(ctx context.Context, after filler.AcquisitionArtifactCursor, limit int) ([]filler.AcquisitionArtifact, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -109,7 +120,8 @@ func (s *sqlStore) ListRecoverableAcquisitionArtifacts(ctx context.Context, limi
 	}
 	states := []string{string(filler.ArtifactStaged), string(filler.ArtifactPublished), string(filler.ArtifactRepair)}
 	rows, err := s.db.QueryContext(ctx, s.ph(acquisitionArtifactSelect+`
-		WHERE state IN (?, ?, ?) ORDER BY updated_at, id LIMIT ?`), states[0], states[1], states[2], limit)
+		WHERE state IN (?, ?, ?) AND (updated_at > ? OR (updated_at = ? AND id > ?))
+		ORDER BY updated_at, id LIMIT ?`), states[0], states[1], states[2], epoch(after.UpdatedAt), epoch(after.UpdatedAt), after.ID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list recoverable filler acquisition artifacts: %w", err)
 	}

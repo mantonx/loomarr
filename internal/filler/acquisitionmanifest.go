@@ -41,6 +41,13 @@ type AcquisitionArtifact struct {
 	UpdatedAt     time.Time
 }
 
+// AcquisitionArtifactCursor is the stable ordering boundary for bounded recovery scans.
+// It deliberately uses the immutable scan key captured before recovery mutates a manifest.
+type AcquisitionArtifactCursor struct {
+	UpdatedAt time.Time
+	ID        string
+}
+
 // Validate rejects manifests that could widen filesystem authority or fail to identify exact
 // bytes. State-specific filesystem checks remain at publication/intake, where the files exist.
 func (a AcquisitionArtifact) Validate() error {

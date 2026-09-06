@@ -15,7 +15,7 @@ import (
 // ArtifactRecoveryStore is the persistence slice needed to resume staged publication.
 type ArtifactRecoveryStore interface {
 	ArtifactWriter
-	ListRecoverableAcquisitionArtifacts(context.Context, int) ([]filler.AcquisitionArtifact, error)
+	ListRecoverableAcquisitionArtifactsAfter(context.Context, filler.AcquisitionArtifactCursor, int) ([]filler.AcquisitionArtifact, error)
 }
 
 type RecoveryResult struct {
@@ -40,95 +40,101 @@ func RecoverAcquisitionArtifacts(
 	if now == nil {
 		now = time.Now
 	}
-	artifacts, err := store.ListRecoverableAcquisitionArtifacts(ctx, 500)
-	if err != nil {
-		return result, err
-	}
-	for _, artifact := range artifacts {
-		select {
-		case <-ctx.Done():
-			return result, ctx.Err()
-		default:
+	var cursor filler.AcquisitionArtifactCursor
+	for {
+		artifacts, err := store.ListRecoverableAcquisitionArtifactsAfter(ctx, cursor, 500)
+		if err != nil {
+			return result, err
 		}
-		if artifact.State == filler.ArtifactRepair {
-			result.Repair++
-			continue
+		if len(artifacts) == 0 {
+			return result, nil
 		}
-		if artifact.State == filler.ArtifactPublished {
-			mediaErr := verifyManifestFile(filepath.Join(watchDir, artifact.MediaPath), artifact)
-			sidecarErr := verifyPortableProvenance(filepath.Join(watchDir, artifact.SidecarPath), artifact)
-			if err := errors.Join(mediaErr, sidecarErr); err != nil {
+		for _, artifact := range artifacts {
+			cursor = filler.AcquisitionArtifactCursor{UpdatedAt: artifact.UpdatedAt, ID: artifact.ID}
+			select {
+			case <-ctx.Done():
+				return result, ctx.Err()
+			default:
+			}
+			if artifact.State == filler.ArtifactRepair {
+				result.Repair++
+				continue
+			}
+			if artifact.State == filler.ArtifactPublished {
+				mediaErr := verifyManifestFile(filepath.Join(watchDir, artifact.MediaPath), artifact)
+				sidecarErr := verifyPortableProvenance(filepath.Join(watchDir, artifact.SidecarPath), artifact)
+				if err := errors.Join(mediaErr, sidecarErr); err != nil {
+					if consumed, consumedErr := recoverConsumedArtifact(clipDir, artifact, now()); consumedErr == nil {
+						if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{consumed}); err != nil {
+							return result, err
+						}
+						continue
+					}
+					artifact = repairArtifact(artifact, "published artifact validation: "+err.Error(), now())
+					if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{artifact}); err != nil {
+						return result, err
+					}
+					result.Repair++
+				} else {
+					result.Pending++ // intake owns the published -> consumed transition
+				}
+				continue
+			}
+
+			stageMedia := filepath.Join(watchDir, artifact.StagingPath)
+			if err := verifyManifestFile(stageMedia, artifact); err != nil {
+				// A crash may have happened after media publication but before its acknowledgement.
+				targetMedia := filepath.Join(watchDir, artifact.MediaPath)
+				targetSidecar := filepath.Join(watchDir, artifact.SidecarPath)
+				if targetErr := errors.Join(verifyManifestFile(targetMedia, artifact), verifyPortableProvenance(targetSidecar, artifact)); targetErr == nil {
+					artifact.State = filler.ArtifactPublished
+					artifact.UpdatedAt = now().UTC()
+					if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{artifact}); err != nil {
+						return result, err
+					}
+					result.Pending++
+					continue
+				}
 				if consumed, consumedErr := recoverConsumedArtifact(clipDir, artifact, now()); consumedErr == nil {
 					if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{consumed}); err != nil {
 						return result, err
 					}
 					continue
 				}
-				artifact = repairArtifact(artifact, "published artifact validation: "+err.Error(), now())
+				artifact = repairArtifact(artifact, "staged artifact validation: "+err.Error(), now())
 				if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{artifact}); err != nil {
 					return result, err
 				}
 				result.Repair++
-			} else {
-				result.Pending++ // intake owns the published -> consumed transition
+				continue
 			}
-			continue
-		}
 
-		stageMedia := filepath.Join(watchDir, artifact.StagingPath)
-		if err := verifyManifestFile(stageMedia, artifact); err != nil {
-			// A crash may have happened after media publication but before its acknowledgement.
-			targetMedia := filepath.Join(watchDir, artifact.MediaPath)
+			stageSidecar := strings.TrimSuffix(stageMedia, filepath.Ext(stageMedia)) + ".info.json"
 			targetSidecar := filepath.Join(watchDir, artifact.SidecarPath)
-			if targetErr := errors.Join(verifyManifestFile(targetMedia, artifact), verifyPortableProvenance(targetSidecar, artifact)); targetErr == nil {
-				artifact.State = filler.ArtifactPublished
-				artifact.UpdatedAt = now().UTC()
+			if err := recoverSidecar(stageSidecar, targetSidecar, artifact); err != nil {
+				artifact = repairArtifact(artifact, "staged sidecar validation: "+err.Error(), now())
 				if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{artifact}); err != nil {
 					return result, err
 				}
-				result.Pending++
+				result.Repair++
 				continue
 			}
-			if consumed, consumedErr := recoverConsumedArtifact(clipDir, artifact, now()); consumedErr == nil {
-				if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{consumed}); err != nil {
+			if err := publishFile(stageMedia, filepath.Join(watchDir, artifact.MediaPath)); err != nil {
+				artifact = repairArtifact(artifact, "resume media publication: "+err.Error(), now())
+				if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{artifact}); err != nil {
 					return result, err
 				}
+				result.Repair++
 				continue
 			}
-			artifact = repairArtifact(artifact, "staged artifact validation: "+err.Error(), now())
+			artifact.State = filler.ArtifactPublished
+			artifact.UpdatedAt = now().UTC()
 			if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{artifact}); err != nil {
 				return result, err
 			}
-			result.Repair++
-			continue
+			result.Published++
 		}
-
-		stageSidecar := strings.TrimSuffix(stageMedia, filepath.Ext(stageMedia)) + ".info.json"
-		targetSidecar := filepath.Join(watchDir, artifact.SidecarPath)
-		if err := recoverSidecar(stageSidecar, targetSidecar, artifact); err != nil {
-			artifact = repairArtifact(artifact, "staged sidecar validation: "+err.Error(), now())
-			if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{artifact}); err != nil {
-				return result, err
-			}
-			result.Repair++
-			continue
-		}
-		if err := publishFile(stageMedia, filepath.Join(watchDir, artifact.MediaPath)); err != nil {
-			artifact = repairArtifact(artifact, "resume media publication: "+err.Error(), now())
-			if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{artifact}); err != nil {
-				return result, err
-			}
-			result.Repair++
-			continue
-		}
-		artifact.State = filler.ArtifactPublished
-		artifact.UpdatedAt = now().UTC()
-		if err := store.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{artifact}); err != nil {
-			return result, err
-		}
-		result.Published++
 	}
-	return result, nil
 }
 
 func recoverConsumedArtifact(clipDir string, artifact filler.AcquisitionArtifact, at time.Time) (filler.AcquisitionArtifact, error) {
@@ -144,7 +150,20 @@ func recoverConsumedArtifact(clipDir string, artifact filler.AcquisitionArtifact
 	}
 	sidecar := strings.TrimSuffix(media, filepath.Ext(media)) + ".info.json"
 	if err := verifyPortableProvenance(sidecar, artifact); err != nil {
-		return artifact, err
+		if !errors.Is(err, os.ErrNotExist) {
+			return artifact, err
+		}
+		// The durable manifest has just revalidated the exact catalog bytes. Only a
+		// missing sidecar is repairable: malformed, symlinked, or substituted files
+		// remain held rather than being overwritten.
+		if err := filler.WriteSidecarTags(media, filler.SidecarTags{
+			SourceID: artifact.SourceID, AcquisitionID: artifact.AcquisitionID,
+		}, true); err != nil {
+			return artifact, err
+		}
+		if err := verifyPortableProvenance(sidecar, artifact); err != nil {
+			return artifact, err
+		}
 	}
 	relative, err := filepath.Rel(clipDir, media)
 	if err != nil || !withinDir(relative) {

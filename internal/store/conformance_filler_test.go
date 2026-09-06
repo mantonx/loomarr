@@ -1253,6 +1253,10 @@ func testFillerAcquisitionArtifacts(t *testing.T, newStore NewStoreFunc) {
 	if err := s.UpsertAcquisitionArtifacts(ctx, artifacts); err != nil {
 		t.Fatal(err)
 	}
+	page, err := s.ListRecoverableAcquisitionArtifactsAfter(ctx, filler.AcquisitionArtifactCursor{UpdatedAt: now, ID: artifacts[0].ID}, 10)
+	if err != nil || len(page) != 1 || page[0].ID != artifacts[1].ID {
+		t.Fatalf("recoverable page after first artifact = %+v, %v", page, err)
+	}
 	got, found, err := s.AcquisitionArtifactForClip(ctx, "one.mp4", "")
 	if err != nil || !found || got != artifacts[0] {
 		t.Fatalf("artifact by path = %+v, %v, %v; want %+v", got, found, err, artifacts[0])
