@@ -8,8 +8,9 @@ import (
 func TestSegmentScreeningAxisEvidenceBindsRawBytesAndExactSpan(t *testing.T) {
 	subject := screeningSubjectFixture(t)
 	recorded, err := NewSegmentScreeningAxisEvidence(
-		subject, screeningProfileFixture(ScreenVisualSafety, "1"),
-		ScreenHold, "manual_review", []byte(`{"detections":[]}`),
+		subject, screeningProfileFixture(ScreenVisualSafety, "1"), ScreenHold, "manual_review",
+		screeningSuitabilityForOutcome(subject, screeningProfileFixture(ScreenVisualSafety, "1"), ScreenHold, []byte(`{"detections":[]}`)),
+		[]byte(`{"detections":[]}`),
 		time.Date(2026, time.September, 12, 6, 0, 0, 0, time.UTC),
 	)
 	if err != nil {
@@ -28,6 +29,7 @@ func TestSegmentScreeningAxisEvidenceBindsRawBytesAndExactSpan(t *testing.T) {
 		{name: "subject", mutate: func(item *RecordedSegmentScreeningAxisEvidence) { item.Evidence.SubjectSHA256 = "" }},
 		{name: "profile", mutate: func(item *RecordedSegmentScreeningAxisEvidence) { item.Evidence.Profile.PolicySHA256 = "" }},
 		{name: "outcome", mutate: func(item *RecordedSegmentScreeningAxisEvidence) { item.Evidence.Outcome = "maybe" }},
+		{name: "suitability", mutate: func(item *RecordedSegmentScreeningAxisEvidence) { item.Evidence.Suitability.SubjectSHA256 = "" }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

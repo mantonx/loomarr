@@ -164,7 +164,7 @@ func (e *FillerRightsEvaluator) Evaluate(ctx context.Context, media SegmentScree
 	if err != nil {
 		return RecordedSegmentScreeningAxisEvidence{}, fmt.Errorf("marshal filler rights evidence: %w", err)
 	}
-	return NewSegmentScreeningAxisEvidence(media.Subject, e.profile, outcome, reasonCode, raw, at)
+	return NewSegmentScreeningAxisEvidence(media.Subject, e.profile, outcome, reasonCode, nil, raw, at)
 }
 
 func validFillerRightsUseRequest(request FillerRightsUseRequest) bool {

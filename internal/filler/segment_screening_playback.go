@@ -123,7 +123,7 @@ func (e *PlaybackIntegrityEvaluator) Evaluate(ctx context.Context, media Segment
 		}
 		return replayed, nil
 	}
-	return NewSegmentScreeningAxisEvidence(media.Subject, e.profile, outcome, reasonCode, raw, e.now())
+	return NewSegmentScreeningAxisEvidence(media.Subject, e.profile, outcome, reasonCode, nil, raw, e.now())
 }
 
 func playbackArtifactHoldReason(observation segmentScreeningArtifactObservation) string {

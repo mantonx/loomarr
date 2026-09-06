@@ -9,21 +9,25 @@ import (
 	"reflect"
 	"slices"
 	"time"
+
+	"github.com/loomarr/loomarr/internal/fillerairworthiness"
 )
 
 const (
-	SegmentScreeningReleaseSchemaVersion   = 3
-	SegmentScreeningReleaseContractVersion = "filler-rendered-child-screening-release-v3"
+	SegmentScreeningReleaseSchemaVersion   = 4
+	SegmentScreeningReleaseContractVersion = "filler-rendered-child-screening-release-v4"
 )
 
 type SegmentScreeningReleaseAuthority struct {
-	SchemaVersion              int                           `json:"schemaVersion"`
-	ContractVersion            string                        `json:"contractVersion"`
-	CertificateSHA256          string                        `json:"certificateSha256"`
-	AggregateContractVersion   string                        `json:"aggregateContractVersion"`
-	Profiles                   []SegmentScreeningAxisProfile `json:"profiles"`
-	ProductionAdmissionAllowed bool                          `json:"productionAdmissionAllowed"`
-	SHA256                     string                        `json:"sha256"`
+	SchemaVersion                int                           `json:"schemaVersion"`
+	ContractVersion              string                        `json:"contractVersion"`
+	CertificateSHA256            string                        `json:"certificateSha256"`
+	AggregateContractVersion     string                        `json:"aggregateContractVersion"`
+	Profiles                     []SegmentScreeningAxisProfile `json:"profiles"`
+	AirworthinessProfile         fillerairworthiness.Profile   `json:"airworthinessProfile"`
+	AirworthinessAuthoritySHA256 string                        `json:"airworthinessAuthoritySha256"`
+	ProductionAdmissionAllowed   bool                          `json:"productionAdmissionAllowed"`
+	SHA256                       string                        `json:"sha256"`
 }
 
 type SegmentScreeningCertificationEvidenceReader interface {
@@ -81,6 +85,7 @@ func (c *SegmentScreeningCertification) Verify(ctx context.Context, aggregate Se
 		return fmt.Errorf("segment screening aggregate does not reproduce persisted evidence")
 	}
 	profiles := make([]SegmentScreeningAxisProfile, 0, len(aggregate.Results))
+	records := make([]RecordedSegmentScreeningAxisEvidence, 0, len(aggregate.Results))
 	for index, result := range aggregate.Results {
 		recorded, err := c.evidence.GetSegmentScreeningAxisEvidence(ctx, result.AuthoritySHA256)
 		if err != nil {
@@ -96,10 +101,16 @@ func (c *SegmentScreeningCertification) Verify(ctx context.Context, aggregate Se
 			return fmt.Errorf("segment screening axis %q is not the settled subject/profile operation", result.Axis)
 		}
 		profiles = append(profiles, recorded.Evidence.Profile)
+		records = append(records, recorded)
 	}
 	canonicalizeSegmentScreeningProfiles(profiles)
 	if !reflect.DeepEqual(profiles, c.authority.Profiles) {
 		return fmt.Errorf("segment screening profiles do not match release authority")
+	}
+	airworthiness, err := NewSegmentAirworthinessEvaluator(c.authority.AirworthinessProfile, profiles)
+	if err != nil || airworthiness.AuthoritySHA256() != c.authority.AirworthinessAuthoritySHA256 ||
+		!segmentAirworthinessMatches(subject, records, airworthiness, aggregate.Airworthiness) {
+		return fmt.Errorf("segment screening Airworthiness does not reproduce release authority")
 	}
 	if err := c.verifyCurrentRights(ctx, subject, profiles); err != nil {
 		return err
@@ -141,7 +152,8 @@ func (c *SegmentScreeningCertification) AuthoritySHA256() string {
 func ValidateSegmentScreeningReleaseAuthority(authority SegmentScreeningReleaseAuthority) error {
 	if authority.SchemaVersion != SegmentScreeningReleaseSchemaVersion || authority.ContractVersion != SegmentScreeningReleaseContractVersion ||
 		!isContentHash(authority.CertificateSHA256) || authority.AggregateContractVersion != SegmentScreeningContractVersion ||
-		len(authority.Profiles) != len(segmentScreeningAxisOrder) || authority.SHA256 != SegmentScreeningReleaseAuthoritySHA256(authority) {
+		len(authority.Profiles) != len(segmentScreeningAxisOrder) || !isContentHash(authority.AirworthinessAuthoritySHA256) ||
+		authority.SHA256 != SegmentScreeningReleaseAuthoritySHA256(authority) {
 		return fmt.Errorf("segment screening release authority identity is invalid")
 	}
 	seen := make(map[SegmentScreeningAxis]struct{}, len(authority.Profiles))
@@ -153,6 +165,10 @@ func ValidateSegmentScreeningReleaseAuthority(authority SegmentScreeningReleaseA
 			return fmt.Errorf("segment screening release repeats an axis profile")
 		}
 		seen[profile.Axis] = struct{}{}
+	}
+	airworthiness, err := NewSegmentAirworthinessEvaluator(authority.AirworthinessProfile, authority.Profiles)
+	if err != nil || airworthiness.AuthoritySHA256() != authority.AirworthinessAuthoritySHA256 {
+		return fmt.Errorf("segment screening release Airworthiness authority is invalid")
 	}
 	return nil
 }

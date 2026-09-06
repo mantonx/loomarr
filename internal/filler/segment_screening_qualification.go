@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/loomarr/loomarr/internal/fillerairworthiness"
 )
 
 const (
@@ -91,7 +93,16 @@ func (e *qualificationSafetyEvaluator) Evaluate(ctx context.Context, media Segme
 		}
 		return replayed, nil
 	}
-	return NewSegmentScreeningAxisEvidence(media.Subject, e.profile, ScreenHold, reasonCode, raw, e.now())
+	profile, err := segmentAirworthinessProfile(e.profile)
+	if err != nil {
+		return RecordedSegmentScreeningAxisEvidence{}, err
+	}
+	suitability := &fillerairworthiness.AxisEvidence{
+		SubjectSHA256: media.Subject.SHA256, Profile: profile,
+		Coverage: fillerairworthiness.CoverageIncomplete, EvidenceSHA256: screeningBytesSHA256(raw),
+		Observations: []fillerairworthiness.Observation{},
+	}
+	return NewSegmentScreeningAxisEvidence(media.Subject, e.profile, ScreenHold, reasonCode, suitability, raw, e.now())
 }
 
 // NewQualificationSegmentScreeningRuntime activates the complete five-axis production boundary
@@ -110,12 +121,14 @@ func NewQualificationSegmentScreeningRuntime(evidenceRoot string, rightsReposito
 		return nil, err
 	}
 	evaluators := make([]SegmentScreeningEvaluator, 0, len(segmentScreeningAxisOrder))
+	safetyProfiles := make([]SegmentScreeningAxisProfile, 0, 3)
 	for _, axis := range []SegmentScreeningAxis{ScreenVisualSafety, ScreenSpokenSafety, ScreenWrittenSafety} {
 		evaluator, evaluatorErr := newQualificationSafetyEvaluator(axis, evidence, now)
 		if evaluatorErr != nil {
 			return nil, evaluatorErr
 		}
 		evaluators = append(evaluators, evaluator)
+		safetyProfiles = append(safetyProfiles, evaluator.profile)
 	}
 	rightsEvaluator, err := NewFillerRightsEvaluator(
 		qualificationSegmentScreeningProfile(ScreenRights, fillerRightsEvidenceContractVersion, qualificationRightsImplementationVersion),
@@ -132,20 +145,28 @@ func NewQualificationSegmentScreeningRuntime(evidenceRoot string, rightsReposito
 		return nil, err
 	}
 	evaluators = append(evaluators, rightsEvaluator, playbackEvaluator)
-	return NewSegmentScreeningRuntime(evaluators, evidence)
+	airworthiness, err := NewSegmentAirworthinessEvaluator(fillerairworthiness.ProfileAllAges, safetyProfiles)
+	if err != nil {
+		return nil, err
+	}
+	return NewSegmentScreeningRuntime(evaluators, evidence, airworthiness)
 }
 
 // qualificationSegmentScreeningProfile hashes explicit built-in, non-authorizing identity
 // documents. In particular the certification hash means "unavailable"; it cannot be confused
 // with or accepted by a later production release authority.
 func qualificationSegmentScreeningProfile(axis SegmentScreeningAxis, evidenceContract, implementationVersion string) SegmentScreeningAxisProfile {
-	return SegmentScreeningAxisProfile{
+	profile := SegmentScreeningAxisProfile{
 		Axis:                 axis,
 		EvidenceContract:     evidenceContract,
 		PolicySHA256:         screeningBytesSHA256([]byte("filler-segment-screening-qualification-policy-v1\x00" + string(axis))),
 		CertificationSHA256:  screeningBytesSHA256([]byte("filler-segment-screening-certification-unavailable-v1\x00" + string(axis))),
 		ImplementationSHA256: screeningBytesSHA256([]byte(implementationVersion + "\x00" + string(axis))),
 	}
+	if _, safety := airworthinessAxis(axis); safety {
+		profile.CertifiedSuitabilityFlags = []fillerairworthiness.Flag{}
+	}
+	return profile
 }
 
 var _ SegmentScreeningEvaluator = (*qualificationSafetyEvaluator)(nil)

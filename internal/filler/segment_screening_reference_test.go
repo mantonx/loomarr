@@ -71,7 +71,7 @@ func screeningAggregateFixture(t *testing.T, subject SegmentScreeningSubject) Se
 	for _, recorded := range records {
 		results = append(results, recorded.Evidence.Result())
 	}
-	aggregate, err := NewSegmentScreeningEvidence(subject, results, time.Date(2026, time.September, 12, 4, 0, 0, 0, time.UTC))
+	aggregate, err := NewSegmentScreeningEvidence(subject, results, screeningAirworthinessDecision(t, subject, records), time.Date(2026, time.September, 12, 4, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}

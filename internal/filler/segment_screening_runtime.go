@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"time"
+
+	"github.com/loomarr/loomarr/internal/fillerairworthiness"
 )
 
 // SegmentScreeningMedia supplies an evaluator with the exact rendered-child artifacts named by
@@ -28,13 +30,14 @@ type SegmentScreeningEvaluator interface {
 // durable first, then records exactly one result for each independent axis before publishing the
 // aggregate. It does not interpret an axis result or turn a hold into a pass.
 type SegmentScreeningRuntime struct {
-	evaluators []SegmentScreeningEvaluator
-	evidence   SegmentScreeningEvidenceRepository
+	evaluators    []SegmentScreeningEvaluator
+	evidence      SegmentScreeningEvidenceRepository
+	airworthiness *fillerairworthiness.Evaluator
 }
 
-func NewSegmentScreeningRuntime(evaluators []SegmentScreeningEvaluator, evidence SegmentScreeningEvidenceRepository) (*SegmentScreeningRuntime, error) {
-	if len(evaluators) != len(segmentScreeningAxisOrder) || evidence == nil {
-		return nil, fmt.Errorf("segment screening runtime requires five evaluators and evidence repository")
+func NewSegmentScreeningRuntime(evaluators []SegmentScreeningEvaluator, evidence SegmentScreeningEvidenceRepository, airworthiness *fillerairworthiness.Evaluator) (*SegmentScreeningRuntime, error) {
+	if len(evaluators) != len(segmentScreeningAxisOrder) || evidence == nil || airworthiness == nil {
+		return nil, fmt.Errorf("segment screening runtime requires five evaluators, evidence repository, and Airworthiness policy")
 	}
 	byAxis := make(map[SegmentScreeningAxis]SegmentScreeningEvaluator, len(evaluators))
 	for _, evaluator := range evaluators {
@@ -58,11 +61,11 @@ func NewSegmentScreeningRuntime(evaluators []SegmentScreeningEvaluator, evidence
 		}
 		ordered = append(ordered, evaluator)
 	}
-	return &SegmentScreeningRuntime{evaluators: ordered, evidence: evidence}, nil
+	return &SegmentScreeningRuntime{evaluators: ordered, evidence: evidence, airworthiness: airworthiness}, nil
 }
 
 func (r *SegmentScreeningRuntime) Screen(ctx context.Context, media SegmentScreeningMedia) (SegmentScreeningEvidence, error) {
-	if r == nil || len(r.evaluators) != len(segmentScreeningAxisOrder) || r.evidence == nil {
+	if r == nil || len(r.evaluators) != len(segmentScreeningAxisOrder) || r.evidence == nil || r.airworthiness == nil {
 		return SegmentScreeningEvidence{}, fmt.Errorf("segment screening runtime is unavailable")
 	}
 	if err := validateSegmentScreeningMedia(media); err != nil {
@@ -76,6 +79,7 @@ func (r *SegmentScreeningRuntime) Screen(ctx context.Context, media SegmentScree
 	}
 
 	results := make([]SegmentScreeningResult, 0, len(r.evaluators))
+	records := make([]RecordedSegmentScreeningAxisEvidence, 0, len(r.evaluators))
 	var aggregateAssessedAt time.Time
 	for index, evaluator := range r.evaluators {
 		if err := ctx.Err(); err != nil {
@@ -96,11 +100,16 @@ func (r *SegmentScreeningRuntime) Screen(ctx context.Context, media SegmentScree
 			return SegmentScreeningEvidence{}, fmt.Errorf("persist screen child axis %q: %w", evaluator.Axis(), err)
 		}
 		results = append(results, result)
+		records = append(records, recorded)
 		if recorded.Evidence.AssessedAt.After(aggregateAssessedAt) {
 			aggregateAssessedAt = recorded.Evidence.AssessedAt
 		}
 	}
-	aggregate, err := NewSegmentScreeningEvidence(media.Subject, results, aggregateAssessedAt)
+	airworthiness, err := evaluateSegmentAirworthiness(media.Subject, records, r.airworthiness)
+	if err != nil {
+		return SegmentScreeningEvidence{}, fmt.Errorf("evaluate child Airworthiness: %w", err)
+	}
+	aggregate, err := NewSegmentScreeningEvidence(media.Subject, results, airworthiness, aggregateAssessedAt)
 	if err != nil {
 		return SegmentScreeningEvidence{}, fmt.Errorf("assemble child screening: %w", err)
 	}
