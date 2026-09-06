@@ -144,8 +144,17 @@ func ProjectVisual(subject Subject, source fillervisualsafety.SourceAuthority, p
 		rules[rule.ID] = rule
 	}
 	unknown := false
+	ambiguous := false
 	for _, observation := range observations {
 		if observation.State != fillervisualsafety.ObservationProhibited {
+			continue
+		}
+		intervals := observation.Intervals
+		if observation.Profile.Family == fillervisualsafety.ProducerAppleSCA {
+			intervals = []fillervisualsafety.Interval{{StartMS: 0, EndMS: subject.DurationMS}}
+		}
+		if len(observation.PolicyMatchIDs) > 1 && len(intervals) > 1 {
+			ambiguous = true
 			continue
 		}
 		for _, matchID := range observation.PolicyMatchIDs {
@@ -153,10 +162,6 @@ func ProjectVisual(subject Subject, source fillervisualsafety.SourceAuthority, p
 			if !exists {
 				unknown = true
 				continue
-			}
-			intervals := observation.Intervals
-			if observation.Profile.Family == fillervisualsafety.ProducerAppleSCA {
-				intervals = []fillervisualsafety.Interval{{StartMS: 0, EndMS: subject.DurationMS}}
 			}
 			for index, interval := range intervals {
 				evidence.Observations = append(evidence.Observations, fillerairworthiness.Observation{
@@ -167,7 +172,7 @@ func ProjectVisual(subject Subject, source fillervisualsafety.SourceAuthority, p
 		}
 	}
 	if result.Outcome == fillervisualsafety.OutcomeNoSignal ||
-		result.Outcome == fillervisualsafety.OutcomeQuarantine && len(evidence.Observations) > 0 && !unknown && onlyVisualPositiveReasons(result.Reasons) {
+		result.Outcome == fillervisualsafety.OutcomeQuarantine && len(evidence.Observations) > 0 && !unknown && !ambiguous && onlyVisualPositiveReasons(result.Reasons) {
 		evidence.Coverage = fillerairworthiness.CoverageComplete
 	}
 	if err := fillerairworthiness.ValidateAxisEvidence(evidence, subject.DurationMS); err != nil {

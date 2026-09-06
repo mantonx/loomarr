@@ -78,6 +78,67 @@ func TestProjectVisualUnknownPositiveRemainsIncomplete(t *testing.T) {
 	}
 }
 
+func TestProjectVisualAmbiguousMatchIntervalsRemainIncomplete(t *testing.T) {
+	t.Parallel()
+	fixture := newVisualFixture(t)
+	authority := fixture.authority
+	authority.Rules = append(authority.Rules, Rule{ID: "weapon", Flag: fillerairworthiness.FlagWeaponDepiction,
+		Severity: fillerairworthiness.SeverityHigh, Context: fillerairworthiness.ContextDepiction})
+	var err error
+	authority, err = SealVisualAuthority(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguous := fixture.observation(t, fixture.portable, fillervisualsafety.ObservationProhibited, "adult-nudity")
+	ambiguous.PolicyMatchIDs = []string{"adult-nudity", "weapon"}
+	ambiguous.Intervals = []fillervisualsafety.Interval{{StartMS: 100, EndMS: 200}, {StartMS: 300, EndMS: 400}}
+	ambiguous, err = fillervisualsafety.SealObservation(ambiguous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := []fillervisualsafety.Observation{ambiguous}
+	result := fillervisualsafety.Reduce(fixture.source, fixture.coverage, fixture.plan, items)
+	projection, err := ProjectVisual(fixture.subject, fixture.source, fixture.plan, fixture.coverage, items, result, authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Evidence.Coverage != fillerairworthiness.CoverageIncomplete || len(projection.Evidence.Observations) != 0 {
+		t.Fatalf("ambiguous projection = %#v", projection)
+	}
+}
+
+func TestProjectVisualAmbiguousMatchIntervalsPreserveIndependentPositive(t *testing.T) {
+	t.Parallel()
+	fixture := newVisualFixture(t)
+	direct := fixture.portable
+	direct.Family = fillervisualsafety.ProducerDirectVideo
+	authority := fixture.authority
+	authority.Producers = append(authority.Producers, direct)
+	var err error
+	authority, err = SealVisualAuthority(authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ambiguous := fixture.observation(t, fixture.portable, fillervisualsafety.ObservationProhibited, "adult-nudity")
+	ambiguous.PolicyMatchIDs = []string{"adult-nudity", "unknown-match"}
+	ambiguous.Intervals = []fillervisualsafety.Interval{{StartMS: 100, EndMS: 200}, {StartMS: 300, EndMS: 400}}
+	ambiguous, err = fillervisualsafety.SealObservation(ambiguous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := fixture.observation(t, direct, fillervisualsafety.ObservationProhibited, "adult-nudity")
+	items := []fillervisualsafety.Observation{ambiguous, valid}
+	result := fillervisualsafety.Reduce(fixture.source, fixture.coverage, fixture.plan, items)
+	projection, err := ProjectVisual(fixture.subject, fixture.source, fixture.plan, fixture.coverage, items, result, authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection.Evidence.Coverage != fillerairworthiness.CoverageIncomplete || len(projection.Evidence.Observations) != 1 ||
+		projection.Evidence.Observations[0].StartMS != 100 || projection.Evidence.Observations[0].EndMS != 200 {
+		t.Fatalf("mixed projection = %#v", projection)
+	}
+}
+
 func TestProjectVisualRejectsSourceResultAndProducerDrift(t *testing.T) {
 	t.Parallel()
 	fixture := newVisualFixture(t)
