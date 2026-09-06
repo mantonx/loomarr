@@ -204,7 +204,7 @@ from the same impact policy as CI. Use `make verify SCOPE=all` only for a compre
 | `make fe-lint-fix` |  | Biome autofix — format + safe lint fixes (web/) |
 | `make fe` | ✅ | biome + codegen + typecheck + unit tests + embedded SPA + storybook gallery |
 | `make clients` | ✅ | lint, test, typecheck, and bundle the shared browser, mobile, and TV scaffold <br>*runs:* `brand-assets-verify` |
-| `make client-android-debug` |  | memory-bounded arm64 debug build (CLIENT_APP=mobile|tv) <br>*runs:* `fe-api-codegen` |
+| `make client-android-debug` | ✅ | memory-bounded arm64 debug build (CLIENT_APP=mobile|tv) <br>*runs:* `fe-api-codegen` |
 | `make shield-sideload` |  | build and inspect a signed permanent-identity Shield APK (SHIELD_VERSION=x.y.z) <br>*runs:* `fe-api-codegen` |
 | `make shield-sideload-test` |  | build with an ephemeral key, then clean-install and launch on the TV emulator <br>*runs:* `fe-api-codegen` |
 | `make client-apple-simulator` | ✅ | build and launch an Apple simulator proof (CLIENT_APP=mobile|tv; macOS) <br>*runs:* `fe-api-codegen` |
@@ -236,7 +236,7 @@ from the same impact policy as CI. Use `make verify SCOPE=all` only for a compre
 
 ## What CI runs
 
-`agent-harness-test` · `android` · `arch-docs-verify` · `ci-lint` · `client-apple-simulator` · `clients` · `config-docs-verify` · `dev-docs-verify` · `e2e` · `fe-codegen` · `fe-install` · `fe-tokens-verify` · `fe-visual` · `fe` · `fmt` · `go-shard-verify` · `image-bench` · `image-cert` · `image-parallelism-bench` · `observability-verify` · `openapi-verify` · `retired-verify` · `rust-check` · `test-pg` · `test` · `tuner-e2e-host`
+`agent-harness-test` · `android` · `arch-docs-verify` · `ci-lint` · `client-android-debug` · `client-apple-simulator` · `clients` · `config-docs-verify` · `dev-docs-verify` · `e2e` · `fe-codegen` · `fe-install` · `fe-tokens-verify` · `fe-visual` · `fe` · `fmt` · `go-shard-verify` · `image-bench` · `image-cert` · `image-parallelism-bench` · `observability-verify` · `openapi-verify` · `retired-verify` · `rust-check` · `test-pg` · `test` · `tuner-e2e-host`
 
 These are the targets a workflow step invokes DIRECTLY. Their prerequisites run too —
 for example, `check-static` expands to formatting, vet, lint, and repository

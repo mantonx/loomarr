@@ -51,8 +51,10 @@ func TestVerifyCIAggregate(t *testing.T) {
     runs-on: ubuntu-latest
   docs:
     runs-on: ubuntu-latest
+  expo-android-mobile:
+    runs-on: ubuntu-latest
   ci-ok:
-    needs: [changes, docs]
+    needs: [changes, docs, expo-android-mobile]
     runs-on: ubuntu-latest
 `
 	path := filepath.Join(t.TempDir(), "ci.yml")
@@ -69,6 +71,14 @@ func TestVerifyCIAggregate(t *testing.T) {
 	}
 	if err := VerifyCIAggregate(path); err == nil {
 		t.Fatal("VerifyCIAggregate accepted a required check that omitted docs")
+	}
+
+	withoutExpoAndroidMobile := strings.Replace(workflow, ", expo-android-mobile", "", 1)
+	if err := os.WriteFile(path, []byte(withoutExpoAndroidMobile), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyCIAggregate(path); err == nil {
+		t.Fatal("VerifyCIAggregate accepted an existing Expo Android mobile job omitted from the aggregate")
 	}
 
 	unknownJob := strings.Replace(workflow, "changes, docs", "changes, docs, phantom", 1)
