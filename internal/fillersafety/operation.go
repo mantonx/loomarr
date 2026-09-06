@@ -39,7 +39,8 @@ func newEvaluationOperation(
 }
 
 func (o *evaluationOperation) Evaluate(ctx context.Context, request EvaluationRequest) (EvaluationReport, error) {
-	if o == nil || ctx == nil || ctx.Err() != nil || !boundedLedgerID(request.RunID) || request.StartedAt.IsZero() {
+	if o == nil || ctx == nil || ctx.Err() != nil || !boundedLedgerID(request.RunID) || request.StartedAt.IsZero() ||
+		!validSHA256(request.CertificationSHA256) {
 		return EvaluationReport{}, ErrEvaluationInvalid
 	}
 	if err := validateSourceAuthority(request.Source.Authority); err != nil {
@@ -140,7 +141,7 @@ func evaluationLedgerRun(request EvaluationRequest, authoritySHA256, proposerSHA
 		ID: request.RunID, ClipHash: authority.SourceSHA256,
 		AuthoritySHA256: authoritySHA256, SourceSHA256: authority.SourceSHA256,
 		SourceBytes: authority.SourceBytes, DurationMS: authority.DurationMS,
-		CertificationSHA256: authority.CertificationSHA256,
+		CertificationSHA256: request.CertificationSHA256,
 		PolicySHA256:        authority.PolicySHA256, ProposerSHA256: proposerSHA256,
 		Implementation: evaluationImplementation, CreatedAt: request.StartedAt.UTC(),
 	}

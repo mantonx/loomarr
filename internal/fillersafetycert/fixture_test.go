@@ -37,8 +37,9 @@ func newCertificationFixture(t *testing.T) *certificationFixture {
 	for index := range MinimumPositiveFamilies {
 		authority.Cases = append(authority.Cases, fixtureAuthorityCase(index, LabelPositive, []string{positiveSlices[index%len(positiveSlices)]}))
 	}
-	for index, slice := range requiredCleanSlices() {
-		authority.Cases = append(authority.Cases, fixtureAuthorityCase(MinimumPositiveFamilies+index, LabelClean, []string{slice}))
+	cleanSlices := requiredCleanSlices()
+	for index := range MinimumCleanFamilies {
+		authority.Cases = append(authority.Cases, fixtureAuthorityCase(MinimumPositiveFamilies+index, LabelClean, []string{cleanSlices[index%len(cleanSlices)]}))
 	}
 	fixture := &certificationFixture{
 		authorityPath: filepath.Join(directory, "authority.json"),
@@ -68,8 +69,8 @@ func fixtureAuthorityCase(index int, label string, slices []string) AuthorityCas
 		TruthProvenanceSHA256: fixtureSHA(2000 + index), RightsSHA256: fixtureSHA(3000 + index),
 		Label: label, Locale: "en-US", Slices: slices,
 		Reviewers: []ReviewerAttestation{
-			{ReviewerID: fixtureOpaque("reviewer-", index*2+1), Role: ReviewerPrimary, Method: ReviewerHuman, Decision: label, AttestationSHA256: fixtureSHA(4000 + index*2)},
-			{ReviewerID: fixtureOpaque("reviewer-", index*2+2), Role: ReviewerPrimary, Method: ReviewerHuman, Decision: label, AttestationSHA256: fixtureSHA(4001 + index*2)},
+			{ReviewerID: fixtureOpaque("reviewer-", index*2+1), Role: ReviewerPrimary, Method: ReviewerHuman, Decision: ReviewDecisionVerified, EvidenceSHA256: fixtureSHA(6000 + index*2), AttestationSHA256: fixtureSHA(4000 + index*2)},
+			{ReviewerID: fixtureOpaque("reviewer-", index*2+2), Role: ReviewerPrimary, Method: ReviewerHuman, Decision: ReviewDecisionVerified, EvidenceSHA256: fixtureSHA(6001 + index*2), AttestationSHA256: fixtureSHA(4001 + index*2)},
 		},
 	}
 	if label == LabelPositive {

@@ -104,7 +104,10 @@ func newOperationFixture(t *testing.T, intervals []proposedInterval) operationFi
 		t.Fatal(err)
 	}
 	return operationFixture{
-		request:    EvaluationRequest{RunID: "spoken-run-1", StartedAt: nowAt.Add(-time.Second), Source: SourceRequest{Authority: authority, Path: path}},
+		request: EvaluationRequest{
+			RunID: "spoken-run-1", StartedAt: nowAt.Add(-time.Second), CertificationSHA256: strings.Repeat("a", 64),
+			Source: SourceRequest{Authority: authority, Path: path},
+		},
 		repository: repository, state: state, proposer: proposer, audio: audio, video: video,
 		audioResult: audioResult, videoResult: videoResult, operation: operation,
 	}

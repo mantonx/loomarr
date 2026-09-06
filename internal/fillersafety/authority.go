@@ -14,7 +14,7 @@ import (
 
 const (
 	// SourceAuthoritySchemaVersion identifies the immutable complete-source contract.
-	SourceAuthoritySchemaVersion = 1
+	SourceAuthoritySchemaVersion = 2
 	maxAuthorityIDBytes          = 128
 )
 
@@ -25,22 +25,22 @@ type ToolIdentity struct {
 	BinarySHA256 string `json:"binarySha256"`
 }
 
-// SourceAuthority is the path-independent identity and measured coverage of
-// one complete filler source.
+// SourceAuthority is the certification-independent, path-independent identity
+// and measured coverage of one complete filler source. A caller joins it to a
+// certification authority in EvaluationRequest, avoiding a circular digest.
 type SourceAuthority struct {
-	SchemaVersion       int          `json:"schemaVersion"`
-	CertificationSHA256 string       `json:"certificationSha256"`
-	PolicySHA256        string       `json:"policySha256"`
-	Implementation      string       `json:"implementation"`
-	SourceID            string       `json:"sourceId"`
-	SourceSHA256        string       `json:"sourceSha256"`
-	SourceBytes         int64        `json:"sourceBytes"`
-	DurationMS          int64        `json:"durationMs"`
-	HasAudio            bool         `json:"hasAudio"`
-	HasVideo            bool         `json:"hasVideo"`
-	MeasuredAt          time.Time    `json:"measuredAt"`
-	FFmpeg              ToolIdentity `json:"ffmpeg"`
-	FFprobe             ToolIdentity `json:"ffprobe"`
+	SchemaVersion  int          `json:"schemaVersion"`
+	PolicySHA256   string       `json:"policySha256"`
+	Implementation string       `json:"implementation"`
+	SourceID       string       `json:"sourceId"`
+	SourceSHA256   string       `json:"sourceSha256"`
+	SourceBytes    int64        `json:"sourceBytes"`
+	DurationMS     int64        `json:"durationMs"`
+	HasAudio       bool         `json:"hasAudio"`
+	HasVideo       bool         `json:"hasVideo"`
+	MeasuredAt     time.Time    `json:"measuredAt"`
+	FFmpeg         ToolIdentity `json:"ffmpeg"`
+	FFprobe        ToolIdentity `json:"ffprobe"`
 }
 
 // AuthorityCode is a non-sensitive reason that source planning failed.
@@ -66,7 +66,7 @@ func validateSourceAuthority(authority SourceAuthority) error {
 	if authority.SchemaVersion != SourceAuthoritySchemaVersion {
 		return &AuthorityError{Code: AuthoritySchemaInvalid}
 	}
-	if !validSHA256(authority.CertificationSHA256) || !validSHA256(authority.PolicySHA256) || !boundedAuthorityID(authority.Implementation) || !boundedAuthorityID(authority.SourceID) || !validToolIdentity(authority.FFmpeg) || !validToolIdentity(authority.FFprobe) {
+	if !validSHA256(authority.PolicySHA256) || !boundedAuthorityID(authority.Implementation) || !boundedAuthorityID(authority.SourceID) || !validToolIdentity(authority.FFmpeg) || !validToolIdentity(authority.FFprobe) {
 		return &AuthorityError{Code: AuthorityIdentityInvalid}
 	}
 	if !validSHA256(authority.SourceSHA256) || authority.SourceBytes <= 0 || authority.SourceBytes > mediatools.ConditioningMaxSnapshotBytes || authority.DurationMS <= 0 || authority.MeasuredAt.IsZero() {
@@ -85,6 +85,15 @@ func sourceAuthoritySHA256(authority SourceAuthority) (string, error) {
 	}
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// SourceAuthoritySHA256 validates and hashes the complete path-independent
+// source identity so a certification authority can bind it before evaluation.
+func SourceAuthoritySHA256(authority SourceAuthority) (string, error) {
+	if err := validateSourceAuthority(authority); err != nil {
+		return "", err
+	}
+	return sourceAuthoritySHA256(authority)
 }
 
 func validToolIdentity(identity ToolIdentity) bool {

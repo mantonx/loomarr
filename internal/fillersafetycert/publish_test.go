@@ -18,7 +18,7 @@ func TestPublishCertifiesExhaustiveSourceDisjointCascade(t *testing.T) {
 	}
 	if report.CertificationStatus != StatusPassed || report.DetectedPositiveSources != MinimumPositiveFamilies ||
 		report.PositiveFamilies != MinimumPositiveFamilies || report.MissedPositiveSources != 0 ||
-		report.SourceRecallExactLower95 < 0.95 || report.CleanSources != len(requiredCleanSlices()) ||
+		report.SourceRecallExactLower95 < 0.95 || report.CleanSources != MinimumCleanFamilies ||
 		report.CleanFalsePositiveSources != 0 || report.CoverageHolds != 0 || !validSHA256(digest) ||
 		report.TrainingAllowed || report.IngestionAllowed || report.SchedulingAllowed || report.ProductionAdmissionAllowed {
 		t.Fatalf("report=%+v digest=%q", report, digest)
@@ -82,11 +82,11 @@ func TestCleanFalsePositivesRemainCountedWhenCoverageHolds(t *testing.T) {
 		t.Fatalf("cases=%+v", report.Cases[MinimumPositiveFamilies:])
 	}
 	expectedMetrics := []CleanSliceMetric{
-		{Slice: "homophone_near_match", CleanSources: 1, FalsePositives: 0, FalsePositiveRate: 0, Passed: true},
-		{Slice: "locale:en-US", CleanSources: 4, FalsePositives: 2, FalsePositiveRate: 0.5, Passed: false},
-		{Slice: "music_only", CleanSources: 1, FalsePositives: 1, FalsePositiveRate: 1, Passed: false},
-		{Slice: "target_locale", CleanSources: 1, FalsePositives: 1, FalsePositiveRate: 1, Passed: false},
-		{Slice: "wordless", CleanSources: 1, FalsePositives: 0, FalsePositiveRate: 0, Passed: true},
+		{Slice: "homophone_near_match", CleanSources: 25, FalsePositives: 0, FalsePositiveRate: 0, Passed: true},
+		{Slice: "locale:en-US", CleanSources: 100, FalsePositives: 2, FalsePositiveRate: 0.02, Passed: false},
+		{Slice: "music_only", CleanSources: 25, FalsePositives: 1, FalsePositiveRate: 0.04, Passed: false},
+		{Slice: "target_locale", CleanSources: 25, FalsePositives: 1, FalsePositiveRate: 0.04, Passed: false},
+		{Slice: "wordless", CleanSources: 25, FalsePositives: 0, FalsePositiveRate: 0, Passed: true},
 	}
 	if len(report.CleanSlices) != len(expectedMetrics) {
 		t.Fatalf("clean slice count=%d want=%d metrics=%+v", len(report.CleanSlices), len(expectedMetrics), report.CleanSlices)
