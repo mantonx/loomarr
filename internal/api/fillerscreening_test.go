@@ -1,7 +1,6 @@
 package api_test
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -16,18 +15,8 @@ import (
 	"github.com/loomarr/loomarr/internal/filler"
 	"github.com/loomarr/loomarr/internal/fillerairworthiness"
 	"github.com/loomarr/loomarr/internal/store"
+	"github.com/loomarr/loomarr/internal/testkit"
 )
-
-type fakeFillerScreeningService struct {
-	summary filler.SegmentScreeningSummary
-	hash    string
-	path    string
-}
-
-func (s *fakeFillerScreeningService) ReadSegmentScreeningSummary(_ context.Context, hash, path string) (filler.SegmentScreeningSummary, error) {
-	s.hash, s.path = hash, path
-	return s.summary, nil
-}
 
 func TestFillerScreeningReturnsOneExactBrowserSafeFiveAxisProjection(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -47,14 +36,14 @@ func TestFillerScreeningReturnsOneExactBrowserSafeFiveAxisProjection(t *testing.
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	service := &fakeFillerScreeningService{summary: apiScreeningSummaryFixture(t, hash)}
+	service := &testkit.FillerScreeningService{Summary: apiScreeningSummaryFixture(t, hash)}
 	rights, err := filler.NewFillerRightsRegistry(st)
 	if err != nil {
 		t.Fatal(err)
 	}
 	recordedAt := time.Date(2026, time.September, 4, 20, 30, 0, 0, time.UTC)
 	grant, err := filler.NewFillerRightsGrant(
-		*service.summary.RightsScope, filler.FillerRightsAuthorized, filler.FillerRightsWithdrawalClear,
+		*service.Summary.RightsScope, filler.FillerRightsAuthorized, filler.FillerRightsWithdrawalClear,
 		strings.Repeat("9", 64), "reviewer-1", recordedAt, nil, nil, "", recordedAt,
 	)
 	if err != nil {
@@ -81,21 +70,23 @@ func TestFillerScreeningReturnsOneExactBrowserSafeFiveAxisProjection(t *testing.
 	if body.State != "available" || body.ClipHash != hash || body.Outcome != "pass" ||
 		len(body.Axes) != 5 || body.Axes[0].Axis != "visual_safety" ||
 		body.Axes[4].Axis != "playback_integrity" || body.Airworthiness == nil ||
-		body.Airworthiness.Verdict != "pass" || body.Airworthiness.SubjectSHA256 != service.summary.SubjectSHA256 ||
+		body.Airworthiness.Verdict != "pass" || body.Airworthiness.SubjectSHA256 != service.Summary.SubjectSHA256 ||
 		body.Airworthiness.SchemaVersion != fillerairworthiness.DecisionSchemaVersion ||
 		body.Airworthiness.ContractVersion != fillerairworthiness.DecisionContractVersion ||
 		body.Airworthiness.PolicyVersion == "" || body.Airworthiness.VocabularyVersion == "" ||
 		len(body.Airworthiness.EvidenceSHA256s) != 3 || body.Airworthiness.AuthoritySHA256 == "" ||
 		body.Airworthiness.DecisionSHA256 == "" || body.RightsReview == nil ||
-		body.RightsReview.SourceID != service.summary.RightsScope.SourceID ||
-		body.RightsReview.AcquisitionID != service.summary.RightsScope.AcquisitionID ||
-		body.RightsReview.SourceMasterSHA256 != service.summary.RightsScope.SourceMasterSHA256 ||
-		body.RightsReview.PolicySHA256 != service.summary.RightsScope.PolicySHA256 ||
+		body.RightsReview.SourceID != service.Summary.RightsScope.SourceID ||
+		body.RightsReview.AcquisitionID != service.Summary.RightsScope.AcquisitionID ||
+		body.RightsReview.SourceMasterSHA256 != service.Summary.RightsScope.SourceMasterSHA256 ||
+		body.RightsReview.PolicySHA256 != service.Summary.RightsScope.PolicySHA256 ||
 		body.RightsReview.Use != filler.FillerBroadcastUse || !body.RightsReview.CanRecord ||
-		body.RightsReview.CurrentGrant == nil || body.RightsReview.CurrentGrant.SHA256 != grant.SHA256 ||
-		service.hash != hash ||
-		service.path != filepath.Join(layout.ClipDir(), path) {
+		body.RightsReview.CurrentGrant == nil || body.RightsReview.CurrentGrant.SHA256 != grant.SHA256 {
 		t.Fatalf("screening body=%+v service=%+v", body, service)
+	}
+	requests := service.Requests()
+	if len(requests) != 1 || requests[0].Hash != hash || requests[0].Path != filepath.Join(layout.ClipDir(), path) {
+		t.Fatalf("screening requests=%+v", requests)
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
