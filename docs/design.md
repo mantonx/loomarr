@@ -4870,8 +4870,14 @@ their provider, process, and tool details do not leak into callers. The module e
 evidence plus an immutable per-step ledger. It does not return or imply a filler-admission verdict, and
 `filleradmission.Evaluator` remains the only terminal semantic authority.
 
-The operation request supplies a stable run id and start time plus the source authority and machine-local
-path. The path remains excluded from every returned or durable value. A first invocation atomically creates
+The operation request supplies a stable run id and start time, the certification-authority digest, and the
+source authority plus machine-local path. The source authority identifies only the immutable source,
+measurement, policy, implementation, and tool facts that exist before a certification challenge is locked;
+it does not contain the certification-authority digest. Keeping those identities separate is mandatory:
+placing the certification digest in the source authority while the certification authority stores the source-
+authority digest creates an unconstructable hash cycle. The request joins the two independently immutable
+documents, and the durable run header binds both. The path remains excluded from every returned or durable
+value. A first invocation atomically creates
 the immutable run header before appending source-plan and proposal events; a repeated invocation of the same
 completed run returns its already-canonical terminal evidence without repeating local or hosted work. An
 existing incomplete run is never resumed in place or silently reissued: recovery closes it conservatively and
@@ -5030,7 +5036,9 @@ authored before evaluation and binds the policy, evaluator/proposer and hosted-r
 provenance and rights/consent digests, opaque case and source-family ids, locale/slice coverage, positive rule
 intervals, and two agreeing reviewer attestations (or a third adjudicator). A model-backed reviewer declares
 its model family, which must be absent from every proposer/adjudicator/corroborator family in the same
-authority. The label-blind result manifest contains every authority alias exactly once with the complete
+authority. Each case binds the digest of its certification-independent source authority. Evaluation supplies
+the completed certification-authority digest alongside that source authority and binds both separately in the
+run header; neither digest is defined in terms of the other. The label-blind result manifest contains every authority alias exactly once with the complete
 path-free run header and ordered ledger events; it contains no truth label. Every run must start after the
 authority was authored, bind that exact authority digest as its certification identity, and end in the named
 terminal event/digest. Missing, extra, duplicate, incomplete, identity-drifted, or non-canonical runs make the
@@ -5042,8 +5050,170 @@ presence, a hold, or a candidate interval without rule attribution is not a hit.
 unique source families. Clean false positives are any audio prohibited detection and are reported for both
 locale and declared clean slices. A development authority can produce only `diagnostic_passed`; a
 certification authority still requires at least 59 positive families, zero misses, a one-sided exact 95%
-source-recall lower bound of at least 95%, zero coverage holds, and no declared clean slice above the
-predeclared 1% observed false-positive ceiling. Every output permission remains false regardless of status.
+source-recall lower bound of at least 95%, at least 100 independent clean families so the declared 1%
+observed false-positive ceiling has one-source granularity, zero coverage holds, and no declared clean slice
+above that ceiling. This is explicitly an observed-rate gate, not a 95% upper confidence claim; the latter
+would require at least 299 clean families with zero false positives. Every output permission remains false
+regardless of status.
+
+Authority locking is a separate offline operation over a private path-bearing draft, two independent complete
+review bundles, an optional disagreement-only adjudication bundle, a private alias seed, and the exact source
+and evidence bytes. It verifies source-authority and media identity, policy and implementation identity,
+review order and draft binding, draft-pinned rights and truth-provenance digests against their current bytes,
+family uniqueness, and all corpus minima
+before emitting a path-free authority. Opaque case, family, and reviewer ids are keyed derivations from the
+private seed. Reviewers are blind to evaluation output and one another; known-script reviewers may see the
+claim they must verify. Model-backed primary/adjudicating reviewers are permitted only when their model
+families differ from one another and from every evaluated proposer/adjudicator/corroborator family. This lock
+does not download a dataset, create consent, transform media, run inference, or begin certification.
+
+Matching a rights digest is necessary but is not a current rights decision, and a currently valid document is
+not proof that it governs the source beside it. Before planning or decoding any source, the authority locker
+asks the corpus owner to validate every case's exact rights bytes together with its exact truth-provenance bytes
+and source authority at the fixed authority-authored time. Shared rights documents may be decoded and cached
+once, but case binding is never deduplicated. The production command hard-wires that validator; callers cannot
+omit it. The closed initial vocabulary is the complete VCTK release-authority v1 envelope and the canonical
+known-script rights v1 envelope. VCTK validation rechecks the release identity, rights-review chronology,
+complete member authority, hosted-evaluation contract and current term, then requires the provenance's named
+member and original evidence authorities to occur in that release and its wrapped output identity to equal the
+case source authority. Known-script validation rechecks the participant binding, every grant,
+expiry/withdrawal state, time-sensitive music/noise rights, authority and transformation binding, then requires
+the packaged output identity to equal the case source authority. Unknown, malformed, unsupported,
+noncanonical, expired, withdrawn, unbound, or mismatched evidence invalidates the complete lock before media
+work or publication. The exact hosted route was
+already authorized immediately before each model request; the later lock establishes that the participant and
+asset rights remain current, not that an expired grant retroactively authorized a call. A path-free immutable
+authority is not a live withdrawal registry: any future production admission must recheck then-current rights
+through a separately designed live-use boundary, and all output permissions remain false meanwhile.
+
+A review verdict is `verified` or `rejected`; it is not another copy of the draft's proposed `positive` or
+`clean` label. A verified positive retains the draft's exact proposed intervals, while every rejected verdict
+and every clean verification carries no interval. This distinction is required so a reviewer can reject a
+supposed clean control after hearing prohibited speech without first manufacturing positive timing truth, and
+can reject a supposed positive whose intended phrase is inaudible. Two agreeing rejections cannot lock the
+draft. A primary disagreement requires the existing independent adjudicator, whose `verified` verdict is the
+only outcome that can establish the draft's proposed truth. A rejected adjudication also prevents publication.
+
+Public clean-speech preparation is upstream and non-authorizing. The first pinned adapter accepts an already-
+acquired VCTK 0.92 tree, an exact release/member manifest, a completed certification-rights contract, and a
+private seed. It does not crawl or download the release. It verifies the archive/release, licence, README,
+rights-review, transcript, speaker, microphone, and audio identities; p315 is excluded because the release does
+not supply its transcript. From owner-screened eligible utterances it deterministically selects exactly one
+utterance from each of 100 distinct speakers. Alternate microphones, takes, encodes, and later transformations
+retain that speaker family and cannot increase the denominator.
+
+Because the evaluated cascade requires complete audio and video, the adapter wraps each selected real utterance
+in a deterministic neutral-video MP4 using exact ffmpeg/ffprobe executable identities and a fixed recipe. The
+speech remains real but its encoding is a declared derivative; input/output hashes, decoded duration, recipe,
+tool versions, and source-relative complete span are retained. Both output streams must also survive a complete
+bounded decode; a header-valid derivative with a corrupt tail is refused. The adapter emits a private review-ready
+cohort and owner map, not a certification authority or clean label. A later full-draft assembler combines it with the
+positive and other clean-slice cohorts before any review bundle binds that exact draft. Reviewing the VCTK
+cohort before assembly would bind the wrong digest and is forbidden. Raw media, transcripts, speaker ids,
+paths, seed, and maps stay outside Git. Missing rights, release drift, an unsafe path, duplicate family/content,
+tool drift, an incomplete output, or fewer than 100 eligible speakers fails before atomic publication. This
+preparation performs no provider call, policy classification, certification run, or spend.
+
+Consented known-script positive preparation is a second upstream, non-authorizing adapter over recordings
+that already exist. Its one external interface accepts a private owner-authored cohort authority, a private
+source root and alias seed, exact ffmpeg/ffprobe executables, a fixed preparation time, exact case and resource
+ceilings, and a new output directory. It never discovers participants, solicits consent, records or synthesizes
+speech, authors a restricted script, downloads media, or sends content to a provider. A file's presence is not
+consent: every real participant has a separate bound consent document, signer-authority evidence, processor
+schedule, withdrawal instructions, and owner-reviewed consent contract. That contract explicitly covers
+collection, private storage, deterministic modification, evidence extraction, independent review, hosted model
+evaluation, the participant's redistribution choice, retention and withdrawal, and no endorsement. An expired,
+withdrawn, incomplete, ambiguous, or mismatched contract fails before any media tool runs.
+
+The owner authority binds exactly one selected take or derivative for each private participant id and source
+family. It also binds recording session/take identity, locale/accent, exact versioned script bytes, private
+policy digest and policy-mapping evidence, dry master and selected audio bytes, source-relative intended
+positive intervals, and a deterministic transformation record. That record names its recipe and digest,
+rendering tool identity and time, master and output authorities, and every music/noise/mix asset with separately
+reviewed rights covering the same transformations and hosted processors. Retakes, cuts, re-encodes, mixes,
+clipping, placement derivatives, and alternate representations of one participant remain one source family and
+cannot inflate the denominator. The selected cases must contain at least 59 unique participants, use only the
+locked positive-slice vocabulary, and cover every required positive slice; a music-overlap declaration requires
+a rights-cleared music asset.
+
+Preparation reopens and hashes every authority-bound byte, derives opaque case/family ids from the private seed,
+copies the selected script only as the private transcript, and wraps the selected real audio in the existing
+deterministic neutral audiovisual recipe. Exact tool identity is checked before and after processing, both final
+streams must fully decode, and every proposed interval must remain ordered, non-overlapping, rule-valid, and
+bounded by the measured final source. Atomic private output contains one positive-candidate cohort, an owner map,
+and per-case source, transcript, provenance, and rights documents. Restricted script text, participant identity,
+input paths, and seed never enter public output, Git, logs, or errors. The script and preparation establish only
+an intended claim: two independent reviews over the fully assembled draft, plus disagreement-only adjudication,
+still establish certification truth.
+
+Prepared spoken-safety cohorts use one private candidate contract. Every case binds its complete audiovisual
+source, optional exact transcript, source family, rights and truth-provenance evidence, proposed `clean` or
+`positive` claim, locale, slices, and any proposed positive intervals. A preparation adapter may propose those
+facts from source-owned evidence, but the proposal is not certification truth. Clean candidates carry no positive
+intervals; positive candidates carry sorted, non-overlapping, bounded intervals with the exact restricted-rule id.
+The cohort document binds transcript bytes separately even when provenance also names the original transcript,
+so a model or human reviewer cannot unknowingly assess a changed convenience copy.
+
+One deep offline assembly module owns the transition from separately prepared cohorts to the single review seam.
+Its interface is one operation over a private assembly plan, one private input root, and one new output directory.
+The plan binds the exact private policy bytes; draft envelope and route identities; every cohort document/root,
+kind, dataset, digest, and exact case count; the expected combined case count; and aggregate input, output, and
+wall-time ceilings. The module revalidates current source, transcript, rights, provenance, policy, and cohort bytes;
+requires one policy and implementation; rejects cross-cohort case, source-content, or source-family collisions;
+and enforces the certification minima and complete positive/clean slice vocabulary before publication.
+
+Assembly snapshots only referenced verified bytes into one self-contained `0700` tree. It writes private `0600`
+case media, transcripts, provenance, and rights evidence; the canonical #929 path-bearing `draft.json`; the exact
+policy; and two byte-identical primary-review worklists bound to the draft digest, policy, evidence, and case order.
+Each worklist may
+show the proposed claim and intervals needed to verify known-script evidence but contains no evaluation result,
+other review, reviewer identity, or completed decision. Outputs are deterministic for the same plan and inputs,
+created atomically without overwrite, and remain non-authorizing. Reviewers submit separate #929 review documents;
+two complete independent agreements, or disagreement-only independent adjudication, are still required before the
+authority locker can establish truth. Assembly runs no model, reviewer, certifier, downloader, or production ingest.
+
+Independent routine review is one separate deep module, not a human playback loop hidden in the assembler.
+Its interface is one operation over a private review plan, the assembled private root, an API credential, the
+exact local ffmpeg executable, a private checkpoint directory, and a new output path. The plan binds the exact
+draft, worklist, private policy, fresh OpenRouter capability/price/ZDR snapshot, reviewer and model-family
+identities, one exact requested/resolved model and upstream endpoint, expected case count, and request, charge,
+spend, input-byte, audio-byte, per-case-time, and wall-time ceilings. The reviewer model family must differ from
+the draft's proposer, native-audio adjudicator, and complete-video corroborator. A second primary review uses a
+separate plan, reviewer identity, checkpoint, and model family; the operation never sees the sibling review.
+
+For each case the module first reopens and hashes the source, draft, worklist, policy, and evidence bindings,
+then asks the rights owner to authorize the exact hosted processor before any media tool, checkpoint creation,
+HTTP request, or spend reservation. A rights document bearing the known-script rights-envelope contract is strictly
+decoded inside the corpus module; its participant binding, grants, expiry/withdrawal state, processor schedule,
+and time-sensitive asset rights are revalidated at review time. Authorization requires an exact match on the
+OpenRouter HTTPS base URL, requested and resolved model, upstream provider name and slug, and ZDR. A malformed
+recognized envelope or unmatched route fails closed without logging consent contents, participant identity, or
+private paths. Other rights contracts retain their existing validators and are not reinterpreted as participant
+consent. After preflight, the reviewer extracts the complete soundtrack from the verified source snapshot into
+bounded 16 kHz mono WAV. Calls
+are serial, fallback-disabled, ZDR-only, and strict-schema. The prompt exposes the private policy, proposed
+claim, opaque rule ids, and proposed intervals but no evaluation output or other review. The model may return
+only `verified | rejected | unclear`, `clear | degraded | no_speech`, sorted opaque matched-rule ids, and the
+indexes of proposed intervals it heard; it is instructed never to transcribe or quote speech. A positive is
+verified only when every proposed interval is confirmed with its expected rule. A clean candidate is verified
+only with no matched rule. A contrary decisive observation becomes `rejected`; unclear or degraded evidence is
+an operational stop and cannot become a review verdict.
+
+The maximum per-call charge is durably reserved before HTTP and exact usage is settled afterward. The private
+checkpoint binds all input, prompt, schema, route, tool, and budget identities; accepted cases form a canonical
+prefix and are not called again. A process interruption after reservation remains an unsettled hold rather than
+an automatic replay. Source or identity drift, ambiguous output, provider failure, a stale route snapshot, or
+exhausted resource limits leaves no review bundle. Only an exhaustive decisive pass publishes the canonical
+model-backed authority-review document at mode `0600`; it performs no authority locking, certification scoring,
+training, ingestion, scheduling, or production admission.
+
+The model review embeds a bounded, path-free evidence record rather than asking the authority locker to trust a
+free-form model-family string. That record binds the plan, worklist, policy and snapshot digests; exact requested
+and resolved model and upstream endpoint; model family; prompt and schema digests; ffmpeg identity; fixed resource
+ceilings; aggregate usage and settled charge; and every attempt's case id, request/response digest, generation id,
+state, observation digest, token counts, and settled charge. It contains neither the response body nor source
+content. The review envelope carries the canonical evidence digest, and every final reviewer attestation retains
+that digest. Human reviews instead bind a separately authored evidence digest and cannot claim model evidence.
 
 No model is trained or fine-tuned for this lane until governed source-disjoint labels exist and the
 certified stock cascade demonstrably misses a locked gate. Existing unknown commercials and agreement
