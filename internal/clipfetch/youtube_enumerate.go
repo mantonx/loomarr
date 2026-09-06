@@ -9,8 +9,14 @@ import (
 
 // EnumeratedItem is one video listed from an operator-authorized YouTube target.
 type EnumeratedItem struct {
-	ID  string
-	URL string
+	ID          string
+	URL         string
+	Title       string
+	License     string
+	ReleaseYear int
+	PublishedAt string
+	DurationMS  int
+	Height      int
 }
 
 // YouTubeEnumerator lists one playlist or channel without downloading media.
@@ -45,9 +51,15 @@ func (e *YouTubeEnumerator) Enumerate(ctx context.Context, target string, limit 
 	var listing struct {
 		PlaylistCount int `json:"playlist_count"`
 		Entries       []struct {
-			ID         string `json:"id"`
-			URL        string `json:"url"`
-			WebpageURL string `json:"webpage_url"`
+			ID          string  `json:"id"`
+			URL         string  `json:"url"`
+			WebpageURL  string  `json:"webpage_url"`
+			Title       string  `json:"title"`
+			License     string  `json:"license"`
+			ReleaseYear int     `json:"release_year"`
+			UploadDate  string  `json:"upload_date"`
+			Duration    float64 `json:"duration"`
+			Height      int     `json:"height"`
 		} `json:"entries"`
 	}
 	if err := json.Unmarshal(out, &listing); err != nil {
@@ -62,7 +74,11 @@ func (e *YouTubeEnumerator) Enumerate(ctx context.Context, target string, limit 
 		if entry.ID == "" || url == "" {
 			continue
 		}
-		items = append(items, EnumeratedItem{ID: entry.ID, URL: url})
+		items = append(items, EnumeratedItem{
+			ID: entry.ID, URL: url, Title: entry.Title, License: entry.License,
+			ReleaseYear: entry.ReleaseYear, PublishedAt: entry.UploadDate,
+			DurationMS: int(entry.Duration * 1000), Height: entry.Height,
+		})
 		if len(items) == limit {
 			break
 		}

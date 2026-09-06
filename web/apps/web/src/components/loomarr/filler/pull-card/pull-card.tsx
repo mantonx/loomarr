@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { PullCardProps } from "./pull-card.type";
 
-// PullCard — a proposed filler acquisition awaiting a human (V35).
+// PullCard — a proposed filler acquisition awaiting a human (V66).
 //
 // ⚠ **This card IS the approval gate's face.** §10 has said "the machine proposes, a human
 // commits" since the starter pack shipped; until V35 there was no object to commit. Nothing
@@ -29,12 +29,14 @@ const PullCard = ({ pull, onApprove, onDismiss, deciding, className }: PullCardP
   // ⚠ `?? []` because huma types every Go slice as nullable, so the generated DTO says
   // `PullPlanRowDTO[] | null` even though the handler always sends `[]`.
   const plan = pull.plan ?? [];
-  const kept = plan.filter((row) => !dropped.has(row.sourceId));
+  const skippedSources = (pull.sources ?? []).filter((source) => source.disposition !== "enumerated");
+  const candidateID = (row: (typeof plan)[number]) => row.candidateId || row.sourceId;
+  const kept = plan.filter((row) => !dropped.has(candidateID(row)));
 
-  const toggleDropped = (sourceId: string) =>
+  const toggleDropped = (id: string) =>
     setDropped((prev) => {
       const next = new Set(prev);
-      if (!next.delete(sourceId)) next.add(sourceId);
+      if (!next.delete(id)) next.add(id);
       return next;
     });
 
@@ -58,7 +60,7 @@ const PullCard = ({ pull, onApprove, onDismiss, deciding, className }: PullCardP
             // Nothing left to fetch is refused by the server rather than recorded as an
             // approval that fetched nothing; disabling here says so before the round trip.
             disabled={deciding || kept.length === 0}
-            onClick={() => onApprove({ dropSourceIds: [...dropped], note })}
+            onClick={() => onApprove({ dropCandidateIds: [...dropped], note })}
           >
             {deciding ? "Starting…" : "Approve pull"}
           </Button>
@@ -72,12 +74,10 @@ const PullCard = ({ pull, onApprove, onDismiss, deciding, className }: PullCardP
 
       <ul className="flex flex-col gap-2">
         {plan.map((row) => {
-          const isDropped = dropped.has(row.sourceId);
+          const id = candidateID(row);
+          const isDropped = dropped.has(id);
           return (
-            <li
-              key={row.sourceId}
-              className={cn("flex flex-wrap items-center gap-3", isDropped && "opacity-50")}
-            >
+            <li key={id} className={cn("flex flex-wrap items-center gap-3", isDropped && "opacity-50")}>
               <Badge variant="neutral">{row.tag}</Badge>
               <div className="min-w-0 flex-1">
                 <p className={cn("truncate text-sm", isDropped && "line-through")}>{row.name}</p>
@@ -93,7 +93,7 @@ const PullCard = ({ pull, onApprove, onDismiss, deciding, className }: PullCardP
                 variant="ghost"
                 size="sm"
                 disabled={deciding}
-                onClick={() => toggleDropped(row.sourceId)}
+                onClick={() => toggleDropped(id)}
                 aria-label={isDropped ? `Put ${row.name} back` : `Leave ${row.name} out`}
               >
                 {isDropped ? "Put back" : "Leave out"}
@@ -103,18 +103,56 @@ const PullCard = ({ pull, onApprove, onDismiss, deciding, className }: PullCardP
         })}
       </ul>
 
+      {(pull.rejected?.length ?? 0) > 0 && (
+        <details className="rounded-md border border-border px-3 py-2 text-sm">
+          <summary className="cursor-pointer text-muted-foreground">
+            {pluralize(pull.rejected?.length ?? 0, "other candidate")} considered and excluded
+          </summary>
+          <ul className="mt-2 flex flex-col gap-1">
+            {(pull.rejected ?? []).map((candidate) => (
+              <li key={candidate.candidateId} className="flex flex-wrap gap-2">
+                <span>{candidate.name}</span>
+                <Caption>
+                  {candidate.disposition.replaceAll("_", " ")}: {candidate.detail}
+                </Caption>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {skippedSources.length > 0 && (
+        <details className="rounded-md border border-border px-3 py-2 text-sm">
+          <summary className="cursor-pointer text-muted-foreground">
+            {pluralize(skippedSources.length, "registered source")} not searched
+          </summary>
+          <ul className="mt-2 flex flex-col gap-1">
+            {skippedSources.map((source) => (
+              <li key={source.sourceId} className="flex flex-wrap gap-2">
+                <span>{source.label || source.sourceId}</span>
+                <Caption>
+                  {source.disposition.replaceAll("_", " ")}: {source.detail}
+                </Caption>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+
       <Input
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="Anything to add or avoid? For example: no local dealers, no PSAs"
+        placeholder="Optional annotation for your records"
         aria-label="Notes for this pull"
         disabled={deciding}
       />
 
+      <Caption>Optional annotation for your records. This does not change what is downloaded.</Caption>
+
       <Caption>
         {kept.length === 0
-          ? "Every source is left out, so there's nothing to fetch. Dismiss it instead."
-          : `${pluralize(kept.length, "source")} will be fetched. Nothing downloads until you approve.`}
+          ? "Every candidate is left out, so there's nothing to fetch. Dismiss it instead."
+          : `${pluralize(kept.length, "candidate")} will be fetched. Nothing downloads until you approve.`}
       </Caption>
     </Card>
   );

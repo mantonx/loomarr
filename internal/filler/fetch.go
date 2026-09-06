@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -67,6 +66,9 @@ type FetchSource struct {
 // FetchStore is the slice of the store the fetch job needs.
 type FetchStore interface {
 	ListFetchSources(ctx context.Context) ([]FetchSource, error)
+	// ListAcquisitionRemoteStates is the typed, durable authority for remote-item identity.
+	// Paths cannot prove which provider/source produced a filename.
+	ListAcquisitionRemoteStates(ctx context.Context) (map[string]ExistingRemoteState, error)
 	// CatalogPaths returns every clip path, including HELD ones.
 	//
 	// ⚠ Held clips must be included or the job re-downloads what is already sitting in the
@@ -93,8 +95,15 @@ type SourceEnumerator interface {
 // DiscoveredRef is one item a source offers — an id stable enough to dedupe on, and the URL to
 // hand the ingest path.
 type DiscoveredRef struct {
-	ID  string
-	URL string
+	ID      string
+	URL     string
+	Title   string
+	License string
+	// ObservedYear is provider metadata used only to rank acquisition. It is not grounded clip era.
+	ObservedYear int
+	PublishedAt  string
+	DurationMS   int
+	Height       int
 }
 
 // FetchIngestor hands URLs to the ordinary ingest path.
@@ -103,6 +112,12 @@ type DiscoveredRef struct {
 // shape §10 rejects by name, and it is how one route would quietly stop honouring the lifecycle.
 type FetchIngestor interface {
 	IngestSource(ctx context.Context, sourceID, sourceKind string, urls []string) (string, error)
+}
+
+// IdentifiedFetchIngestor is the V66 production seam: scheduled selection retains provider item
+// identity into the durable manifest. The URL-only interface remains for narrow older embeddings.
+type IdentifiedFetchIngestor interface {
+	IngestSourceItems(ctx context.Context, sourceID, sourceKind string, items []DiscoveredRef) (string, error)
 }
 
 // Fetcher polls registered sources.
@@ -215,13 +230,20 @@ func (f *Fetcher) run(ctx context.Context, sourceID string, scheduled bool) (Fet
 	if err != nil {
 		return res, fmt.Errorf("read catalog: %w", err)
 	}
-	// ⚠ The catalog IS the high-water mark — there is no per-source cursor, deliberately.
-	// archive.org discovery is a search, not a feed, so "new" can only mean "not already here".
-	// It is also self-correcting: a clip the operator removed gets re-offered, which is the
-	// honest reading of "remove from catalog" (it is no longer in the catalog).
-	seen := make(map[string]bool, len(have))
-	for _, p := range have {
-		seen[fetchKey(p)] = true
+	// The catalog is one input to selection; source-local history and acquisition intent also
+	// determine whether a discovered item is eligible to be offered again.
+	existing, err := f.store.ListAcquisitionRemoteStates(ctx)
+	if err != nil {
+		return res, fmt.Errorf("read acquisition remote states: %w", err)
+	}
+	if existing == nil {
+		existing = map[string]ExistingRemoteState{}
+	}
+	// Treat the store result as a snapshot: in-pass queue state must not mutate adapter-owned
+	// fixture or store state across retry attempts.
+	inPass := make(map[string]ExistingRemoteState, len(existing))
+	for key, state := range existing {
+		inPass[key] = state
 	}
 
 	if max := f.limits.MaxCatalogClips(); max > 0 && len(have) >= max {
@@ -287,28 +309,67 @@ func (f *Fetcher) run(ctx context.Context, sourceID string, scheduled bool) (Fet
 			continue
 		}
 
+		// The scheduled path uses the same deterministic selector as explicit pulls. There are no
+		// hard semantic constraints here—the remote listing cannot certify them—but declared rights,
+		// representation quality, era-observation diversity, and stable identity now choose the
+		// bounded prefix instead of whichever item the provider returned first.
+		candidates := make([]AcquisitionCandidate, 0, len(items))
+		for _, item := range items {
+			candidate := AcquisitionCandidate{
+				Identity: RemoteIdentity{Provider: src.Kind, SourceID: src.ID, RemoteID: item.ID},
+				URL:      item.URL, Title: item.Title, License: item.License,
+				ObservedYear: item.ObservedYear, PublishedAt: item.PublishedAt,
+				DurationMS: item.DurationMS, Height: item.Height,
+			}
+			candidates = append(candidates, candidate)
+		}
+		selection, serr := PlanAcquisition(AcquisitionIntent{
+			Count: perRun, Rights: RightsPreferDeclared,
+			CatalogReason: "Bounded scheduled refresh of a registered source.",
+		}, candidates, inPass)
+		if serr != nil {
+			if !scheduled {
+				return res, fmt.Errorf("select source %q: %w", src.ID, serr)
+			}
+			f.log.Warn("filler auto-fetch: source candidates could not be selected", "source", src.ID, "err", serr)
+			continue
+		}
 		var urls []string
-		for _, it := range items {
-			if len(urls) >= perRun {
-				break
-			}
-			if seen[fetchKey(it.ID)] {
+		selectedItems := make([]DiscoveredRef, 0, len(selection.Selected))
+		for _, decision := range selection.Rejected {
+			if decision.Disposition == CandidateAlreadyCatalogued {
 				res.Skipped++
-				continue
 			}
-			urls = append(urls, it.URL)
-			// Mark immediately so two sources offering the same item queue it once.
-			seen[fetchKey(it.ID)] = true
+		}
+		for _, decision := range selection.Selected {
+			urls = append(urls, decision.Candidate.URL)
+			selectedItems = append(selectedItems, DiscoveredRef{
+				ID: decision.Candidate.Identity.RemoteID, URL: decision.Candidate.URL,
+				Title: decision.Candidate.Title, License: decision.Candidate.License,
+				ObservedYear: decision.Candidate.ObservedYear, PublishedAt: decision.Candidate.PublishedAt,
+				DurationMS: decision.Candidate.DurationMS, Height: decision.Candidate.Height,
+			})
 		}
 		if len(urls) == 0 {
 			continue
 		}
-		if _, ierr := f.ingest.IngestSource(ctx, src.ID, src.Kind, urls); ierr != nil {
+		var ierr error
+		if identified, ok := f.ingest.(IdentifiedFetchIngestor); ok {
+			_, ierr = identified.IngestSourceItems(ctx, src.ID, src.Kind, selectedItems)
+		} else {
+			_, ierr = f.ingest.IngestSource(ctx, src.ID, src.Kind, urls)
+		}
+		if ierr != nil {
 			if !scheduled {
 				return res, fmt.Errorf("queue source %q: %w", src.ID, ierr)
 			}
 			f.log.Warn("filler auto-fetch: queueing failed", "source", src.ID, "err", ierr)
 			continue
+		}
+		// Only a successful queue becomes in-pass state. A failed queue must leave an exact
+		// identity eligible for a healthy retry later in this pass.
+		for _, decision := range selection.Selected {
+			inPass[decision.Candidate.Identity.Key()] = RemoteQueued
 		}
 		res.Queued += len(urls)
 		// ⚠ Stamped only AFTER a successful queue, and only when something was actually queued —
@@ -356,38 +417,6 @@ func (f *Fetcher) logStop(which string, have, max int) {
 	f.log.Info("filler auto-fetch paused at its limit",
 		"limit", which, "have", have, "max", max,
 		"note", "raise filler.fetch.max_"+which+" to continue, or queue clips by hand")
-}
-
-// fetchKey normalises an archive id or a clip path to the same comparable token, so a catalogued
-// clip is recognised as the item it came from.
-//
-// ⚠ Compares BASENAMES without extension. Archive clips land as `<id> - <file>`; yt-dlp's
-// documented output template lands as `<title> [<id>].mp4` (possibly in a subdirectory).
-// Comparing raw strings would never match either form and every item would re-download on every
-// pass.
-func fetchKey(s string) string {
-	base := filepath.Base(s)
-	base = strings.TrimSuffix(base, filepath.Ext(base))
-	if start := strings.LastIndex(base, " ["); start >= 0 && strings.HasSuffix(base, "]") {
-		base = base[start+2 : len(base)-1]
-	} else if id, _, ok := strings.Cut(base, " - "); ok && isArchiveID(id) {
-		base = id
-	}
-	return strings.ToLower(base)
-}
-
-// isArchiveID limits Archive filename extraction to the identifier spelling emitted by Archive.
-// Without this check any ordinary name containing " - " could be reduced to an unrelated prefix.
-func isArchiveID(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '.' && r != '_' && r != '-' {
-			return false
-		}
-	}
-	return true
 }
 
 // dirSizeBytes sums the drop-folder. Walk errors are skipped rather than fatal: an unreadable

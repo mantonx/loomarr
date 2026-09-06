@@ -14,7 +14,7 @@ case "$*" in
   *--no-config*--flat-playlist*--skip-download*--dump-single-json*--playlist-end\ 2*https://www.youtube.com/@retroads/videos) ;;
   *) exit 9 ;;
 esac
-printf '%s\n' '{"playlist_count":3,"entries":[{"id":"one","url":"https://www.youtube.com/watch?v=one"},{"id":"two","webpage_url":"https://www.youtube.com/watch?v=two"}]}'
+printf '%s\n' '{"playlist_count":3,"entries":[{"id":"one","url":"https://www.youtube.com/watch?v=one","title":"One reel","license":"Creative Commons","release_year":1987,"upload_date":"20260831","duration":92.5,"height":720},{"id":"two","webpage_url":"https://www.youtube.com/watch?v=two"}]}'
 `)
 
 	items, total, err := clipfetch.NewYouTubeEnumerator(ytdlp).Enumerate(
@@ -30,6 +30,11 @@ printf '%s\n' '{"playlist_count":3,"entries":[{"id":"one","url":"https://www.you
 	}
 	if items[0].URL != "https://www.youtube.com/watch?v=one" || items[1].URL != "https://www.youtube.com/watch?v=two" {
 		t.Fatalf("item URLs = %+v, want downloadable per-item URLs", items)
+	}
+	if items[0].Title != "One reel" || items[0].License != "Creative Commons" ||
+		items[0].ReleaseYear != 1987 || items[0].PublishedAt != "20260831" ||
+		items[0].DurationMS != 92_500 || items[0].Height != 720 {
+		t.Fatalf("metadata = %+v, want flat-playlist observations", items[0])
 	}
 }
 

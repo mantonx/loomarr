@@ -19,6 +19,14 @@ import (
 const fillerPullSelect = `SELECT id, title, reason, proposed_by, status, note, plan_json,
 	created_at, decided_at, decided_by FROM filler_pulls`
 
+type fillerPullPlanDocument struct {
+	Version  string                             `json:"version"`
+	Intent   filler.AcquisitionIntent           `json:"intent"`
+	Selected []filler.PullPlanRow               `json:"selected"`
+	Rejected []filler.AcquisitionDecision       `json:"rejected"`
+	Sources  []filler.AcquisitionSourceDecision `json:"sources"`
+}
+
 // GetPull reads one pull. ErrNotFound for an unknown id.
 func (s *sqlStore) GetPull(ctx context.Context, id string) (filler.Pull, error) {
 	row := s.db.QueryRowContext(ctx, s.ph(fillerPullSelect+` WHERE id = ?`), id)
@@ -66,7 +74,10 @@ func (s *sqlStore) ListPulls(ctx context.Context, status filler.PullStatus) ([]f
 // independently-owned column: the composer writes it once and the approval path rewrites it
 // wholesale with the operator's edits. There is no second writer to protect a field from.
 func (s *sqlStore) UpsertPull(ctx context.Context, p filler.Pull) error {
-	plan, err := json.Marshal(p.Plan)
+	plan, err := json.Marshal(fillerPullPlanDocument{
+		Version: filler.AcquisitionIntentVersion, Intent: p.Intent,
+		Selected: p.Plan, Rejected: p.Rejected, Sources: p.Sources,
+	})
 	if err != nil {
 		return fmt.Errorf("encode pull plan %s: %w", p.ID, err)
 	}
@@ -104,8 +115,21 @@ func scanPull(sc scannable) (filler.Pull, error) {
 	// A malformed plan is reported rather than silently read as an empty one: an approval that
 	// committed zero rows because the JSON did not parse would look like a successful no-op.
 	if plan != "" {
-		if err := json.Unmarshal([]byte(plan), &p.Plan); err != nil {
-			return filler.Pull{}, fmt.Errorf("decode pull plan %s: %w", p.ID, err)
+		if len(plan) > 0 && plan[0] == '[' {
+			// V35-V65 persisted a bare source-row array. Keep those approvals legible and
+			// executable; the V66 writer always upgrades the record to the document form.
+			if err := json.Unmarshal([]byte(plan), &p.Plan); err != nil {
+				return filler.Pull{}, fmt.Errorf("decode legacy pull plan %s: %w", p.ID, err)
+			}
+		} else {
+			var doc fillerPullPlanDocument
+			if err := json.Unmarshal([]byte(plan), &doc); err != nil {
+				return filler.Pull{}, fmt.Errorf("decode pull plan %s: %w", p.ID, err)
+			}
+			if doc.Version != filler.AcquisitionIntentVersion {
+				return filler.Pull{}, fmt.Errorf("decode pull plan %s: unsupported version %q", p.ID, doc.Version)
+			}
+			p.Intent, p.Plan, p.Rejected, p.Sources = doc.Intent, doc.Selected, doc.Rejected, doc.Sources
 		}
 	}
 	return p, nil

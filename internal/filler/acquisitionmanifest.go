@@ -29,6 +29,7 @@ type AcquisitionArtifact struct {
 	SourceID      string
 	Provider      string
 	SourceURL     string
+	RemoteID      string
 	StagingPath   string
 	MediaPath     string
 	SidecarPath   string

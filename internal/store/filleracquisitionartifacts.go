@@ -11,7 +11,7 @@ import (
 	"github.com/loomarr/loomarr/internal/filler"
 )
 
-const acquisitionArtifactSelect = `SELECT id, acquisition_id, source_id, provider, source_url,
+const acquisitionArtifactSelect = `SELECT id, acquisition_id, source_id, provider, source_url, remote_id,
 	staging_path, media_path, sidecar_path, media_sha256, media_bytes, clip_hash, state,
 	repair_reason, completed_at, updated_at, provider_archive_entry, provider_archive_committed
 	FROM filler_acquisition_artifacts`
@@ -40,13 +40,13 @@ func (s *sqlStore) UpsertAcquisitionArtifacts(ctx context.Context, artifacts []f
 	}
 	defer func() { _ = tx.Rollback() }()
 	query := s.ph(`INSERT INTO filler_acquisition_artifacts
-		(id, acquisition_id, source_id, provider, source_url, staging_path, media_path,
+		(id, acquisition_id, source_id, provider, source_url, remote_id, staging_path, media_path,
 		 sidecar_path, media_sha256, media_bytes, clip_hash, state, repair_reason, completed_at, updated_at,
 		 provider_archive_entry, provider_archive_committed)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 		 acquisition_id=excluded.acquisition_id, source_id=excluded.source_id,
-		 provider=excluded.provider, source_url=excluded.source_url,
+		 provider=excluded.provider, source_url=excluded.source_url, remote_id=excluded.remote_id,
 		 staging_path=excluded.staging_path, media_path=excluded.media_path,
 		 sidecar_path=excluded.sidecar_path, media_sha256=excluded.media_sha256,
 		 media_bytes=excluded.media_bytes, clip_hash=excluded.clip_hash,
@@ -56,7 +56,7 @@ func (s *sqlStore) UpsertAcquisitionArtifacts(ctx context.Context, artifacts []f
 		 provider_archive_committed=excluded.provider_archive_committed`)
 	for _, artifact := range artifacts {
 		if _, err := tx.ExecContext(ctx, query,
-			artifact.ID, artifact.AcquisitionID, artifact.SourceID, artifact.Provider, artifact.SourceURL,
+			artifact.ID, artifact.AcquisitionID, artifact.SourceID, artifact.Provider, artifact.SourceURL, artifact.RemoteID,
 			artifact.StagingPath, artifact.MediaPath, artifact.SidecarPath, artifact.MediaSHA256,
 			artifact.MediaBytes, artifact.ClipHash, string(artifact.State), artifact.RepairReason,
 			epoch(artifact.CompletedAt), epoch(artifact.UpdatedAt), artifact.ProviderArchiveEntry,
@@ -76,7 +76,7 @@ func scanAcquisitionArtifact(sc scannable) (filler.AcquisitionArtifact, error) {
 	var completedAt, updatedAt, providerArchiveCommitted int64
 	if err := sc.Scan(
 		&artifact.ID, &artifact.AcquisitionID, &artifact.SourceID, &artifact.Provider,
-		&artifact.SourceURL, &artifact.StagingPath, &artifact.MediaPath, &artifact.SidecarPath,
+		&artifact.SourceURL, &artifact.RemoteID, &artifact.StagingPath, &artifact.MediaPath, &artifact.SidecarPath,
 		&artifact.MediaSHA256, &artifact.MediaBytes, &artifact.ClipHash, &state,
 		&artifact.RepairReason, &completedAt, &updatedAt, &artifact.ProviderArchiveEntry,
 		&providerArchiveCommitted,
@@ -152,4 +152,34 @@ func (s *sqlStore) listRecoverableAcquisitionArtifacts(ctx context.Context, afte
 		return nil, fmt.Errorf("list recoverable filler acquisition artifacts: %w", err)
 	}
 	return artifacts, nil
+}
+
+// ListAcquisitionRemoteStates is the planner's high-water mark. It reads only identity/state
+// columns, not paths or digests, so a large artifact history does not become a large object graph.
+func (s *sqlStore) ListAcquisitionRemoteStates(ctx context.Context) (map[string]filler.ExistingRemoteState, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT provider, source_id, remote_id, state
+		FROM filler_acquisition_artifacts WHERE remote_id <> ''`)
+	if err != nil {
+		return nil, fmt.Errorf("list filler acquisition remote states: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]filler.ExistingRemoteState{}
+	for rows.Next() {
+		var provider, sourceID, remoteID, state string
+		if err := rows.Scan(&provider, &sourceID, &remoteID, &state); err != nil {
+			return nil, fmt.Errorf("scan filler acquisition remote state: %w", err)
+		}
+		identity := filler.RemoteIdentity{Provider: provider, SourceID: sourceID, RemoteID: remoteID}
+		remoteState := filler.RemoteQueued
+		if filler.AcquisitionArtifactState(state) == filler.ArtifactConsumed {
+			remoteState = filler.RemoteCatalogued
+		}
+		if out[identity.Key()] != filler.RemoteCatalogued {
+			out[identity.Key()] = remoteState
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list filler acquisition remote states: %w", err)
+	}
+	return out, nil
 }

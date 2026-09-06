@@ -11,10 +11,20 @@ const pull = (over: Partial<PullDTO> = {}): PullDTO => ({
   proposedBy: "ada",
   status: "pending",
   estimateClips: 52,
+  candidateCount: 2,
+  intent: {
+    version: "filler-acquisition-intent/v1",
+    rights: "prefer_declared",
+    count: 2,
+    catalogReason: "Saturday Mornings falls back to bumpers.",
+  },
+  rejected: [],
+  sources: [],
   createdAt: "2026-08-01T12:00:00Z",
   plan: [
     {
       sourceId: "classic",
+      candidateId: "candidate_classic",
       tag: "archive",
       name: "Classic TV commercials",
       why: "Era match",
@@ -23,6 +33,7 @@ const pull = (over: Partial<PullDTO> = {}): PullDTO => ({
     },
     {
       sourceId: "psa",
+      candidateId: "candidate_psa",
       tag: "archive",
       name: "Public service",
       why: "Break variety",
@@ -50,6 +61,57 @@ describe("PullCard", () => {
     expect(screen.getByText("Top up the 1990s")).toBeInTheDocument();
   });
 
+  it("keeps excluded candidate evidence inspectable", async () => {
+    render(
+      <PullCard
+        pull={pull({
+          rejected: [
+            {
+              candidateId: "candidate_low",
+              sourceId: "classic",
+              provider: "archive",
+              remoteId: "low",
+              name: "Low-quality reel",
+              disposition: "quality_below_floor",
+              detail: "remote height 240p is below the floor",
+            },
+          ],
+        })}
+        onApprove={() => {}}
+        onDismiss={() => {}}
+      />,
+    );
+
+    await userEvent.click(screen.getByText(/1 other candidate considered and excluded/i));
+    expect(screen.getByText("Low-quality reel")).toBeInTheDocument();
+    expect(screen.getByText(/quality below floor: remote height 240p/i)).toBeInTheDocument();
+  });
+
+  it("keeps skipped source decisions inspectable", async () => {
+    render(
+      <PullCard
+        pull={pull({
+          sources: [
+            {
+              sourceId: "disabled-local",
+              provider: "archive",
+              label: "Local ads",
+              disposition: "disabled",
+              candidateCount: 0,
+              detail: "registered source is disabled",
+            },
+          ],
+        })}
+        onApprove={() => {}}
+        onDismiss={() => {}}
+      />,
+    );
+
+    await userEvent.click(screen.getByText(/1 registered source not searched/i));
+    expect(screen.getByText("Local ads")).toBeInTheDocument();
+    expect(screen.getByText(/disabled: registered source is disabled/i)).toBeInTheDocument();
+  });
+
   // ⚠ Estimates are rendered AS estimates. What a source yields depends on what is still there
   // and what deduplicates, so an exact-looking number becomes a bug report about a forecast.
   it("renders per-source counts as approximate", () => {
@@ -67,10 +129,28 @@ describe("PullCard", () => {
     await userEvent.click(screen.getByRole("button", { name: /leave public service out/i }));
     expect(onApprove).not.toHaveBeenCalled();
 
-    await userEvent.type(screen.getByLabelText("Notes for this pull"), "no local dealers");
+    await userEvent.type(screen.getByLabelText("Notes for this pull"), "reviewed by programming");
     await userEvent.click(screen.getByRole("button", { name: "Approve pull" }));
 
-    expect(onApprove).toHaveBeenCalledWith({ dropSourceIds: ["psa"], note: "no local dealers" });
+    expect(onApprove).toHaveBeenCalledWith({
+      dropCandidateIds: ["candidate_psa"],
+      note: "reviewed by programming",
+    });
+  });
+
+  it("presents notes as annotations without changing the included candidates", async () => {
+    const onApprove = vi.fn();
+    render(<PullCard pull={pull()} onApprove={onApprove} onDismiss={() => {}} />);
+
+    expect(screen.getByPlaceholderText("Optional annotation for your records")).toBeInTheDocument();
+    expect(
+      screen.getByText("Optional annotation for your records. This does not change what is downloaded."),
+    ).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Notes for this pull"), "keep the selected mix");
+    await userEvent.click(screen.getByRole("button", { name: "Approve pull" }));
+
+    expect(onApprove).toHaveBeenCalledWith({ dropCandidateIds: [], note: "keep the selected mix" });
   });
 
   it("lets a dropped row be put back before committing", async () => {
@@ -81,7 +161,7 @@ describe("PullCard", () => {
     await userEvent.click(screen.getByRole("button", { name: /put public service back/i }));
     await userEvent.click(screen.getByRole("button", { name: "Approve pull" }));
 
-    expect(onApprove).toHaveBeenCalledWith({ dropSourceIds: [], note: "" });
+    expect(onApprove).toHaveBeenCalledWith({ dropCandidateIds: [], note: "" });
   });
 
   // The server refuses an all-dropped approval rather than recording one that fetched nothing.

@@ -17,9 +17,16 @@ type pullBody struct {
 	Note          string `json:"note"`
 	EstimateClips int    `json:"estimateClips"`
 	Plan          []struct {
-		SourceID string `json:"sourceId"`
-		Dropped  bool   `json:"dropped"`
+		CandidateID string `json:"candidateId"`
+		SourceID    string `json:"sourceId"`
+		RemoteID    string `json:"remoteId"`
+		URL         string `json:"url"`
+		Dropped     bool   `json:"dropped"`
 	} `json:"plan"`
+	Rejected []struct {
+		RemoteID    string `json:"remoteId"`
+		Disposition string `json:"disposition"`
+	} `json:"rejected"`
 }
 
 func decodePull(t *testing.T, res *http.Response) pullBody {
@@ -103,6 +110,61 @@ func TestProposeFillerPull_DownloadsNothing(t *testing.T) {
 	}
 }
 
+func TestProposeFillerPull_BindsExactRankedCandidatesAndEvidence(t *testing.T) {
+	srv, st, ff := newFillerServer(t)
+	seedSource(t, st, "classic", "https://archive.org/details/classic", true)
+	ff.Candidates = []filler.AcquisitionCandidate{
+		{Identity: filler.RemoteIdentity{Provider: "archive", SourceID: "classic", RemoteID: "low"}, URL: "https://archive.org/details/low", Title: "Low copy", Height: 480},
+		{Identity: filler.RemoteIdentity{Provider: "archive", SourceID: "classic", RemoteID: "hd"}, URL: "https://archive.org/details/hd", Title: "HD reel", Height: 1080},
+	}
+
+	res := sourceReq(t, http.MethodPost, srv.URL+"/v1/filler/pulls",
+		`{"reason":"Improve Saturday coverage","intent":{"count":1,"minHeight":720}}`, adminToken)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	body := decodePull(t, res)
+	if len(body.Plan) != 1 || body.Plan[0].RemoteID != "hd" || body.Plan[0].URL != "https://archive.org/details/hd" {
+		t.Fatalf("selected plan = %+v, want exact HD item", body.Plan)
+	}
+	if len(body.Rejected) != 1 || body.Rejected[0].RemoteID != "low" || body.Rejected[0].Disposition != "quality_below_floor" {
+		t.Fatalf("rejected evidence = %+v", body.Rejected)
+	}
+	if len(ff.ingested) != 0 {
+		t.Fatalf("proposal downloaded %v", ff.ingested)
+	}
+
+	approved := sourceReq(t, http.MethodPost, srv.URL+"/v1/filler/pulls/"+body.ID+"/approve", `{}`, adminToken)
+	if approved.StatusCode != http.StatusOK {
+		t.Fatalf("approve status = %d, want 200", approved.StatusCode)
+	}
+	if len(ff.ingested) != 1 || ff.ingested[0] != "https://archive.org/details/hd" {
+		t.Fatalf("approved ingest = %v, want exact candidate URL", ff.ingested)
+	}
+}
+
+func TestApproveFillerPull_DropsOneCandidateWithoutDroppingItsSource(t *testing.T) {
+	srv, st, ff := newFillerServer(t)
+	seedSource(t, st, "classic", "https://archive.org/details/classic", true)
+	ff.Candidates = []filler.AcquisitionCandidate{
+		{Identity: filler.RemoteIdentity{Provider: "archive", SourceID: "classic", RemoteID: "one"}, URL: "https://archive.org/details/one"},
+		{Identity: filler.RemoteIdentity{Provider: "archive", SourceID: "classic", RemoteID: "two"}, URL: "https://archive.org/details/two"},
+	}
+	created := decodePull(t, sourceReq(t, http.MethodPost, srv.URL+"/v1/filler/pulls", `{"intent":{"count":2}}`, adminToken))
+	if len(created.Plan) != 2 {
+		t.Fatalf("plan = %+v", created.Plan)
+	}
+	drop := created.Plan[0]
+	res := sourceReq(t, http.MethodPost, srv.URL+"/v1/filler/pulls/"+created.ID+"/approve",
+		`{"dropCandidateIds":["`+drop.CandidateID+`"]}`, adminToken)
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", res.StatusCode)
+	}
+	if len(ff.ingested) != 1 || ff.ingested[0] == drop.URL {
+		t.Fatalf("ingested = %v, should contain only the other candidate", ff.ingested)
+	}
+}
+
 // The mock writes an empty state for this precondition; it belongs on the server, because a pull
 // composed from a switched-off source is one that can never run, and finding that out AFTER a
 // human approved it is the worst moment.
@@ -116,6 +178,20 @@ func TestProposeFillerPull_RefusedWhenEverySourceIsOff(t *testing.T) {
 	}
 	if pulls, _ := st.ListPulls(context.Background(), ""); len(pulls) != 0 {
 		t.Errorf("wrote %d pulls that could never run", len(pulls))
+	}
+}
+
+func TestProposeFillerPull_RejectsUnknownIntentVocabulary(t *testing.T) {
+	srv, st, _ := newFillerServer(t)
+	seedSource(t, st, "classic", "https://archive.org/details/classic", true)
+
+	res := sourceReq(t, http.MethodPost, srv.URL+"/v1/filler/pulls",
+		`{"intent":{"roles":["probably_an_ad"]}}`, adminToken)
+	if res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", res.StatusCode)
+	}
+	if pulls, _ := st.ListPulls(t.Context(), ""); len(pulls) != 0 {
+		t.Fatalf("invalid intent persisted %d pulls", len(pulls))
 	}
 }
 
@@ -145,13 +221,13 @@ func TestApproveFillerPull_IsTheOnlyPathThatDownloads(t *testing.T) {
 	if len(ff.ingested) != 1 || ff.ingested[0] != "https://archive.org/details/classic" {
 		t.Errorf("ingested %v, want the source's uri once", ff.ingested)
 	}
-	if ff.pullID != created.ID || len(ff.pullTargets) != 1 || ff.pullTargets[0].SourceID != "classic" || ff.pullTargets[0].Kind != "archive" {
+	if ff.pullID != created.ID || len(ff.pullTargets) != 1 || ff.pullTargets[0].SourceID != "classic" || ff.pullTargets[0].Kind != "archive" || ff.pullTargets[0].RemoteID != "classic" {
 		t.Errorf("pull attribution = id %q targets %+v, want approved pull and exact source", ff.pullID, ff.pullTargets)
 	}
 }
 
-// A double-click, a retried request, or a second admin on the same queue must not enqueue the
-// same downloads twice.
+// A retry after the first decision is durable must not enqueue the same downloads twice.
+// Atomic concurrency across two simultaneous reads is tracked separately in #955.
 func TestApproveFillerPull_CannotBeApprovedTwice(t *testing.T) {
 	srv, st, ff := newFillerServer(t)
 	seedSource(t, st, "classic", "https://archive.org/details/classic", true)
@@ -165,6 +241,34 @@ func TestApproveFillerPull_CannotBeApprovedTwice(t *testing.T) {
 	}
 	if len(ff.ingested) != 1 {
 		t.Errorf("enqueued %d times, want 1 — an approved pull must not re-fetch", len(ff.ingested))
+	}
+}
+
+func TestApproveFillerPull_RevalidatesCandidateAgainstOtherQueuedWork(t *testing.T) {
+	srv, st, ff := newFillerServer(t)
+	seedSource(t, st, "classic", "https://archive.org/details/classic", true)
+	ff.Candidates = []filler.AcquisitionCandidate{{
+		Identity: filler.RemoteIdentity{Provider: "archive", SourceID: "classic", RemoteID: "same"},
+		URL:      "https://archive.org/details/same", Title: "Same reel",
+	}}
+	created := decodePull(t, sourceReq(t, http.MethodPost, srv.URL+"/v1/filler/pulls", `{}`, adminToken))
+	pull, err := st.GetPull(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := pull
+	other.ID = "other-pull"
+	other.CreatedAt = other.CreatedAt.Add(time.Second)
+	if err := st.UpsertPull(t.Context(), other); err != nil {
+		t.Fatal(err)
+	}
+
+	res := sourceReq(t, http.MethodPost, srv.URL+"/v1/filler/pulls/"+created.ID+"/approve", `{}`, adminToken)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", res.StatusCode)
+	}
+	if len(ff.ingested) != 0 {
+		t.Fatalf("revalidation still ingested %v", ff.ingested)
 	}
 }
 

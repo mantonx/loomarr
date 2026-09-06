@@ -23,6 +23,54 @@ components:
         - consumed
         - repair
       type: object
+    AcquisitionIntent:
+      additionalProperties: false
+      properties:
+        audiences:
+          items:
+            type: string
+          type: array
+        catalogReason:
+          type: string
+        count:
+          format: int64
+          type: integer
+        eraEnd:
+          format: int64
+          type: integer
+        eraStart:
+          format: int64
+          type: integer
+        geography:
+          $ref: "#/components/schemas/Geography"
+        maxDurationMs:
+          format: int64
+          type: integer
+        minHeight:
+          format: int64
+          type: integer
+        rights:
+          type: string
+        roles:
+          items:
+            type: string
+          type: array
+        sourceAllowlist:
+          items:
+            type: string
+          type: array
+        taxonomyGaps:
+          items:
+            type: string
+          type: array
+        version:
+          type: string
+      required:
+        - version
+        - rights
+        - count
+        - catalogReason
+      type: object
     AcquisitionOutcomeDTO:
       additionalProperties: false
       properties:
@@ -62,6 +110,31 @@ components:
           type: string
       required:
         - count
+      type: object
+    AcquisitionSourceDecision:
+      additionalProperties: false
+      properties:
+        candidateCount:
+          format: int64
+          type: integer
+        detail:
+          type: string
+        disposition:
+          type: string
+        geography:
+          $ref: "#/components/schemas/Geography"
+        label:
+          type: string
+        provider:
+          type: string
+        sourceId:
+          type: string
+      required:
+        - sourceId
+        - provider
+        - disposition
+        - candidateCount
+        - detail
       type: object
     ActiveRuleDTO:
       additionalProperties: false
@@ -248,12 +321,16 @@ components:
           format: uri
           readOnly: true
           type: string
+        dropCandidateIds:
+          items:
+            type: string
+          type: array
         dropSourceIds:
           items:
             type: string
           type: array
         note:
-          description: Narrowing instruction, e.g. 'no local dealers, no PSAs'
+          description: Optional annotation for the approval record; does not change what is downloaded
           type: string
       type: object
     ApproveOutputBody:
@@ -3543,6 +3620,14 @@ components:
             type: string
           type: array
       type: object
+    Geography:
+      additionalProperties: false
+      properties:
+        country:
+          type: string
+        market:
+          type: string
+      type: object
     GetDocOutputBody:
       additionalProperties: false
       properties:
@@ -4334,6 +4419,58 @@ components:
           type: string
       required:
         - description
+      type: object
+    IntentStruct:
+      additionalProperties: false
+      properties:
+        audiences:
+          items:
+            type: string
+          type: array
+        count:
+          format: int64
+          maximum: 50
+          minimum: 1
+          type: integer
+        eraEnd:
+          format: int64
+          maximum: 2200
+          minimum: 1800
+          type: integer
+        eraStart:
+          format: int64
+          maximum: 2200
+          minimum: 1800
+          type: integer
+        geography:
+          $ref: "#/components/schemas/Geography"
+        maxDurationMs:
+          format: int64
+          minimum: 0
+          type: integer
+        minHeight:
+          format: int64
+          maximum: 4320
+          minimum: 0
+          type: integer
+        rights:
+          enum:
+            - any
+            - prefer_declared
+            - require_declared
+          type: string
+        roles:
+          items:
+            type: string
+          type: array
+        sourceAllowlist:
+          items:
+            type: string
+          type: array
+        taxonomyGaps:
+          items:
+            type: string
+          type: array
       type: object
     InvitationBearerInputBody:
       additionalProperties: false
@@ -6662,6 +6799,8 @@ components:
           format: uri
           readOnly: true
           type: string
+        intent:
+          $ref: "#/components/schemas/IntentStruct"
         reason:
           description: Optional; the gap this pull closes
           type: string
@@ -6679,6 +6818,10 @@ components:
           format: uri
           readOnly: true
           type: string
+        candidateCount:
+          description: Exact number of remote items still selected; unlike estimateClips this does not predict how many clips segmentation will yield.
+          format: int64
+          type: integer
         createdAt:
           description: RFC3339
           type: string
@@ -6692,6 +6835,8 @@ components:
           type: integer
         id:
           type: string
+        intent:
+          $ref: "#/components/schemas/AcquisitionIntent"
         note:
           description: The operator's narrowing instruction, captured at approval
           type: string
@@ -6704,6 +6849,14 @@ components:
         reason:
           description: The gap this pull closes. Shown above the plan — 'approve this' without a reason is a button, not a decision.
           type: string
+        rejected:
+          items:
+            $ref: "#/components/schemas/PullRejectedCandidateDTO"
+          type: array
+        sources:
+          items:
+            $ref: "#/components/schemas/AcquisitionSourceDecision"
+          type: array
         status:
           enum:
             - pending
@@ -6719,37 +6872,96 @@ components:
         - proposedBy
         - status
         - plan
+        - intent
+        - rejected
+        - sources
         - estimateClips
+        - candidateCount
         - createdAt
       type: object
     PullPlanRowDTO:
       additionalProperties: false
       properties:
+        candidateId:
+          description: Stable handle used to drop this exact candidate
+          type: string
         dropped:
           description: The operator excluded this row before approving. Retained rather than removed, so the record shows what was proposed as well as what was agreed to.
           type: boolean
+        durationMs:
+          format: int64
+          type: integer
         estimateClips:
           description: Expected clips from this row. An ESTIMATE — render it as one.
           format: int64
           type: integer
+        geography:
+          $ref: "#/components/schemas/Geography"
+        height:
+          format: int64
+          type: integer
+        license:
+          description: Provider/source-declared rights evidence; empty means unknown
+          type: string
         name:
           type: string
+        observedYear:
+          description: Weak remote observation; never grounded clip era
+          format: int64
+          type: integer
+        provider:
+          type: string
+        publishedAt:
+          description: Provider publication/upload date; never clip era
+          type: string
+        remoteId:
+          type: string
         sourceId:
-          description: The registered collection this row fetches from
+          description: The registered collection this item came from
           type: string
         tag:
           description: Short label for the row's chip (an era, an audience)
+          type: string
+        url:
+          description: Exact remote item URL; absent only on historical source-level pulls
           type: string
         why:
           description: Why THIS source is in the plan
           type: string
       required:
+        - candidateId
         - sourceId
         - tag
         - name
         - why
         - estimateClips
         - dropped
+      type: object
+    PullRejectedCandidateDTO:
+      additionalProperties: false
+      properties:
+        candidateId:
+          type: string
+        detail:
+          type: string
+        disposition:
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+        remoteId:
+          type: string
+        sourceId:
+          type: string
+      required:
+        - candidateId
+        - sourceId
+        - provider
+        - remoteId
+        - name
+        - disposition
+        - detail
       type: object
     PutUserContactAddressInputBody:
       additionalProperties: false
@@ -12004,7 +12216,7 @@ paths:
       tags:
         - filler
     post:
-      description: "Admin only (§10 V35). Composes a plan across the ENABLED filler sources and writes it to the approval queue. ⚠ **Downloads nothing** — that is the whole point: the machine proposes, a human commits. Refused with 409 when every source the plan would need is switched off, naming the switch to flip rather than writing a pull that could never run."
+      description: Admin only (§10 V66). Enumerates enabled registered sources without downloading, applies explicit acquisition intent, and persists exact selected item URLs plus rejected explanations. ⚠ **Downloads nothing** — the machine proposes and a human commits. Refused with 409 when no source is eligible or no candidate satisfies the constraints.
       operationId: propose-filler-pull
       requestBody:
         content:
@@ -12030,7 +12242,7 @@ paths:
         - filler
   /v1/filler/pulls/{id}/approve:
     post:
-      description: "Admin only (§10 V35). THE gate: this is the only path on which a pull downloads anything, and it enqueues through the EXISTING ingest job rather than a route of its own. The body carries the operator's edits — rows dropped, and a note narrowing what to fetch. Dropped rows are recorded, not erased. Approving an already-decided pull is a 409, so a double-click cannot enqueue twice."
+      description: "Admin only (§10 V66). THE gate: this is the only path on which a pull downloads anything, and it enqueues through the EXISTING ingest job rather than a route of its own. The body carries the operator's edits — exact candidates dropped, and a note narrowing what to fetch. Dropped rows are recorded, not erased. Approving an already-decided pull returns 409."
       operationId: approve-filler-pull
       parameters:
         - in: path
