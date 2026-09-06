@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -16,9 +15,6 @@ import (
 )
 
 type operationRepositoryState struct {
-	run        LedgerRun
-	begun      bool
-	events     []LedgerEvent
 	budgetHeld bool
 	reserveErr error
 	settleErr  error
@@ -113,27 +109,13 @@ func newOperationFixture(t *testing.T, intervals []proposedInterval) operationFi
 func recordedRepository(state *operationRepositoryState) *recordedExecutionRepository {
 	var repository *recordedExecutionRepository
 	repository = &recordedExecutionRepository{
-		BeginFunc: func(_ context.Context, run LedgerRun) (bool, error) {
-			if err := ValidateLedgerRun(run); err != nil {
-				return false, err
-			}
-			if state.begun {
-				if !reflect.DeepEqual(state.run, run) {
-					return false, ErrLedgerConflict
-				}
-				return false, nil
-			}
-			state.run, state.begun = run, true
-			return true, nil
+		State:         &operationfixture.State[LedgerRun, LedgerEvent]{},
+		ValidateRun:   ValidateLedgerRun,
+		ConflictError: ErrLedgerConflict,
+		ValidateEvent: func(event LedgerEvent) error {
+			_, err := CanonicalLedgerEvent(event)
+			return err
 		},
-		AppendFunc: func(_ context.Context, event LedgerEvent) error {
-			if _, err := CanonicalLedgerEvent(event); err != nil {
-				return err
-			}
-			state.events = append(state.events, event)
-			return nil
-		},
-		ListFunc: func(context.Context, string) ([]LedgerEvent, error) { return slices.Clone(state.events), nil },
 		ReserveFunc: func(ctx context.Context, command HostedCallReservation) (LedgerEvent, error) {
 			if state.reserveErr != nil {
 				return LedgerEvent{}, state.reserveErr
@@ -144,20 +126,21 @@ func recordedRepository(state *operationRepositoryState) *recordedExecutionRepos
 			}
 			event := LedgerEvent{ID: command.EventID, RunID: command.RunID, Ordinal: command.Ordinal, Kind: LedgerInferenceReserved, CreatedAt: command.CreatedAt,
 				Reserve: &InferenceReserved{EvaluationID: command.EvaluationID, RequestSHA256: command.RequestSHA256, RequestedProvider: command.RequestedProvider, RequestedModel: command.RequestedModel, UpstreamProvider: command.UpstreamProvider, CapabilitySHA256: command.Versions.CapabilitySHA256, PromptSHA256: command.Versions.PromptSHA256, CandidateID: command.CandidateID, Modalities: slices.Clone(command.Modalities), RequestedNanoUSD: command.RequestedNanoUSD, ReservedNanoUSD: reserved, State: reservationState}}
-			return event, repository.AppendSpokenSafetyEvent(ctx, event)
+			return event, nil
 		},
 		SettleFunc: func(ctx context.Context, command HostedCallSettlement) (LedgerEvent, error) {
 			if state.settleErr != nil {
 				return LedgerEvent{}, state.settleErr
 			}
-			reservation := state.events[len(state.events)-1]
+			events := repository.Events()
+			reservation := events[len(events)-1]
 			settlementState := SettlementCompleted
 			if command.Failure != FailureNone {
 				settlementState = SettlementFailed
 			}
 			event := LedgerEvent{ID: command.EventID, RunID: command.RunID, Ordinal: command.Ordinal, Kind: LedgerInferenceSettled, CreatedAt: command.CreatedAt,
 				Settle: &InferenceSettled{ReservationEventID: command.ReservationEventID, EvaluationID: reservation.Reserve.EvaluationID, ResponseSHA256: command.ResponseSHA256, ResolvedProvider: command.ResolvedProvider, ResolvedModel: command.ResolvedModel, UpstreamProvider: command.UpstreamProvider, GenerationID: command.GenerationID, State: settlementState, Failure: command.Failure, Outcome: command.Outcome, ChargedAmountUSD: command.ChargedAmountUSD, ChargedNanoUSD: command.ChargedNanoUSD, AccountedNanoUSD: command.ChargedNanoUSD, ChargeKnown: command.ChargeKnown, PromptTokens: command.PromptTokens, CompletionTokens: command.CompletionTokens}}
-			return event, repository.AppendSpokenSafetyEvent(ctx, event)
+			return event, nil
 		},
 	}
 	return repository

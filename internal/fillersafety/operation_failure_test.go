@@ -24,8 +24,8 @@ func TestEvaluationOperationBudgetHoldPreventsHTTPAndReturnsDurableHold(t *testi
 		len(fixture.repository.Reservations()) != 1 || len(fixture.repository.Settlements()) != 0 {
 		t.Fatalf("report=%+v calls=%d/%d reservations=%d settlements=%d", report, fixture.audio.Calls(), fixture.video.Calls(), len(fixture.repository.Reservations()), len(fixture.repository.Settlements()))
 	}
-	if got := fixture.state.events[len(fixture.state.events)-1]; got.Terminal == nil {
-		t.Fatalf("budget hold did not reach a durable terminal: %+v", got)
+	if events := fixture.repository.Events(); events[len(events)-1].Terminal == nil {
+		t.Fatalf("budget hold did not reach a durable terminal: %+v", events[len(events)-1])
 	}
 }
 
@@ -60,7 +60,7 @@ func TestEvaluationOperationPersistsUnprojectablePresenceWithoutPromotingIt(t *t
 		len(fixture.repository.Settlements()) != 1 || fixture.repository.Settlements()[0].Failure != FailureInvalidResponse {
 		t.Fatalf("report=%+v settlements=%+v", report, fixture.repository.Settlements())
 	}
-	raw, err := json.Marshal(fixture.state.events)
+	raw, err := json.Marshal(fixture.repository.Events())
 	if err != nil || strings.Contains(string(raw), "private malformed timing detail") {
 		t.Fatalf("ledger retained private provider detail: %s err=%v", raw, err)
 	}
@@ -74,8 +74,8 @@ func TestEvaluationOperationReservationFailureLeavesRunForRecovery(t *testing.T)
 	if _, err := fixture.operation.Evaluate(t.Context(), fixture.request); err == nil {
 		t.Fatal("expected reservation persistence failure")
 	}
-	if fixture.audio.Calls() != 0 || len(fixture.state.events) != 2 || fixture.state.events[1].Proposal == nil {
-		t.Fatalf("calls=%d events=%+v", fixture.audio.Calls(), fixture.state.events)
+	if events := fixture.repository.Events(); fixture.audio.Calls() != 0 || len(events) != 2 || events[1].Proposal == nil {
+		t.Fatalf("calls=%d events=%+v", fixture.audio.Calls(), events)
 	}
 	if _, err := fixture.operation.Evaluate(t.Context(), fixture.request); !errors.Is(err, ErrEvaluationIncomplete) {
 		t.Fatalf("in-place retry=%v, want ErrEvaluationIncomplete", err)
@@ -91,8 +91,8 @@ func TestEvaluationOperationPlanningFailureLeavesIncompleteHeader(t *testing.T) 
 	if _, err := fixture.operation.Evaluate(t.Context(), fixture.request); err == nil {
 		t.Fatal("expected planning failure")
 	}
-	if !fixture.state.begun || len(fixture.state.events) != 0 || fixture.proposer.Calls() != 0 || fixture.audio.Calls() != 0 || fixture.video.Calls() != 0 {
-		t.Fatalf("header=%t events=%d calls=%d/%d/%d", fixture.state.begun, len(fixture.state.events), fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
+	if !fixture.repository.Begun() || len(fixture.repository.Events()) != 0 || fixture.proposer.Calls() != 0 || fixture.audio.Calls() != 0 || fixture.video.Calls() != 0 {
+		t.Fatalf("header=%t events=%d calls=%d/%d/%d", fixture.repository.Begun(), len(fixture.repository.Events()), fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
 	}
 	if _, err := fixture.operation.Evaluate(t.Context(), fixture.request); !errors.Is(err, ErrEvaluationIncomplete) {
 		t.Fatalf("duplicate error=%v, want ErrEvaluationIncomplete", err)
@@ -108,9 +108,10 @@ func TestEvaluationOperationUnknownChargeLeavesAcceptedReservationUnsettled(t *t
 	if _, err := fixture.operation.Evaluate(t.Context(), fixture.request); !errors.Is(err, ErrEvaluationIncomplete) {
 		t.Fatalf("err=%v, want ErrEvaluationIncomplete", err)
 	}
+	events := fixture.repository.Events()
 	if fixture.audio.Calls() != 1 || len(fixture.repository.Settlements()) != 0 ||
-		len(fixture.state.events) != 3 || fixture.state.events[2].Reserve == nil {
-		t.Fatalf("calls=%d settlements=%d events=%+v", fixture.audio.Calls(), len(fixture.repository.Settlements()), fixture.state.events)
+		len(events) != 3 || events[2].Reserve == nil {
+		t.Fatalf("calls=%d settlements=%d events=%+v", fixture.audio.Calls(), len(fixture.repository.Settlements()), events)
 	}
 }
 
@@ -122,8 +123,8 @@ func TestEvaluationOperationSettlementFailureCannotReturnUnrecordedEvidence(t *t
 	if _, err := fixture.operation.Evaluate(t.Context(), fixture.request); err == nil {
 		t.Fatal("expected settlement persistence failure")
 	}
-	if fixture.audio.Calls() != 1 || len(fixture.state.events) != 3 ||
-		fixture.state.events[len(fixture.state.events)-1].Reserve == nil {
-		t.Fatalf("calls=%d events=%+v", fixture.audio.Calls(), fixture.state.events)
+	if events := fixture.repository.Events(); fixture.audio.Calls() != 1 || len(events) != 3 ||
+		events[len(events)-1].Reserve == nil {
+		t.Fatalf("calls=%d events=%+v", fixture.audio.Calls(), events)
 	}
 }

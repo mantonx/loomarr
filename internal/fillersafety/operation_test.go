@@ -22,8 +22,9 @@ func TestEvaluationOperationRecordsSerialCascadeBeforeReturningEvidence(t *testi
 		fixture.proposer.Calls() != 1 || fixture.audio.Calls() != 1 || fixture.video.Calls() != 1 {
 		t.Fatalf("report=%+v calls=%d/%d/%d", report, fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
 	}
-	kinds := make([]LedgerEventKind, 0, len(fixture.state.events))
-	for index, event := range fixture.state.events {
+	events := fixture.repository.Events()
+	kinds := make([]LedgerEventKind, 0, len(events))
+	for index, event := range events {
 		if event.Ordinal != index {
 			t.Fatalf("event %d has ordinal %d", index, event.Ordinal)
 		}
@@ -37,9 +38,9 @@ func TestEvaluationOperationRecordsSerialCascadeBeforeReturningEvidence(t *testi
 	if !slices.Equal(kinds, wantKinds) {
 		t.Fatalf("event kinds=%v", kinds)
 	}
-	terminal := fixture.state.events[len(fixture.state.events)-1].Terminal
+	terminal := events[len(events)-1].Terminal
 	if terminal == nil || !sameResult(terminal.Result, report.Result) ||
-		len(terminal.EventIDs) != len(fixture.state.events)-1 {
+		len(terminal.EventIDs) != len(events)-1 {
 		t.Fatalf("terminal=%+v", terminal)
 	}
 	reservations := fixture.repository.Reservations()
@@ -63,14 +64,14 @@ func TestEvaluationOperationReturnsCompletedRunWithoutRepeatingWork(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	eventCount := len(fixture.state.events)
+	eventCount := len(fixture.repository.Events())
 	second, err := fixture.operation.Evaluate(t.Context(), fixture.request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflectEvaluationReport(first, second) || len(fixture.state.events) != eventCount ||
+	if !reflectEvaluationReport(first, second) || len(fixture.repository.Events()) != eventCount ||
 		fixture.proposer.Calls() != 1 || fixture.audio.Calls() != 1 || fixture.video.Calls() != 1 {
-		t.Fatalf("first=%+v second=%+v events=%d calls=%d/%d/%d", first, second, len(fixture.state.events), fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
+		t.Fatalf("first=%+v second=%+v events=%d calls=%d/%d/%d", first, second, len(fixture.repository.Events()), fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
 	}
 }
 
@@ -81,7 +82,7 @@ func TestEvaluationOperationReplaysCompletedRunBeforeSourceWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	events, reservations, settlements := len(fixture.state.events), len(fixture.repository.Reservations()), len(fixture.repository.Settlements())
+	events, reservations, settlements := len(fixture.repository.Events()), len(fixture.repository.Reservations()), len(fixture.repository.Settlements())
 	if err := os.WriteFile(fixture.request.Source.Path, []byte("changed source bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -89,10 +90,10 @@ func TestEvaluationOperationReplaysCompletedRunBeforeSourceWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflectEvaluationReport(first, second) || len(fixture.state.events) != events ||
+	if !reflectEvaluationReport(first, second) || len(fixture.repository.Events()) != events ||
 		len(fixture.repository.Reservations()) != reservations || len(fixture.repository.Settlements()) != settlements ||
 		fixture.proposer.Calls() != 1 || fixture.audio.Calls() != 1 || fixture.video.Calls() != 1 {
-		t.Fatalf("first=%+v second=%+v events=%d reservations=%d settlements=%d calls=%d/%d/%d", first, second, len(fixture.state.events), len(fixture.repository.Reservations()), len(fixture.repository.Settlements()), fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
+		t.Fatalf("first=%+v second=%+v events=%d reservations=%d settlements=%d calls=%d/%d/%d", first, second, len(fixture.repository.Events()), len(fixture.repository.Reservations()), len(fixture.repository.Settlements()), fixture.proposer.Calls(), fixture.audio.Calls(), fixture.video.Calls())
 	}
 }
 
