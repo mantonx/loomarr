@@ -2907,6 +2907,190 @@ components:
         - outcome
         - artifacts
       type: object
+    FillerAirworthinessDTO:
+      additionalProperties: false
+      properties:
+        authoritySha256:
+          type: string
+        contractVersion:
+          type: string
+        decisionSha256:
+          type: string
+        evidenceSha256s:
+          items:
+            type: string
+          type: array
+        heldAxes:
+          items:
+            enum:
+              - visual
+              - spoken
+              - written
+            type: string
+          type: array
+        observedFlags:
+          items:
+            enum:
+              - adult_nudity
+              - age_ambiguous
+              - alcohol
+              - animal_harm_or_death
+              - commercial_or_brand
+              - drug
+              - explicit_sexual_language
+              - frightening_or_disturbing
+              - gambling
+              - graphic_violence_or_gore
+              - hate_or_extremist_symbol
+              - hateful_targeting
+              - human_death_or_corpse
+              - minor_nudity_or_sexual_risk
+              - minor_present
+              - non_graphic_violence
+              - profanity
+              - regulated_product_promotion
+              - religious_suffering
+              - self_harm_or_suicide
+              - severe_injury_or_medical
+              - sexual_activity_or_presentation
+              - slur_or_degrading_language
+              - threat
+              - tobacco_or_nicotine
+              - war_or_military
+              - weapon_depiction
+            type: string
+          type: array
+        policyVersion:
+          type: string
+        profile:
+          enum:
+            - all_ages
+            - general_audience
+            - restricted_archive
+          type: string
+        reasonCodes:
+          items:
+            enum:
+              - airworthiness_evidence_satisfied
+              - airworthiness_prohibited_observation
+              - airworthiness_observation_requires_review
+              - airworthiness_coverage_incomplete
+              - airworthiness_certification_incomplete
+              - airworthiness_evidence_invalid
+              - airworthiness_restricted_archive_not_playout
+            type: string
+          type: array
+        schemaVersion:
+          format: int64
+          type: integer
+        subjectSha256:
+          type: string
+        triggers:
+          items:
+            $ref: "#/components/schemas/FillerAirworthinessTriggerDTO"
+          type: array
+        verdict:
+          enum:
+            - pass
+            - reject
+            - hold
+          type: string
+        vocabularyVersion:
+          type: string
+      required:
+        - schemaVersion
+        - contractVersion
+        - subjectSha256
+        - profile
+        - policyVersion
+        - vocabularyVersion
+        - verdict
+        - reasonCodes
+        - observedFlags
+        - heldAxes
+        - triggers
+        - evidenceSha256s
+        - authoritySha256
+        - decisionSha256
+      type: object
+    FillerAirworthinessTriggerDTO:
+      additionalProperties: false
+      properties:
+        axis:
+          enum:
+            - visual
+            - spoken
+            - written
+          type: string
+        context:
+          enum:
+            - presence
+            - depiction
+            - promotion
+            - instruction
+          type: string
+        effect:
+          enum:
+            - reject
+            - review
+          type: string
+        endMs:
+          format: int64
+          type: integer
+        evidenceSha256:
+          type: string
+        flag:
+          enum:
+            - adult_nudity
+            - age_ambiguous
+            - alcohol
+            - animal_harm_or_death
+            - commercial_or_brand
+            - drug
+            - explicit_sexual_language
+            - frightening_or_disturbing
+            - gambling
+            - graphic_violence_or_gore
+            - hate_or_extremist_symbol
+            - hateful_targeting
+            - human_death_or_corpse
+            - minor_nudity_or_sexual_risk
+            - minor_present
+            - non_graphic_violence
+            - profanity
+            - regulated_product_promotion
+            - religious_suffering
+            - self_harm_or_suicide
+            - severe_injury_or_medical
+            - sexual_activity_or_presentation
+            - slur_or_degrading_language
+            - threat
+            - tobacco_or_nicotine
+            - war_or_military
+            - weapon_depiction
+          type: string
+        observationId:
+          type: string
+        severity:
+          enum:
+            - low
+            - moderate
+            - high
+          type: string
+        startMs:
+          format: int64
+          type: integer
+      required:
+        - observationId
+        - axis
+        - flag
+        - severity
+        - context
+        - startMs
+        - endMs
+        - effect
+        - evidenceSha256
+      type: object
     FillerClipEvent:
       additionalProperties: false
       properties:
@@ -3184,6 +3368,11 @@ components:
     FillerDecisionReviewDTO:
       additionalProperties: false
       properties:
+        applicationMode:
+          enum:
+            - shadow
+            - applied
+          type: string
         clipHash:
           type: string
         conflicts:
@@ -3209,6 +3398,7 @@ components:
         - id
         - clipHash
         - question
+        - applicationMode
         - reasonCodes
         - evidenceRefs
         - conflicts
@@ -3554,6 +3744,105 @@ components:
         - status
         - withdrawal
         - evidenceSha256
+      type: object
+    FillerRightsReviewDTO:
+      additionalProperties: false
+      properties:
+        acquisitionId:
+          type: string
+        canRecord:
+          type: boolean
+        currentGrant:
+          $ref: "#/components/schemas/FillerRightsGrantDTO"
+        policySha256:
+          type: string
+        sourceId:
+          type: string
+        sourceMasterSha256:
+          type: string
+        use:
+          type: string
+      required:
+        - sourceId
+        - acquisitionId
+        - sourceMasterSha256
+        - policySha256
+        - use
+        - canRecord
+      type: object
+    FillerScreeningAxisDTO:
+      additionalProperties: false
+      properties:
+        axis:
+          enum:
+            - visual_safety
+            - spoken_safety
+            - written_safety
+            - rights
+            - playback_integrity
+          type: string
+        evidenceSha256:
+          description: Immutable closed axis-record identity; never raw provider evidence
+          type: string
+        outcome:
+          enum:
+            - pass
+            - reject
+            - hold
+          type: string
+        reasonCode:
+          type: string
+      required:
+        - axis
+        - outcome
+        - reasonCode
+        - evidenceSha256
+      type: object
+    FillerScreeningDTO:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/v1/schemas/FillerScreeningDTO.json
+          format: uri
+          readOnly: true
+          type: string
+        airworthiness:
+          $ref: "#/components/schemas/FillerAirworthinessDTO"
+        assessedAt:
+          format: date-time
+          type: string
+        axes:
+          items:
+            $ref: "#/components/schemas/FillerScreeningAxisDTO"
+          type: array
+        clipHash:
+          type: string
+        evidenceSha256:
+          type: string
+        outcome:
+          enum:
+            - pass
+            - reject
+            - hold
+          type: string
+        reasonCode:
+          type: string
+        rightsReview:
+          $ref: "#/components/schemas/FillerRightsReviewDTO"
+        state:
+          enum:
+            - not_screened
+            - available
+            - unavailable
+          type: string
+        subjectSha256:
+          type: string
+      required:
+        - state
+        - clipHash
+        - axes
       type: object
     FillerSelection:
       additionalProperties: false
@@ -12572,6 +12861,37 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Record current-use filler rights authority
+      tags:
+        - filler
+  /v1/filler/screening:
+    get:
+      description: Admin-only browser-safe projection of visual, spoken, written, rights, playback-integrity, and Airworthiness evidence for one exact catalog hash. Raw provider evidence, text, paths, and private rights documents never cross this boundary.
+      operationId: get-filler-screening
+      parameters:
+        - description: Exact catalog content hash
+          explode: false
+          in: query
+          name: hash
+          schema:
+            description: Exact catalog content hash
+            maxLength: 64
+            minLength: 64
+            pattern: ^[0-9a-f]{64}$
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FillerScreeningDTO"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Exact clip's five-axis screening state
       tags:
         - filler
   /v1/filler/sources:

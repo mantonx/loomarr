@@ -42,25 +42,9 @@ func (r *FileSegmentScreeningEvidenceRepository) PutSegmentScreeningAxisEvidence
 }
 
 func (r *FileSegmentScreeningEvidenceRepository) GetSegmentScreeningAxisEvidence(ctx context.Context, evidenceSHA256 string) (RecordedSegmentScreeningAxisEvidence, error) {
-	if r == nil || r.files == nil || !structureEvidenceDigest(evidenceSHA256) {
-		return RecordedSegmentScreeningAxisEvidence{}, fmt.Errorf("segment screening axis evidence identity is invalid")
-	}
-	raw, err := r.files.readImmutable(ctx, r.axisPath("screening-axis-records", evidenceSHA256), segmentScreeningAxisRecordMaxBytes)
+	evidence, err := r.GetSegmentScreeningAxisRecord(ctx, evidenceSHA256)
 	if err != nil {
-		return RecordedSegmentScreeningAxisEvidence{}, fmt.Errorf("read segment screening axis record: %w", err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	var evidence SegmentScreeningAxisEvidence
-	if err := decoder.Decode(&evidence); err != nil {
-		return RecordedSegmentScreeningAxisEvidence{}, fmt.Errorf("decode segment screening axis record: %w", err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return RecordedSegmentScreeningAxisEvidence{}, fmt.Errorf("decode segment screening axis record: trailing JSON")
-	}
-	if evidence.SHA256 != evidenceSHA256 {
-		return RecordedSegmentScreeningAxisEvidence{}, fmt.Errorf("segment screening axis path does not match its identity")
+		return RecordedSegmentScreeningAxisEvidence{}, err
 	}
 	rawEvidence, err := r.files.readImmutable(ctx, r.axisPath("screening-axis-raw", evidence.RawEvidenceSHA256), segmentScreeningAxisRawMaxBytes)
 	if err != nil {
@@ -71,6 +55,32 @@ func (r *FileSegmentScreeningEvidenceRepository) GetSegmentScreeningAxisEvidence
 		return RecordedSegmentScreeningAxisEvidence{}, err
 	}
 	return recorded, nil
+}
+
+// GetSegmentScreeningAxisRecord opens only the provider-neutral record. Browser-safe read models
+// use it to reproduce closed evaluator identity without loading private raw evidence into memory.
+func (r *FileSegmentScreeningEvidenceRepository) GetSegmentScreeningAxisRecord(ctx context.Context, evidenceSHA256 string) (SegmentScreeningAxisEvidence, error) {
+	if r == nil || r.files == nil || !structureEvidenceDigest(evidenceSHA256) {
+		return SegmentScreeningAxisEvidence{}, fmt.Errorf("segment screening axis evidence identity is invalid")
+	}
+	raw, err := r.files.readImmutable(ctx, r.axisPath("screening-axis-records", evidenceSHA256), segmentScreeningAxisRecordMaxBytes)
+	if err != nil {
+		return SegmentScreeningAxisEvidence{}, fmt.Errorf("read segment screening axis record: %w", err)
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var evidence SegmentScreeningAxisEvidence
+	if err := decoder.Decode(&evidence); err != nil {
+		return SegmentScreeningAxisEvidence{}, fmt.Errorf("decode segment screening axis record: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return SegmentScreeningAxisEvidence{}, fmt.Errorf("decode segment screening axis record: trailing JSON")
+	}
+	if evidence.SHA256 != evidenceSHA256 || ValidateSegmentScreeningAxisEvidence(evidence) != nil {
+		return SegmentScreeningAxisEvidence{}, fmt.Errorf("segment screening axis path does not match valid evidence")
+	}
+	return evidence, nil
 }
 
 func (r *FileSegmentScreeningEvidenceRepository) axisPath(kind, digest string) string {

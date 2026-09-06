@@ -166,7 +166,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   In-memory event bus behind SSE (§7 /v1/events, §8).
 - **`filleradmission`** · 8 importers
   Owns the deterministic semantic boundary between versioned filler evidence and a catalog-admission decision.
-- **`fillerairworthiness`** · 2 importers
+- **`fillerairworthiness`** · 3 importers
   Owns deterministic audience-policy evaluation over closed, authority-bound filler suitability evidence.
 - **`fillercorpus`** · 4 importers
   Owns the source-neutral, non-authorizing inventory contract used to qualify certification corpus lanes.
@@ -370,7 +370,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 12**
 
-- **`api`** · 1 importer · → `activity`, `auth`, `binder`, `buildinfo`, `channels`, `contact`, `diagnostics`, `events`, `filler`, `filleradmission`, `fillerdecision`, `images`, `invitation`, `media`, `metrics`, `notifications`, `playout`, `prepared`, `proposalworkflow`, `provision`, `quality`, `recovery`, `schedule`, `store`, `suggest`, `taxonomy`, `web`
+- **`api`** · 1 importer · → `activity`, `auth`, `binder`, `buildinfo`, `channels`, `contact`, `diagnostics`, `events`, `filler`, `filleradmission`, `fillerairworthiness`, `fillerdecision`, `images`, `invitation`, `media`, `metrics`, `notifications`, `playout`, `prepared`, `proposalworkflow`, `provision`, `quality`, `recovery`, `schedule`, `store`, `suggest`, `taxonomy`, `web`
   Wires Loomarr's inbound HTTP surface (§7).
 
 **Layer 13**
@@ -1086,7 +1086,7 @@ private-address, and cancellation outcomes fail the lookup without yielding evid
 | GET | `/v1/filler/pool` | Catalog-wide filler health (§10 V35) — how well the catalog can actually resolve breaks, plus what is thin. ⚠ **Computed over the same pools pod assembly uses** (`internal/filler`), never a second implementation: a meter that agrees today and drifts next quarter is worse than none, which is why the per-channel `/v1/channels/{id}/filler/coverage` was built the same way. |
 | GET | `/v1/filler/readiness` | Member-readable filler readiness: one server-ranked next action plus fetch ceilings, disjoint pipeline ownership counts, channel coverage with usable duration and grounded variety, and bounded recent acquisition runs. The browser renders this decision; it does not reproduce the priority rule. Acquisition runs preserve their source/pull attribution and terminal outcome across restart, while rejected/dismissed audit remains distinct from failures with an explicit retry or restore action. |
 | GET | `/v1/filler/decisions/overview` | Member-readable, server-owned admission health: semantic and operational counts plus at most one ranked next action. Clients never derive health or priority from the detail feeds (§10 V63). |
-| GET | `/v1/filler/decisions/reviews` | Admin-only bounded page of unresolved semantic exceptions. Every row has exactly one plain review question and only the decisive reason codes, evidence references, and conflicts (§10 V63). |
+| GET | `/v1/filler/decisions/reviews` | Admin-only bounded page of unresolved semantic exceptions. Every row has exactly one plain review question, its required `shadow | applied` application mode, and only the decisive reason codes, evidence references, and conflicts (§10 V63). A shadow row asks for calibration/audit evidence only: answering it never files, removes, schedules, or otherwise changes the clip. Clients must name that limitation and may reserve “Confirm for library” for a future applied terminal-admission action that returns a committed catalog effect. |
 | GET | `/v1/filler/decisions/activity` | Member-readable bounded audit of automatic decisions and human actions. Automatic admission, automatic rejection, correction, restore, and reversal remain distinct event kinds (§10 V63). |
 | GET | `/v1/filler/decisions/diagnostics` | Admin-only bounded operational holds. Returns stable recovery codes and redacted details; queued/running/retry/provider/budget state never appears in the human review feed (§10 V63). |
 | POST | `/v1/filler/decisions/{id}/actions` | Resolve, correct, restore, or reverse one durable decision (admin). The request names a closed action kind and records actor, reason, and optional corrected answer as an append-only event; it never rewrites evaluator evidence (§10 V63). |
@@ -1094,6 +1094,7 @@ private-address, and cancellation outcomes fail the lookup without yielding evid
 | PATCH/DELETE | `/v1/filler/sources/{id}` | Enable/disable, tune, or remove a source (admin, §10 V35, extended V38c/V57). ⚠ Disabling withdraws a source from future scanning, searching and downloading — **it never removes clips already in the catalog**, and the enforcement lives at those three sites rather than in the UI. `autoAdmit` is the source's separate catalog-admission policy: grounded clips at or above the global confidence threshold may be filed automatically when it is true; false leaves every arrival from that source held for review. It defaults true on upgrade to preserve the existing grounded workflow and is always an additional gate, never a bypass around grounding. The PATCH body also carries the per-source fetch overrides: ⚠ `fetchEverySeconds` is **three-state** — omit/`null` inherits the global, `0` means *never auto-fetch this source*, a positive value is an interval. `fetchMaxPerRun` has a **minimum of 1**, because "fetch nothing per run" is what `fetchEverySeconds: 0` already says and saying it twice invites the two to disagree. |
 | GET | `/v1/filler/watch` | **The Filler header's live status (§10 V38c/V55).** Returns `{health, sourcesOn, sourcesTotal, clips, lastScanAt?, autoFetch?}` — everything the page header renders, computed on the SERVER. `autoFetch` names whether fetching is enabled, the current catalog/disk measurements and ceilings, and the ceiling currently stopping it (`catalog` or `disk`); it is current state, not merely the last scheduler result, so a removal or settings change clears the warning immediately. ⚠ **`health` is `healthy` / `attention` / `unconfigured`, and the server owns that judgement.** Deriving it in the client was tried first and rejected for two reasons: the rule ("all sources dark", "nothing has arrived in days") is real domain logic that belongs where it can be tested against the store rather than against a hand-built fixture array, and `/v1/filler/sources` is **admin-only** — so a member's pill would have been permanently grey while their channels played fine. ⚠ **Member-readable**, like `/pool` and the catalog listing, and for the same reason: it explains what the channels are doing. It names no filesystem paths or library targets, which is what keeps it safe to widen — the counts and the verdict, never the infrastructure. |
 | GET | `/v1/filler/incoming` | The ingest conveyor (admin, §10 V35): clips being prepared or waiting on a human, compilations mid-split, and the rejected/auto-filed audit feeds. One read behind the Filler page's Incoming tab, so a restart cannot lose the queue. **Every row list is capped at 100** and carries its full server-counted total (`clipsTotal`, `decisionsTotal`, `reelsTotal`, `rejectedTotal`, `recentlyFiledTotal`); a large import cannot create an unbounded response or make the tab badge collapse to the page length. Confidence is the real grounding-capped score (§10 V38), never model self-assessment; each item also carries the measured reason for its state. |
+| GET | `/v1/filler/screening?hash=` | The admin-only, browser-safe five-axis screening projection for one exact filler clip. It returns `not_screened`, `available`, or `unavailable`; an available result contains the immutable subject/aggregate identities, overall outcome, the ordered visual/spoken/written/rights/playback outcomes and safe reason codes, assessment time, and the closed public Airworthiness decision. An unavailable attached reference retains only its safe failure code and content identities. Before publication, the route reopens the clip's current applied sidecar, reproduces its subject and aggregate, and reopens the playable file to match its complete-byte digest, byte count, and sparse catalog identity. A missing, unsafe, or changed playback object can therefore never retain a visible pass. It never returns a path, prompt, transcript, OCR text, restricted phrase, provider response, credential, private rights document, or raw evidence. Incoming loads this bounded record only when a row is expanded rather than multiplying filesystem reads across the whole conveyor. |
 | POST | `/v1/filler/bulk/tag` | Retag a selection (admin, §10 V35). Each tag field is **independent** — omitting one leaves it alone, so setting only the audience never blanks an era. Setting an era confirms an outstanding suggestion through the **same** path the single-clip edit uses. A selected clip that no longer exists is counted, not fatal: a selection races a re-scan. |
 | POST | `/v1/filler/bulk/remove` | Remove a selection from the catalog (admin, §10 V35). ⚠ **A tombstone.** The clip leaves the catalog and stops being used in breaks; **the file is untouched**, and the mark survives a re-scan (which a row delete could not). `restore:true` undoes it. |
 | POST | `/v1/filler/pulls` | Propose a **pull** — a plan across sources (admin, §10 V35). **Downloads nothing**: it writes a proposal for the approval queue. Refused when every source the plan needs is disabled, with the switch to flip named. |
@@ -4012,6 +4013,16 @@ read. The server supplies the authenticated actor and recording instant; the req
 scope, closed decision, private evidence digest, effective/expiry/withdrawal times, and expected current
 grant digest. There is no update or delete endpoint.
 
+Incoming presents that write only in the exact rendered-child screening context. The authenticated summary
+projects the path-free source, acquisition, source-master, policy, and use scope reproduced from the current
+subject and rights-axis record, plus the current immutable grant when one exists; the operator never copies
+those identifiers into a generic form. The review basis is a local file chosen in the browser: the client
+computes its SHA-256 and sends only that digest, while the private file remains with the operator. A new
+authorization, prohibition, unknown decision, or withdrawal appends through the same compare-and-swap head;
+it cannot edit history. Saving rights does not mutate the already-settled screening result. Incoming explains
+that the clip remains held and offers a separate explicit screen-stage rewind so any provider work, cost, and
+new immutable evidence are visible rather than silently triggered by the rights write.
+
 Screening aggregates, provider-neutral axis records, operation identities, and opaque raw evidence live
 separately in a private content-addressed repository. The immutable screening-release authority is explicitly
 non-authorizing by default, names exactly one canonical profile per axis, and locks the aggregate contract.
@@ -5070,7 +5081,12 @@ wire field. An automatic shadow verdict is presented as `Would admit (shadow)` o
 `Would reject (shadow)` with caution styling; only an applied verdict may use the effect labels
 `Admitted automatically` or `Rejected automatically`. A client that receives an omitted or unknown mode
 presents `Decision mode unavailable` with caution styling and never infers an applied effect.
-Review requests and operator-action labels describe recorded events and do not change with mode.
+Operator-action entries in activity describe their recorded event and never infer a catalog effect.
+The unresolved-review projection carries the same required mode. In particular, an `admit` answer
+to a shadow review records the operator's semantic judgment but has no catalog effect; calling it
+“Confirm for library” would falsely turn an audit event into a publication claim. Applied-mode
+operator confirmation remains unavailable until the terminal-admission module can revalidate the
+exact current release evidence and commit the action plus catalog effect as one outcome.
 
 The ingest ladder places a fail-closed `admission` rung after extraction and immediately before the
 V38 `score` rung. Its first production evidence version records only facts whose provenance the
@@ -6773,6 +6789,15 @@ exceptions only**, each asking one plain question and showing the decisive evide
 Automatic admits/rejects belong to Activity; queued/running/retry/provider/budget state belongs to
 Diagnostics. Overview answers whether filler is working and offers one ranked action only when one
 exists. Ordinary maintenance never asks a person to interpret confidence thresholds.
+
+Incoming consumes the bounded review cursor ten rows at a time and renders one focused evidence
+card, with a compact question navigator for the rest of that server page. It never materializes the
+100-row ceiling as 100 simultaneous full cards or reorders questions using browser-owned policy.
+Forward/back page controls preserve the server cursor history; selecting or paging is navigation,
+not a semantic action. Recording filler, not-filler, or a corrected verdict requires successful
+playback of the exact resolved clip in the current browser session. Only `Skip for now` remains
+available without playback, because it records no semantic answer. An unsupported applied-mode row
+therefore exposes no answer path even through rejection or correction.
 
 The rendered review prototype compares evidence-first and proposal-visible ordering. Production
 uses evidence-first: decisive conflicts and reasons appear before any operator action, and Loomarr
@@ -8967,26 +8992,38 @@ Human control surface for the whole loop: browse/search, drive suggestions, appr
 - **Suggestion workspace** — enter intent (or start from a **template**, §13) → watch generation → review lineup + acquisitions w/ rationale + scores → **edit via search** (§7.2: add/replace titles; missing ones become acquisitions) → **submit**; admins get an **approval queue** and approve/deny with `approved_by` recorded. **The queue is also where a proposal is edited before approval** (§7.2 / D-K): "Review & edit picks" opens the same pick list with a drop control per title, an add-via-search box, and a note to the requester. The edit is a **delta** (`drop` by provisioning key, `add`, `note`) sent **on the approve call itself** — never a separate save — because `Approver.Approve` takes it as a parameter, keeping "what gets acquired" inside the one gate. Approving unmodified sends an empty body and behaves exactly as it did before the feature existed. Inline intent-writing hints. The same describe→review→approve machinery is reused **in a refine mode on an existing channel** (§7 `refine`): the intent is seeded from the channel's current lineup + a free-text change, and review shows a diff instead of a fresh lineup.
 - **Filler library** — browse/tag commercial clips (era/audience/category), trigger sync, review AI tags, preview a channel's pods (§10). This is the **catalog**; each channel *chooses* from it on its own Filler section (§10 per-channel selection). The two surfaces cross-link both ways — the catalog heading points to per-channel selection, a channel's Filler section links back to the catalog, and a clip offers a **"Use in a channel"** action that pins it into a channel's filler directly (a normal `PATCH …/{id}` of `policy.filler.pinned`, merged onto the channel's live policy).
 
-  **Four destinations — `Overview · Needs attention · Library · Manage`.** Overview is the default
-  and answers two questions from the server-owned V63 projection: whether admission is working
-  unattended, and the single highest-priority next action. The client renders that answer and
-  action; it never recreates health, severity, or priority from detail feeds. Coverage and variety
+  **Five destinations — `Overview · Sources · Incoming · Library · Manage`.** Overview is the default
+  and explains the current source → prepare/split/screen/review → library → channel journey plus the
+  single highest-priority next action from the server-owned projection. The client renders that
+  answer; it never recreates health, severity, or priority from detail feeds. Coverage and variety
   remain separate server-owned context because a healthy admission system may still need more
   playable clips. Automatic outcomes, human exceptions, operational failures, and admitted clips
   stay visibly distinct.
 
-  - **Needs attention** — only the V63 semantic-review projection. Each row asks one plain question,
-    shows only decisive reason/evidence/conflict context, and offers accept, correct, or reject.
-    Queued/running work, retries, provider or budget holds, split processing, and filing state are
-    structurally absent. The former `/filler/incoming` path redirects here.
+  - **Sources** — registered sources, source-scoped discovery, explicit acquisition planning, and
+    current fetch state. This is routine intake work, not an expert panel nested under Manage.
+  - **Incoming** — the one source-to-admission workbench. One exact clip or reel appears once while
+    it is prepared, split, screened, held, reviewed, rejected, or recovered. Expanding a rendered
+    child loads its exact playable bytes and the server-owned five-axis screening projection:
+    visual safety, spoken safety, written safety, current-use rights, and playback integrity remain
+    independent rows with pass/reject/hold, safe reason codes, assessment time, and evidence
+    identities. Closed Airworthiness flags and bounded trigger intervals may be shown; raw provider
+    output, OCR/transcript text, restricted phrases, private paths, and private rights evidence may
+    not. A rights hold exposes contextual review beside that exact child: the source/acquisition/master/
+    policy scope is server-owned, the browser hashes a locally selected review file without uploading it,
+    and an append or supersession uses the exact current grant digest. Recording the grant leaves the old
+    screen immutable and requires an explicit screen-stage rerun. Provider failures, budget ceilings,
+    missing evidence, and stale authorities are operational
+    recovery states, never questions asking a person to guess whether the content is safe. The
+    former `/filler/attention` path is a compatibility redirect to `/filler/incoming`.
   - **Library** — the clips themselves, in a grid or a dense list. Multi-select drives bulk retagging and removal; a card carries its thumbnail, duration, quality, tags, and **how often it has actually aired**. Legacy catalog filters on `/filler?...` redirect here without losing the filter.
-  - **Manage** — progressive disclosure over **Activity · Sources · Automation · Taxonomy ·
-    Diagnostics**. Activity is the normal audit of automatic outcomes and human corrections.
-    Sources owns acquisition. Automation links to system-wide defaults and bounded processing.
-    Taxonomy is expert vocabulary maintenance. Diagnostics alone exposes operational holds,
-    recovery codes, pipeline state, retries, provider/budget status, and stage details. The legacy
-    `/filler/sources`, `/filler/advanced`, `/filler/taxonomy`, and `/filler/settings` deep links stay
-    valid and render within this Manage destination.
+  - **Manage** — progressive disclosure over **Activity · Automation · Taxonomy · Diagnostics**.
+    Activity is the normal audit of automatic outcomes and human corrections. Automation links to
+    system-wide defaults and bounded processing. Taxonomy is expert vocabulary maintenance.
+    Diagnostics exposes provider/budget internals and detailed stage history; routine holds and
+    their exact recovery action still appear in Incoming, so a normal operator is never sent to a
+    diagnostic console to finish intake. The legacy `/filler/advanced`, `/filler/taxonomy`, and
+    `/filler/settings` deep links stay valid here; `/filler/sources` resolves to Sources.
 
   ⚠ **There is no Discover tab.** Finding clips used to be its own destination; it is now something you do *to a source*, which is the only place the answer differs. ⚠ **Incoming does not replace the split-review route** — `/filler/splits/{proposalId}` remains a **sibling** of `/filler`, because the catalog page renders no `<Outlet/>` and nesting it would make the whole surface unreachable while every unit test stayed green (PROGRESS.md records the near-miss). The tab is an additional door.
 

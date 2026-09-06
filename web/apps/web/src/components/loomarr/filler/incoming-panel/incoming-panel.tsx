@@ -179,6 +179,7 @@ const IncomingPanel = ({
   decisionsTotal,
   reels,
   reelsTotal,
+  suppressEmptyState = false,
   recentlyFiled,
   recentlyFiledTotal,
   stageOrder,
@@ -224,7 +225,7 @@ const IncomingPanel = ({
           "when Loomarr can't work out what they are" described the pre-V38 heuristic, where the
           queue was INFERRED from missing tags. Holding is a STATE now: a clip waits because it
           was downloaded, including ones Loomarr understood perfectly. */}
-      {nothingIncoming && (
+      {nothingIncoming && !suppressEmptyState && (
         <EmptyState
           title="Nothing needs you"
           description="Nothing is waiting to be checked. Clips you download land here first, before they start playing."

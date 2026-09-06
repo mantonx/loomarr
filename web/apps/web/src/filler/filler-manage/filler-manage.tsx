@@ -10,7 +10,6 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Disclosure } from "@/components/ui/disclosure";
-import { IncomingTab } from "../incoming-tab";
 
 const ACTIVITY_LABELS: Record<FillerDecisionActivityWireDTOKind, string> = {
   automatic_admit: "Admitted automatically",
@@ -52,7 +51,7 @@ const activityPresentation = (
   };
 };
 
-const FillerManage = ({ onEditTags }: { onEditTags: (hash: string) => void }) => {
+const FillerManage = () => {
   const { isAdmin } = useAuth();
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const activityQuery = fillerApi.useFillerDecisionActivity({ limit: 100 });
@@ -74,18 +73,7 @@ const FillerManage = ({ onEditTags }: { onEditTags: (hash: string) => void }) =>
             Everyday operation is automatic. Open these only when you want to change how it works.
           </p>
         </div>
-        <div className="grid gap-3 md:grid-cols-3">
-          <Card className="p-4">
-            <h3 className="font-medium">Sources</h3>
-            <p className="mt-1 text-muted-foreground text-sm">
-              Choose where new commercials and bumpers come from.
-            </p>
-            {isAdmin ? (
-              <Button className="mt-4" size="sm" variant="outline" render={<Link to="/filler/sources" />}>
-                Manage sources
-              </Button>
-            ) : null}
-          </Card>
+        <div className="grid gap-3 md:grid-cols-2">
           <Card className="p-4">
             <h3 className="font-medium">Automation</h3>
             <p className="mt-1 text-muted-foreground text-sm">
@@ -195,13 +183,6 @@ const FillerManage = ({ onEditTags }: { onEditTags: (hash: string) => void }) =>
                       <span className="text-muted-foreground text-xs">{formatRelative(row.createdAt)}</span>
                     </div>
                   ))}
-                  <div>
-                    <h3 className="font-medium text-sm">Processing queue</h3>
-                    <p className="mt-1 mb-3 text-muted-foreground text-xs">
-                      Detailed filing and processing controls live here for the clips that still need them.
-                    </p>
-                    <IncomingTab onEditTags={onEditTags} />
-                  </div>
                 </>
               ) : null}
             </Disclosure.Panel>

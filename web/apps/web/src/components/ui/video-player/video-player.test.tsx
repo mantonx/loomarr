@@ -22,6 +22,15 @@ describe("VideoPlayer", () => {
     expect(screen.getByRole("button", { name: "Mute" })).toBeInTheDocument();
   });
 
+  it("reports actual playback start from the media element", () => {
+    const onPlaybackStart = vi.fn();
+    const { container } = render(<VideoPlayer src={SRC} onPlaybackStart={onPlaybackStart} />);
+
+    expect(onPlaybackStart).not.toHaveBeenCalled();
+    fireEvent.playing(container.querySelector("video") as HTMLVideoElement);
+    expect(onPlaybackStart).toHaveBeenCalledOnce();
+  });
+
   // A player under a heading that already names the thing does not repeat it — and the whole top
   // overlay goes with it rather than rendering an empty scrim over the frame.
   it("renders no top-bar overlay without a title or leading", () => {

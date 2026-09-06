@@ -36,7 +36,7 @@ const Route = createFileRoute("/_authed/filler/")({
   beforeLoad: ({ search }) => {
     if (search.tab) {
       const { tab, ...rest } = search;
-      throw redirect({ to: tab === "incoming" ? "/filler/attention" : `/filler/${tab}`, search: rest });
+      throw redirect({ to: `/filler/${tab}`, search: rest });
     }
     if (Object.keys(search).length > 0) {
       throw redirect({ to: "/filler/library", search });

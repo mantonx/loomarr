@@ -141,6 +141,7 @@ type Overview struct {
 
 type ReviewItem struct {
 	ID, ClipHash, Question string
+	ApplicationMode        ApplicationMode
 	ReasonCodes            []filleradmission.ReasonCode
 	EvidenceRefs           []string
 	Conflicts              []filleradmission.Conflict
