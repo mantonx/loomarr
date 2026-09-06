@@ -44,7 +44,7 @@ printf '%s\n' '{"start_time":0,"keyword":"rule-0123456789abcdef01234567","timest
 
 	plan := fixture.plan(t)
 	defer func() { _ = plan.Close() }()
-	evidence := runProposal(context.Background(), proposer, proposer.identity, &plan)
+	evidence := runProposal(context.Background(), proposer.Propose, proposer.identity, &plan)
 	if evidence.ProposalState != ProposalComplete || len(evidence.Candidates) != 1 || evidence.Candidates[0].StartMS != 1_000 || evidence.Candidates[0].EndMS != 1_160 {
 		t.Fatalf("unexpected evidence: %+v", evidence)
 	}
