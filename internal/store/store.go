@@ -548,6 +548,13 @@ type FillerPullStore interface {
 // source definition or approval decision.
 type FillerAcquisitionStore interface {
 	UpsertAcquisitionRun(ctx context.Context, run filler.AcquisitionRun) error
+	// UpsertAcquisitionArtifacts atomically records the exact downloaded-byte manifest before
+	// publication makes any artifact eligible for intake.
+	UpsertAcquisitionArtifacts(ctx context.Context, artifacts []filler.AcquisitionArtifact) error
+	// AcquisitionArtifactForClip is the held/filed authority for a newly discovered clip.
+	AcquisitionArtifactForClip(ctx context.Context, mediaPath, clipHash string) (filler.AcquisitionArtifact, bool, error)
+	// ListRecoverableAcquisitionArtifacts exposes bounded staged/published/repair work.
+	ListRecoverableAcquisitionArtifacts(ctx context.Context, limit int) ([]filler.AcquisitionArtifact, error)
 	// RecoverInterruptedAcquisitionRuns marks work orphaned by the previous process as failed.
 	// The beta is single-replica; startup is therefore the exact ownership boundary.
 	RecoverInterruptedAcquisitionRuns(ctx context.Context, at time.Time) (int, error)

@@ -45,7 +45,8 @@ type AcquisitionRun struct {
 	CompletedAt time.Time
 	UpdatedAt   time.Time
 
-	Outcome AcquisitionOutcome
+	Outcome   AcquisitionOutcome
+	Artifacts AcquisitionArtifactOutcome
 }
 
 // AcquisitionTarget is one URL inside an approved acquisition plan. SourceID stays per-target
@@ -67,6 +68,36 @@ type AcquisitionOutcome struct {
 	Admitted      int
 	Rejected      int
 	Dismissed     int
+}
+
+// AcquisitionArtifactOutcome is the bounded operator-facing projection of manifest state. Only
+// the newest repair reason is retained; the durable rows remain the full audit.
+type AcquisitionArtifactOutcome struct {
+	Staged       int
+	Published    int
+	Consumed     int
+	Repair       int
+	RepairReason string
+}
+
+func AcquisitionArtifactOutcomeFrom(artifacts []AcquisitionArtifact) AcquisitionArtifactOutcome {
+	var out AcquisitionArtifactOutcome
+	for _, artifact := range artifacts {
+		switch artifact.State {
+		case ArtifactStaged:
+			out.Staged++
+		case ArtifactPublished:
+			out.Published++
+		case ArtifactConsumed:
+			out.Consumed++
+		case ArtifactRepair:
+			out.Repair++
+			if out.RepairReason == "" {
+				out.RepairReason = artifact.RepairReason
+			}
+		}
+	}
+	return out
 }
 
 // AcquisitionOutcomeFrom projects pipeline rows through the same Lifecycle classifier used by

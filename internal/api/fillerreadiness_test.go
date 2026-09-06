@@ -31,7 +31,8 @@ func TestFillerReadinessReturnsOneServerOwnedActionAndItsEvidence(t *testing.T) 
 			ID: "acq-1", Trigger: filler.AcquisitionPull, PullID: "pull-1",
 			Status: filler.AcquisitionSuccess, Requested: 4, Fetched: 3,
 			StartedAt: now.Add(-time.Minute), CompletedAt: now, UpdatedAt: now,
-			Outcome: filler.AcquisitionOutcome{Enrolled: 3, Preparing: 1, Admitted: 2},
+			Outcome:   filler.AcquisitionOutcome{Enrolled: 3, Preparing: 1, Admitted: 2},
+			Artifacts: filler.AcquisitionArtifactOutcome{Consumed: 3},
 		}},
 	})
 
@@ -55,5 +56,8 @@ func TestFillerReadinessReturnsOneServerOwnedActionAndItsEvidence(t *testing.T) 
 	}
 	if len(body.Acquisitions) != 1 || body.Acquisitions[0].PullID != "pull-1" || body.Acquisitions[0].Outcome.Admitted != 2 {
 		t.Fatalf("acquisition trace = %+v", body.Acquisitions)
+	}
+	if body.Acquisitions[0].Artifacts.Consumed != 3 {
+		t.Fatalf("acquisition artifact outcome = %+v", body.Acquisitions[0].Artifacts)
 	}
 }

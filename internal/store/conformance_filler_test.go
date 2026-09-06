@@ -1222,6 +1222,75 @@ func testFillerAcquisitionRuns(t *testing.T, newStore NewStoreFunc) {
 	}
 }
 
+func testFillerAcquisitionArtifacts(t *testing.T, newStore NewStoreFunc) {
+	t.Helper()
+	s := newStore(t)
+	ctx := context.Background()
+	now := time.Unix(1_900_000_000, 0).UTC()
+	run := filler.AcquisitionRun{
+		ID: "acq-manifest", Trigger: filler.AcquisitionSource, SourceID: "archive:classic",
+		Status: filler.AcquisitionRunning, Requested: 2, StartedAt: now, UpdatedAt: now,
+	}
+	if err := s.UpsertAcquisitionRun(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	artifacts := []filler.AcquisitionArtifact{
+		{
+			ID: "artifact-one", AcquisitionID: run.ID, SourceID: run.SourceID,
+			Provider: "archive", SourceURL: "https://archive.org/details/one",
+			StagingPath: ".loomarr-acquisitions/acq-manifest/one.mp4", MediaPath: "one.mp4",
+			SidecarPath: "one.info.json", MediaSHA256: strings.Repeat("a", 64), MediaBytes: 42,
+			State: filler.ArtifactStaged, CompletedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "artifact-two", AcquisitionID: run.ID, SourceID: run.SourceID,
+			Provider: "archive", SourceURL: "https://archive.org/details/two",
+			StagingPath: ".loomarr-acquisitions/acq-manifest/two.mp4", MediaPath: "two.mp4",
+			SidecarPath: "two.info.json", MediaSHA256: strings.Repeat("b", 64), MediaBytes: 84,
+			State: filler.ArtifactPublished, CompletedAt: now, UpdatedAt: now,
+		},
+	}
+	if err := s.UpsertAcquisitionArtifacts(ctx, artifacts); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := s.AcquisitionArtifactForClip(ctx, "one.mp4", "")
+	if err != nil || !found || got != artifacts[0] {
+		t.Fatalf("artifact by path = %+v, %v, %v; want %+v", got, found, err, artifacts[0])
+	}
+	artifacts[0].ClipHash = strings.Repeat("c", 64)
+	artifacts[0].MediaPath = "aa/bb/" + artifacts[0].ClipHash + ".mp4"
+	artifacts[0].State = filler.ArtifactConsumed
+	artifacts[0].UpdatedAt = now.Add(time.Minute)
+	if err := s.UpsertAcquisitionArtifacts(ctx, artifacts[:1]); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err = s.AcquisitionArtifactForClip(ctx, "elsewhere.mp4", artifacts[0].ClipHash)
+	if err != nil || !found || got != artifacts[0] {
+		t.Fatalf("artifact by clip hash = %+v, %v, %v; want %+v", got, found, err, artifacts[0])
+	}
+	recoverable, err := s.ListRecoverableAcquisitionArtifacts(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recoverable) != 1 || recoverable[0].ID != artifacts[1].ID {
+		t.Fatalf("recoverable artifacts = %+v, want only published artifact", recoverable)
+	}
+	runs, err := s.ListAcquisitionRuns(ctx, 10, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 || runs[0].Artifacts.Consumed != 1 || runs[0].Artifacts.Published != 1 {
+		t.Fatalf("run artifact outcome = %+v", runs)
+	}
+
+	invalid := artifacts[1]
+	invalid.ID = "invalid"
+	invalid.MediaPath = "../escape.mp4"
+	if err := s.UpsertAcquisitionArtifacts(ctx, []filler.AcquisitionArtifact{invalid}); err == nil {
+		t.Fatal("invalid manifest reached persistence")
+	}
+}
+
 func testInteractiveOperations(t *testing.T, newStore NewStoreFunc) {
 	t.Helper()
 	s := newStore(t)

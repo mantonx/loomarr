@@ -53,8 +53,8 @@ func ProjectReadiness(in ReadinessInput) Readiness {
 		out.Next, out.Count = ReadinessFreeCatalog, in.Fetch.CatalogClips
 	case in.Fetch.StoppedBy == "disk":
 		out.Next = ReadinessFreeDisk
-	case len(in.Runs) > 0 && in.Runs[0].Status == AcquisitionError:
-		out.Next, out.Count = ReadinessRetryAcquisition, in.Runs[0].Failed
+	case len(in.Runs) > 0 && (in.Runs[0].Status == AcquisitionError || in.Runs[0].Artifacts.Repair > 0):
+		out.Next, out.Count = ReadinessRetryAcquisition, in.Runs[0].Failed+in.Runs[0].Artifacts.Repair
 	case in.Pipeline.Recoverable > 0:
 		out.Next, out.Count = ReadinessRetryWork, in.Pipeline.Recoverable
 	case in.Pipeline.NeedsDecision > 0:

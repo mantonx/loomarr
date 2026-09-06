@@ -29,6 +29,9 @@ func (m *memSink) WriteStream(path string, r io.Reader) error {
 	return nil
 }
 func (m *memSink) WriteFile(path string, data []byte) error { m.files[path] = data; return nil }
+func (m *memSink) Inspect(path string) (string, int64, string, error) {
+	return inspectBytes(m.files[path])
+}
 
 // mockArchive serves the pinned metadata/search/download shapes.
 func mockArchive(t *testing.T) *httptest.Server {
@@ -91,7 +94,7 @@ func TestArchive_DownloadsItemAndSidecar(t *testing.T) {
 	fs := newMemSink()
 	c := newTestClient(t, fs)
 
-	fetched, skipped, err := c.walk(context.Background(), "https://archive.org/details/test-ad", "/drop")
+	fetched, skipped, _, err := c.walk(context.Background(), "https://archive.org/details/test-ad", "/drop")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,9 +149,9 @@ func TestArchive_DownloadsItemAndSidecar(t *testing.T) {
 func TestArchive_DownloadCarriesAcquisitionProvenance(t *testing.T) {
 	fs := newMemSink()
 	c := newTestClient(t, fs)
-	ctx := withAcquisition(context.Background(), "archive:classic", "acq-17")
+	ctx := withAcquisition(context.Background(), "archive:classic", "acq-17", "")
 
-	if _, _, err := c.walk(ctx, "test-ad", "/drop"); err != nil {
+	if _, _, _, err := c.walk(ctx, "test-ad", "/drop"); err != nil {
 		t.Fatal(err)
 	}
 	for path, raw := range fs.files {
@@ -172,9 +175,9 @@ func TestArchive_SkipsIfPresent(t *testing.T) {
 	fs := newMemSink()
 	c := newTestClient(t, fs)
 	// First fetch.
-	_, _, _ = c.walk(context.Background(), "test-ad", "/drop")
+	_, _, _, _ = c.walk(context.Background(), "test-ad", "/drop")
 	// Second walk: the media file exists → skipped, not re-downloaded.
-	fetched, skipped, err := c.walk(context.Background(), "test-ad", "/drop")
+	fetched, skipped, _, err := c.walk(context.Background(), "test-ad", "/drop")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +189,7 @@ func TestArchive_SkipsIfPresent(t *testing.T) {
 func TestArchive_WalksCollection(t *testing.T) {
 	fs := newMemSink()
 	c := newTestClient(t, fs)
-	fetched, _, err := c.walk(context.Background(), "https://archive.org/details/test-collection", "/drop")
+	fetched, _, _, err := c.walk(context.Background(), "https://archive.org/details/test-collection", "/drop")
 	if err != nil {
 		t.Fatal(err)
 	}

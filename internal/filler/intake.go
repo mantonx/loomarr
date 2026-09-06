@@ -76,10 +76,23 @@ func TakeIn(watchDir, clipDir string, fetched bool, log func(string, ...any)) (I
 	return TakeInFrom(watchDir, clipDir, fetched, "", log)
 }
 
+// TakeInWithAcquisitionBinding files watch-folder media while allowing durable acquisition
+// authority to verify a claimed arrival and bind its content-addressed destination before any
+// move or duplicate deletion. The callback receives both filesystem paths for exact-byte checks
+// and their durable relative names; it is never invoked for an unfiled operator clip found
+// directly in clipDir.
+func TakeInWithAcquisitionBinding(watchDir, clipDir string, fetched bool, log func(string, ...any), bind func(sourcePath, destinationPath, previousPath, filedPath, clipHash string) error) (IntakeResult, error) {
+	return takeInFrom(watchDir, clipDir, fetched, "", log, bind)
+}
+
 // TakeInFrom preserves the registered source responsible for an unattended arrival. Registered
 // folder/library scans set fetched=true so the clip waits for the same grounded admission gate as
 // a remote download; a direct hand-copy still uses TakeIn(..., false, ...) as an operator decision.
 func TakeInFrom(watchDir, clipDir string, fetched bool, sourceID string, log func(string, ...any)) (IntakeResult, error) {
+	return takeInFrom(watchDir, clipDir, fetched, sourceID, log, nil)
+}
+
+func takeInFrom(watchDir, clipDir string, fetched bool, sourceID string, log func(string, ...any), bind func(sourcePath, destinationPath, previousPath, filedPath, clipHash string) error) (IntakeResult, error) {
 	var res IntakeResult
 	if watchDir == "" || clipDir == "" {
 		return res, nil
@@ -136,6 +149,25 @@ func TakeInFrom(watchDir, clipDir string, fetched bool, sourceID string, log fun
 			res.Skipped++
 			continue
 		}
+		if bind != nil {
+			previousPath, watched := pathWithin(watchDir, src)
+			filedPath, filed := pathWithin(clipDir, dst)
+			if watched && !filed {
+				res.Skipped++
+				continue
+			}
+			if watched {
+				if err := bind(src, dst, previousPath, filedPath, id); err != nil {
+					if log != nil {
+						log("filler intake: could not bind an acquisition manifest before filing a clip", "file", src, "err", err)
+					}
+					// Leaving claimed bytes in the watch folder is safer than moving or deleting
+					// them without an exact durable binding.
+					res.Skipped++
+					continue
+				}
+			}
+		}
 		if _, err := os.Stat(dst); err == nil {
 			// A path alias can make src and dst the SAME filesystem object even after every
 			// layout-level containment check (notably a bind mount changed between validation
@@ -158,7 +190,6 @@ func TakeInFrom(watchDir, clipDir string, fetched bool, sourceID string, log fun
 		// ⚠ The name is read BEFORE the move, and written to the sidecar AFTER it. Capturing it
 		// afterwards is impossible — by then the only name is the hash.
 		original := filepath.Base(src)
-
 		if err := movePath(src, dst); err != nil {
 			if log != nil {
 				log("filler intake: could not move a clip into the clip folder",
@@ -179,6 +210,14 @@ func TakeInFrom(watchDir, clipDir string, fetched bool, sourceID string, log fun
 		res.Taken++
 	}
 	return res, nil
+}
+
+func pathWithin(root, path string) (string, bool) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || filepath.IsAbs(rel) || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	return filepath.ToSlash(rel), true
 }
 
 // collectMedia lists media files in the watch folder, recursively.

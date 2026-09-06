@@ -110,6 +110,14 @@ type Store interface {
 	DeleteClipsNotIn(ctx context.Context, keepIDs []string) (int, error)
 }
 
+// AcquisitionAuthority is the durable held/filed authority for Loomarr downloads. Filesystem
+// validation stays in Syncer because it owns the applied clip root; persistence only resolves and
+// advances manifest values.
+type AcquisitionAuthority interface {
+	AcquisitionArtifactForClip(ctx context.Context, mediaPath, clipHash string) (AcquisitionArtifact, bool, error)
+	UpsertAcquisitionArtifacts(ctx context.Context, artifacts []AcquisitionArtifact) error
+}
+
 // StoreClip is the persistence view the sync round-trips (mirrors store.Clip;
 // declared here so filler doesn't import store — the adapter in main bridges them).
 type StoreClip struct {
@@ -167,7 +175,8 @@ type Syncer struct {
 	scanSources ScanSourceStore
 	// libraries copies clips out of a media-server library. nil ⇒ library rows do no work, which
 	// is the honest state for an install with no media server configured.
-	libraries *LibraryScanner
+	libraries    *LibraryScanner
+	acquisitions AcquisitionAuthority
 }
 
 // drainScanSources reads every registered folder and library into the watch folder (§10 V38c),
@@ -315,6 +324,12 @@ func (s *Syncer) WithScanSources(srcs ScanSourceStore, libraries *LibraryScanner
 	return s
 }
 
+// WithAcquisitionAuthority makes durable manifests authoritative for newly discovered ownership.
+func (s *Syncer) WithAcquisitionAuthority(authority AcquisitionAuthority) *Syncer {
+	s.acquisitions = authority
+	return s
+}
+
 // SyncResult reports what a sync did (for the API + logs).
 type SyncResult struct {
 	Total    int // clips in the Tunarr local filler source
@@ -366,7 +381,7 @@ func (s *Syncer) Sync(ctx context.Context) (SyncResult, error) {
 	// Failures are logged, not returned: a watch folder that cannot be drained (a permissions
 	// problem, a full disk) must not take the catalog down with it. The clips already filed are
 	// still there, and the arrivals stay put for the next pass.
-	if taken, err := TakeIn(s.watch, s.dir, false, s.logAttrs); err != nil {
+	if taken, err := TakeInWithAcquisitionBinding(s.watch, s.dir, false, s.logAttrs, s.bindAcquisitionArtifact(ctx)); err != nil {
 		if s.log != nil {
 			s.log.Warn("filler: could not drain the watch folder; scanning what is already filed",
 				"watch", s.watch, "err", err)
@@ -417,6 +432,21 @@ func (s *Syncer) Sync(ctx context.Context) (SyncResult, error) {
 		existing, found, err := s.store.GetClip(ctx, rc.ID)
 		if err != nil {
 			return res, fmt.Errorf("get clip %s: %w", rc.ID, err)
+		}
+		artifact, acquired, err := s.authorizeAcquisition(ctx, rc)
+		if err != nil {
+			// A claimed file whose exact bytes or portable provenance cannot be proved stays out
+			// of the catalog. Preserve an existing row so repair cannot look like deletion.
+			if found {
+				keep = append(keep, rc.ID)
+			}
+			if s.log != nil {
+				s.log.Warn("filler acquisition artifact remains quarantined", "clip", rc.Path, "err", err)
+			}
+			continue
+		}
+		if acquired && strings.TrimSpace(rc.Source) == "" {
+			rc.Source = artifact.SourceID
 		}
 		rc, nameRepaired, err := s.repairOpaqueDisplayName(rc, existing, found)
 		if err != nil {
@@ -535,7 +565,7 @@ func (s *Syncer) Sync(ctx context.Context) (SyncResult, error) {
 			// ⚠ V38c moved this from "a sidecar EXISTS" to the field. Existence stopped working
 			// the moment Loomarr began writing tags back for hand-dropped clips too — every
 			// tagged clip would have looked downloaded, and would have started being held.
-			merged.Held = s.wasFetchedByUs(rc.Path)
+			merged.Held = acquired || s.wasFetchedByUs(rc.Path)
 			res.Added++
 		}
 		if rc.LineageInvalid || rc.ConditioningHold {
@@ -543,6 +573,17 @@ func (s *Syncer) Sync(ctx context.Context) (SyncResult, error) {
 		}
 		if err := s.store.UpsertClip(ctx, merged); err != nil {
 			return res, fmt.Errorf("upsert clip %s: %w", rc.ID, err)
+		}
+		if acquired && artifact.State != ArtifactConsumed {
+			artifact.State = ArtifactConsumed
+			artifact.MediaPath = rc.Path
+			artifact.SidecarPath = strings.TrimSuffix(rc.Path, filepath.Ext(rc.Path)) + ".info.json"
+			artifact.ClipHash = rc.ID
+			artifact.RepairReason = ""
+			artifact.UpdatedAt = s.now().UTC()
+			if err := s.acquisitions.UpsertAcquisitionArtifacts(ctx, []AcquisitionArtifact{artifact}); err != nil {
+				return res, fmt.Errorf("consume acquisition artifact %s: %w", artifact.ID, err)
+			}
 		}
 	}
 
@@ -555,6 +596,115 @@ func (s *Syncer) Sync(ctx context.Context) (SyncResult, error) {
 		s.log.Info("filler catalog synced", "total", res.Total, "added", res.Added, "updated", res.Updated, "repaired", res.Repaired, "pruned", res.Pruned)
 	}
 	return res, nil
+}
+
+func (s *Syncer) bindAcquisitionArtifact(ctx context.Context) func(sourcePath, destinationPath, previousPath, filedPath, clipHash string) error {
+	if s.acquisitions == nil {
+		return nil
+	}
+	return func(sourcePath, destinationPath, previousPath, filedPath, clipHash string) error {
+		artifact, found, err := s.acquisitions.AcquisitionArtifactForClip(ctx, previousPath, clipHash)
+		if err != nil || !found {
+			return err
+		}
+		fail := func(reason string) error {
+			artifact.State = ArtifactRepair
+			artifact.RepairReason = reason
+			artifact.UpdatedAt = s.now().UTC()
+			if persistErr := s.acquisitions.UpsertAcquisitionArtifacts(ctx, []AcquisitionArtifact{artifact}); persistErr != nil {
+				return fmt.Errorf("%s; record repair: %w", reason, persistErr)
+			}
+			return errors.New(reason)
+		}
+		if artifact.State == ArtifactRepair {
+			return errors.New(artifact.RepairReason)
+		}
+		verify := func(path, observedHash string) error {
+			info, statErr := os.Lstat(path)
+			if statErr != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+				return errors.New("manifested media is missing, symlinked, or not a regular file")
+			}
+			digest, size, digestErr := FileSHA256(path)
+			if digestErr != nil {
+				return errors.New("manifested media cannot be hashed: " + digestErr.Error())
+			}
+			if observedHash == "" {
+				observedHash, digestErr = ClipID(path)
+				if digestErr != nil {
+					return errors.New("manifested media cannot be identified: " + digestErr.Error())
+				}
+			}
+			if digest != artifact.MediaSHA256 || size != artifact.MediaBytes || observedHash != artifact.ClipHash {
+				return errors.New("manifested media bytes do not match the recorded digest, size, and clip identity")
+			}
+			return nil
+		}
+		if verifyErr := verify(sourcePath, clipHash); verifyErr != nil {
+			return fail(verifyErr.Error())
+		}
+		if _, statErr := os.Lstat(destinationPath); statErr == nil {
+			if verifyErr := verify(destinationPath, ""); verifyErr != nil {
+				return fail(verifyErr.Error())
+			}
+		} else if !os.IsNotExist(statErr) {
+			return fmt.Errorf("inspect manifested destination: %w", statErr)
+		}
+		if artifact.MediaPath == filedPath {
+			return nil
+		}
+		artifact.MediaPath = filedPath
+		artifact.UpdatedAt = s.now().UTC()
+		if err := s.acquisitions.UpsertAcquisitionArtifacts(ctx, []AcquisitionArtifact{artifact}); err != nil {
+			return fmt.Errorf("bind manifested watch arrival: %w", err)
+		}
+		return nil
+	}
+}
+
+func (s *Syncer) authorizeAcquisition(ctx context.Context, rc RawClip) (AcquisitionArtifact, bool, error) {
+	if s.acquisitions == nil {
+		return AcquisitionArtifact{}, false, nil
+	}
+	artifact, found, err := s.acquisitions.AcquisitionArtifactForClip(ctx, rc.Path, rc.ID)
+	if err != nil || !found {
+		return artifact, found, err
+	}
+	fail := func(reason string) (AcquisitionArtifact, bool, error) {
+		artifact.State = ArtifactRepair
+		artifact.RepairReason = reason
+		artifact.UpdatedAt = s.now().UTC()
+		if persistErr := s.acquisitions.UpsertAcquisitionArtifacts(ctx, []AcquisitionArtifact{artifact}); persistErr != nil {
+			return artifact, true, fmt.Errorf("%s; record repair: %w", reason, persistErr)
+		}
+		return artifact, true, errors.New(reason)
+	}
+	if artifact.State == ArtifactRepair {
+		return artifact, true, errors.New(artifact.RepairReason)
+	}
+	path := filepath.Join(s.dir, filepath.FromSlash(rc.Path))
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fail("manifested media is missing, symlinked, or not a regular file")
+	}
+	digest, size, err := FileSHA256(path)
+	if err != nil {
+		return fail("manifested media cannot be hashed: " + err.Error())
+	}
+	if digest != artifact.MediaSHA256 || size != artifact.MediaBytes || rc.ID != artifact.ClipHash {
+		return fail("manifested media bytes do not match the recorded digest, size, and clip identity")
+	}
+	tags, state := ReadSidecarTagsState(path)
+	if state == SidecarInvalid {
+		return fail("manifested media has malformed portable provenance")
+	}
+	if state == SidecarAbsent || tags.SourceID != artifact.SourceID || tags.AcquisitionID != artifact.AcquisitionID || !SidecarFetchedByUs(path) {
+		if err := WriteSidecarTags(path, SidecarTags{
+			SourceID: artifact.SourceID, AcquisitionID: artifact.AcquisitionID,
+		}, true); err != nil {
+			return fail("manifested media portable provenance cannot be repaired: " + err.Error())
+		}
+	}
+	return artifact, true, nil
 }
 
 // repairOpaqueDisplayName removes implementation identifiers from the user-facing title even when

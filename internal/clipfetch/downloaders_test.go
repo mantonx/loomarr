@@ -77,7 +77,7 @@ func TestYtDlpDownloaderFailureKeepsBoundedActionableDiagnostics(t *testing.T) {
 	executable := testkit.DescendantProcessExecutable(t, "fake-yt-dlp")
 	t.Setenv(testkit.ProcessTreeModeEnv, "fail-large")
 
-	_, _, err := NewYtDlpDownloader(executable, "ffmpeg").Download(context.Background(), Source{
+	_, err := NewYtDlpDownloader(executable, "ffmpeg").Download(context.Background(), Source{
 		Kind: YouTube,
 		URL:  "https://example.invalid/playlist",
 	}, dir)
@@ -100,12 +100,15 @@ func TestYtDlpDownloaderNaturalSuccessStampsSidecar(t *testing.T) {
 	dir := t.TempDir()
 	sidecar := writeTestSidecar(t, dir)
 	media := strings.TrimSuffix(sidecar, ".info.json") + ".mp4"
+	if err := os.WriteFile(media, []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	executable := testkit.Executable(t, "fake-yt-dlp", fmt.Sprintf(`#!/bin/sh
 while test "$1" != "--print-to-file"; do shift; done
 printf '%%s\n' %q >> "$3"
 `, strconv.Quote(media)))
 
-	_, _, err := NewYtDlpDownloader(executable, "ffmpeg").Download(context.Background(), Source{
+	_, err := NewYtDlpDownloader(executable, "ffmpeg").Download(context.Background(), Source{
 		ID:   "source-1",
 		Kind: YouTube,
 		URL:  "https://example.invalid/playlist",
@@ -124,7 +127,7 @@ func TestYtDlpDownloaderNaturalFailureDoesNotStampSidecar(t *testing.T) {
 	executable := testkit.DescendantProcessExecutable(t, "fake-yt-dlp")
 	t.Setenv(testkit.ProcessTreeModeEnv, "fail-large")
 
-	_, _, err := NewYtDlpDownloader(executable, "ffmpeg").Download(context.Background(), Source{
+	_, err := NewYtDlpDownloader(executable, "ffmpeg").Download(context.Background(), Source{
 		ID:   "source-1",
 		Kind: YouTube,
 		URL:  "https://example.invalid/playlist",
@@ -151,7 +154,7 @@ func blockingYtDlp(t *testing.T, dir string) (executable, parentPIDFile, childPI
 func downloadAsync(ctx context.Context, executable, dir, sourceID string) <-chan error {
 	result := make(chan error, 1)
 	go func() {
-		_, _, err := NewYtDlpDownloader(executable, "ffmpeg").Download(ctx, Source{
+		_, err := NewYtDlpDownloader(executable, "ffmpeg").Download(ctx, Source{
 			ID:   sourceID,
 			Kind: YouTube,
 			URL:  "https://example.invalid/playlist",
@@ -241,7 +244,7 @@ printf '%%s\n' "$@" > %q
 
 	d := NewYtDlpDownloader(ytdlp, "ffmpeg")
 	src := Source{Kind: YouTube, URL: "https://youtube.com/watch?v=current-id"}
-	if _, _, err := d.Download(context.Background(), src, drop); err != nil {
+	if _, err := d.Download(context.Background(), src, drop); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(drop)
@@ -257,6 +260,27 @@ printf '%%s\n' "$@" > %q
 	}
 	if !strings.Contains(string(args), "--print-to-file") {
 		t.Fatalf("yt-dlp args = %q, want private result-file argument", args)
+	}
+}
+
+func TestYtDlpDownloader_DirectUseKeepsPublicationArchive(t *testing.T) {
+	drop := t.TempDir()
+	publication := t.TempDir()
+	argsFile := filepath.Join(t.TempDir(), "args")
+	ytdlp := testkit.Executable(t, "yt-dlp", fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$@" > %q
+`, argsFile))
+	if _, err := NewYtDlpDownloader(ytdlp, "ffmpeg").Download(context.Background(), Source{
+		Kind: YouTube, URL: "https://youtube.com/watch?v=current-id", PublicationDir: publication,
+	}, drop); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), filepath.Join(publication, ".yt-dlp-archive.txt")) {
+		t.Fatalf("yt-dlp args = %q, want direct publication archive", args)
 	}
 }
 
@@ -282,17 +306,18 @@ if test -e %q; then
   exit 0
 fi
 printf '%%s\n' '{"title":"current download"}' > %q
+printf 'video one' > %q
 touch %q
 printf '%%s\n' '{"title":"second download"}' > %q
-touch %q
+printf 'video two' > %q
 printf '%%s\n' %q >> "$result"
 printf '%%s\n' %q >> "$result"
 printf 'download warning: %%s\n' %q >&2
-`, marker, sidecar, marker, playlistSidecar, playlistMedia, strconv.Quote(filepath.Base(media)), strconv.Quote(filepath.Base(playlistMedia)), media))
+`, marker, sidecar, media, marker, playlistSidecar, playlistMedia, strconv.Quote(filepath.Base(media)), strconv.Quote(filepath.Base(playlistMedia)), media))
 
 	d := NewYtDlpDownloader(ytdlp, "ffmpeg")
 	src := Source{ID: "youtube:current", AcquisitionID: "acq-current", Kind: YouTube, URL: "https://youtube.com/watch?v=current-id"}
-	if _, _, err := d.Download(context.Background(), src, drop); err != nil {
+	if _, err := d.Download(context.Background(), src, drop); err != nil {
 		t.Fatal(err)
 	}
 	if _, stamped := readSidecar(t, unrelated)[filler.SidecarLoomarrKey()]; stamped {
@@ -309,7 +334,7 @@ printf 'download warning: %%s\n' %q >&2
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := d.Download(context.Background(), src, drop); err != nil {
+	if _, err := d.Download(context.Background(), src, drop); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.ReadFile(sidecar)
@@ -343,7 +368,7 @@ func TestYtDlpDownloader_RejectsEscapingAndSymlinkedSidecars(t *testing.T) {
 while test "$1" != "--print-to-file"; do shift; done
 result="$3"
 printf '%%s\n' '{"title":"current download"}' > %q
-touch %q
+printf 'video' > %q
 printf '%%s\n' %q >> "$result"
 printf '%%s\n' %q >> "$result"
 printf '%%s\n' %q >> "$result"
@@ -354,7 +379,7 @@ printf '%%s\n' %q >> "$result"
 
 	d := NewYtDlpDownloader(ytdlp, "ffmpeg")
 	src := Source{ID: "youtube:current", AcquisitionID: "acq-current", Kind: YouTube, URL: "https://youtube.com/watch?v=current-id"}
-	if _, _, err := d.Download(context.Background(), src, drop); err != nil {
+	if _, err := d.Download(context.Background(), src, drop); err != nil {
 		t.Fatal(err)
 	}
 	if _, stamped := readSidecar(t, outsideSidecar)[filler.SidecarLoomarrKey()]; stamped {
@@ -377,15 +402,13 @@ func TestStampFetchedRejectsFinalSymlinkAndOpenedFilePathMismatch(t *testing.T) 
 	if err := os.WriteFile(normal, []byte(`{"title":"normal"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result := filepath.Join(drop, "result.jsonl")
-	if err := os.WriteFile(result, []byte("\"normal.mp4\"\n"), 0o600); err != nil {
+	normalFile, err := root.OpenFile("normal.info.json", os.O_RDWR, 0)
+	if err != nil {
 		t.Fatal(err)
 	}
-	normalSidecars := ytDlpSidecars(root, result)
-	if len(normalSidecars) != 1 {
-		t.Fatalf("opened normal sidecars = %d, want 1", len(normalSidecars))
+	if err := stampFetched(root, fetchedSidecar{path: "normal.info.json", file: normalFile}, "youtube:current", "acq-current"); err != nil {
+		t.Fatal(err)
 	}
-	stampFetched(root, normalSidecars, "youtube:current", "acq-current")
 	if _, stamped := readSidecar(t, normal)[filler.SidecarLoomarrKey()]; !stamped {
 		t.Fatal("regular sidecar was not stamped")
 	}
@@ -398,10 +421,13 @@ func TestStampFetchedRejectsFinalSymlinkAndOpenedFilePathMismatch(t *testing.T) 
 	if err := os.Symlink("unrelated.info.json", linked); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(result, []byte("\"linked.mp4\"\n"), 0o600); err != nil {
+	linkedFile, err := root.OpenFile("linked.info.json", os.O_RDWR, 0)
+	if err != nil {
 		t.Fatal(err)
 	}
-	stampFetched(root, ytDlpSidecars(root, result), "youtube:current", "acq-current")
+	if err := stampFetched(root, fetchedSidecar{path: "linked.info.json", file: linkedFile}, "youtube:current", "acq-current"); err == nil {
+		t.Fatal("symlinked sidecar passed provenance validation")
+	}
 	if _, stamped := readSidecar(t, unrelated)[filler.SidecarLoomarrKey()]; stamped {
 		t.Fatal("final symlink stamped its unrelated target")
 	}
@@ -410,12 +436,9 @@ func TestStampFetchedRejectsFinalSymlinkAndOpenedFilePathMismatch(t *testing.T) 
 	if err := os.WriteFile(claimed, []byte(`{"title":"claimed"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(result, []byte("\"claimed.mp4\"\n"), 0o600); err != nil {
+	claimedFile, err := root.OpenFile("claimed.info.json", os.O_RDWR, 0)
+	if err != nil {
 		t.Fatal(err)
-	}
-	sidecars := ytDlpSidecars(root, result)
-	if len(sidecars) != 1 {
-		t.Fatalf("opened sidecars = %d, want 1", len(sidecars))
 	}
 	original := filepath.Join(drop, "original.info.json")
 	if err := os.Rename(claimed, original); err != nil {
@@ -424,7 +447,9 @@ func TestStampFetchedRejectsFinalSymlinkAndOpenedFilePathMismatch(t *testing.T) 
 	if err := os.WriteFile(claimed, []byte(`{"title":"replacement"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stampFetched(root, sidecars, "youtube:current", "acq-current")
+	if err := stampFetched(root, fetchedSidecar{path: "claimed.info.json", file: claimedFile}, "youtube:current", "acq-current"); err == nil {
+		t.Fatal("replaced sidecar passed provenance validation")
+	}
 	for _, path := range []string{original, claimed} {
 		if _, stamped := readSidecar(t, path)[filler.SidecarLoomarrKey()]; stamped {
 			t.Fatalf("path replacement stamped %q", path)

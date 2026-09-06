@@ -16,6 +16,14 @@ type AcquisitionOutcomeDTO struct {
 	Dismissed     int `json:"dismissed"`
 }
 
+type AcquisitionArtifactOutcomeDTO struct {
+	Staged       int    `json:"staged"`
+	Published    int    `json:"published"`
+	Consumed     int    `json:"consumed"`
+	Repair       int    `json:"repair"`
+	RepairReason string `json:"repairReason,omitempty"`
+}
+
 type FillerAcquisitionRunDTO struct {
 	ID       string `json:"id"`
 	Trigger  string `json:"trigger" enum:"scheduled,source,pull,manual"`
@@ -30,10 +38,11 @@ type FillerAcquisitionRunDTO struct {
 	Empty     int    `json:"empty"`
 	Error     string `json:"error,omitempty"`
 
-	StartedAt   string                `json:"startedAt" format:"date-time"`
-	CompletedAt string                `json:"completedAt,omitempty" format:"date-time"`
-	UpdatedAt   string                `json:"updatedAt" format:"date-time"`
-	Outcome     AcquisitionOutcomeDTO `json:"outcome"`
+	StartedAt   string                        `json:"startedAt" format:"date-time"`
+	CompletedAt string                        `json:"completedAt,omitempty" format:"date-time"`
+	UpdatedAt   string                        `json:"updatedAt" format:"date-time"`
+	Outcome     AcquisitionOutcomeDTO         `json:"outcome"`
+	Artifacts   AcquisitionArtifactOutcomeDTO `json:"artifacts"`
 }
 
 type FillerReadinessDTO struct {
@@ -92,6 +101,11 @@ func acquisitionRunDTO(run filler.AcquisitionRun) FillerAcquisitionRunDTO {
 			Enrolled: run.Outcome.Enrolled, Preparing: run.Outcome.Preparing,
 			NeedsDecision: run.Outcome.NeedsDecision, Admitted: run.Outcome.Admitted,
 			Rejected: run.Outcome.Rejected, Dismissed: run.Outcome.Dismissed,
+		},
+		Artifacts: AcquisitionArtifactOutcomeDTO{
+			Staged: run.Artifacts.Staged, Published: run.Artifacts.Published,
+			Consumed: run.Artifacts.Consumed, Repair: run.Artifacts.Repair,
+			RepairReason: run.Artifacts.RepairReason,
 		},
 	}
 }

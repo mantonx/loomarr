@@ -1,8 +1,11 @@
 package clipfetch
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,6 +59,7 @@ type fileSink interface {
 	Exists(path string) bool
 	WriteStream(path string, r io.Reader) error
 	WriteFile(path string, data []byte) error
+	Inspect(path string) (digest string, size int64, clipHash string, err error)
 }
 
 // newArchiveClient builds the walker. base defaults to https://archive.org.
@@ -162,13 +166,14 @@ type searchDoc struct {
 type registeredSourceContextKey struct{}
 
 type acquisitionContext struct {
-	sourceID      string
-	acquisitionID string
+	sourceID       string
+	acquisitionID  string
+	publicationDir string
 }
 
-func withAcquisition(ctx context.Context, sourceID, acquisitionID string) context.Context {
+func withAcquisition(ctx context.Context, sourceID, acquisitionID, publicationDir string) context.Context {
 	return context.WithValue(ctx, registeredSourceContextKey{}, acquisitionContext{
-		sourceID: sourceID, acquisitionID: acquisitionID,
+		sourceID: sourceID, acquisitionID: acquisitionID, publicationDir: publicationDir,
 	})
 }
 
@@ -180,14 +185,14 @@ func acquisitionFrom(ctx context.Context) acquisitionContext {
 // walk resolves an Archive URL/id and downloads its video content. Returns
 // (fetched, skipped, error). A per-item failure inside a collection is logged by
 // the caller via the aggregate error; here a collection continues past a bad item.
-func (c *archiveClient) walk(ctx context.Context, rawURL, dropDir string) (int, int, error) {
+func (c *archiveClient) walk(ctx context.Context, rawURL, dropDir string) (int, int, []Output, error) {
 	id := archiveIDFromURL(rawURL)
 	if id == "" {
-		return 0, 0, fmt.Errorf("archive: cannot extract id from %q", rawURL)
+		return 0, 0, nil, fmt.Errorf("archive: cannot extract id from %q", rawURL)
 	}
 	meta, err := c.metadata(ctx, id)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 	if meta.Metadata.MediaType == "collection" {
 		return c.walkCollection(ctx, id, dropDir)
@@ -196,53 +201,68 @@ func (c *archiveClient) walk(ctx context.Context, rawURL, dropDir string) (int, 
 }
 
 // walkCollection lists a collection's member items and walks each (capped).
-func (c *archiveClient) walkCollection(ctx context.Context, collID, dropDir string) (int, int, error) {
+func (c *archiveClient) walkCollection(ctx context.Context, collID, dropDir string) (int, int, []Output, error) {
 	ids, err := c.collectionItems(ctx, collID)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 	var fetched, skipped int
+	var outputs []Output
+	var failures error
 	for _, id := range ids {
 		select {
 		case <-ctx.Done():
-			return fetched, skipped, ctx.Err()
+			return fetched, skipped, outputs, ctx.Err()
 		default:
 		}
 		meta, err := c.metadata(ctx, id)
 		if err != nil {
+			failures = errors.Join(failures, err)
 			continue // skip a bad item, keep the collection going
 		}
-		f, s, err := c.downloadItem(ctx, id, meta, dropDir)
-		if err != nil {
-			continue
-		}
+		f, s, itemOutputs, err := c.downloadItem(ctx, id, meta, dropDir)
 		fetched += f
 		skipped += s
+		outputs = append(outputs, itemOutputs...)
+		if err != nil {
+			failures = errors.Join(failures, err)
+			continue
+		}
 	}
-	return fetched, skipped, nil
+	return fetched, skipped, outputs, failures
 }
 
 // downloadItem picks the best video derivative and downloads it + a sidecar.
-func (c *archiveClient) downloadItem(ctx context.Context, id string, meta metadataResp, dropDir string) (int, int, error) {
+func (c *archiveClient) downloadItem(ctx context.Context, id string, meta metadataResp, dropDir string) (int, int, []Output, error) {
 	file, ok := pickVideoFile(meta.Files, c.preferOriginal)
 	if !ok {
-		return 0, 0, nil // no video file (e.g. audio-only) → nothing to fetch
+		return 0, 0, nil, nil // no video file (e.g. audio-only) → nothing to fetch
 	}
 	// Target filenames in the drop-folder: "<id> - <file>" so ids don't collide.
 	base := sanitize(id + " - " + file.Name)
 	mediaPath := filepath.Join(dropDir, base)
 	sidecarPath := strings.TrimSuffix(mediaPath, filepath.Ext(mediaPath)) + ".info.json"
 
-	if c.fs.Exists(mediaPath) {
-		return 0, 1, nil // idempotent: already fetched
+	acquisition := acquisitionFrom(ctx)
+	existingPath := mediaPath
+	if acquisition.publicationDir != "" {
+		existingPath = filepath.Join(acquisition.publicationDir, base)
+	}
+	if c.fs.Exists(existingPath) {
+		return 0, 1, nil, nil // idempotent: already fetched
 	}
 
 	// Download from <scheme>://<server><dir>/<url-encoded file name> (prod: https;
 	// the server host + dir come from the metadata response).
 	dlURL := c.scheme + "://" + meta.Server + meta.Dir + "/" + url.PathEscape(file.Name)
 	if err := c.fetchTo(ctx, dlURL, mediaPath); err != nil {
-		return 0, 0, fmt.Errorf("archive download %s: %w", id, err)
+		return 0, 0, nil, fmt.Errorf("archive download %s: %w", id, err)
 	}
+	digest, size, clipHash, err := c.fs.Inspect(mediaPath)
+	if err != nil {
+		return 1, 0, nil, fmt.Errorf("inspect archive download %s: %w", id, err)
+	}
+	output := Output{MediaPath: mediaPath, SidecarPath: sidecarPath, SHA256: digest, Bytes: size, ClipHash: clipHash}
 	// Write the info-JSON sidecar (title/description → AI-tagging text signals, §10).
 	fields := map[string]any{
 		"id":          id,
@@ -266,15 +286,16 @@ func (c *archiveClient) downloadItem(ctx context.Context, id string, meta metada
 	// Nothing wrote this until V38c.8, so every auto-fetched clip landed `held=false` and went
 	// straight to air unreviewed. Caught by running auto-fetch against real collections and
 	// reading the rows back, not by any test.
-	acquisition := acquisitionFrom(ctx)
 	fields[filler.SidecarLoomarrKey()] = filler.SidecarFetchedMarkForAcquisition(
 		acquisition.sourceID, acquisition.acquisitionID,
 	)
 	sidecar, _ := json.MarshalIndent(fields, "", "  ")
 	if err := c.fs.WriteFile(sidecarPath, sidecar); err != nil {
-		return 1, 0, fmt.Errorf("archive sidecar %s: %w", id, err)
+		output.SidecarPath = ""
+		output.Repair = "archive sidecar could not be written: " + err.Error()
+		return 1, 0, []Output{output}, fmt.Errorf("archive sidecar %s: %w", id, err)
 	}
-	return 1, 0, nil
+	return 1, 0, []Output{output}, nil
 }
 
 func (c *archiveClient) metadata(ctx context.Context, id string) (metadataResp, error) {
@@ -449,4 +470,14 @@ func (diskSink) WriteStream(path string, r io.Reader) error {
 
 func (diskSink) WriteFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o644)
+}
+
+func (diskSink) Inspect(path string) (string, int64, string, error) {
+	return inspectOutput(path)
+}
+
+func inspectBytes(data []byte) (string, int64, string, error) {
+	digest := sha256.Sum256(data)
+	clipHash, err := filler.ClipIDFromReaderAt(bytes.NewReader(data), int64(len(data)))
+	return fmt.Sprintf("%x", digest[:]), int64(len(data)), clipHash, err
 }
