@@ -148,7 +148,7 @@ func ValidateLedgerRun(run LedgerRun) error {
 	if !boundedLedgerID(run.ID) || !boundedLedgerID(run.ClipHash) ||
 		!validSHA256(run.AuthoritySHA256) || !validSHA256(run.SourceSHA256) ||
 		!validSHA256(run.CertificationSHA256) || !validSHA256(run.PolicySHA256) || !validSHA256(run.ProposerSHA256) ||
-		!boundedAuthorityID(run.Implementation) || run.SourceBytes <= 0 || run.DurationMS <= 0 || run.CreatedAt.IsZero() {
+		!boundedLedgerID(run.Implementation) || run.SourceBytes <= 0 || run.DurationMS <= 0 || run.CreatedAt.IsZero() {
 		return ErrLedgerInvalid
 	}
 	return nil
@@ -265,8 +265,8 @@ func validProposalLedger(proposal ProposalCompleted) bool {
 
 func validReservation(reservation InferenceReserved) bool {
 	if !boundedLedgerID(reservation.EvaluationID) || !validSHA256(reservation.RequestSHA256) ||
-		!boundedLedgerID(reservation.RequestedProvider) || !boundedLedgerID(reservation.RequestedModel) ||
-		!boundedLedgerID(reservation.UpstreamProvider) || !validSHA256(reservation.CapabilitySHA256) ||
+		!boundedPublicIdentity(reservation.RequestedProvider) || !boundedPublicIdentity(reservation.RequestedModel) ||
+		!boundedPublicIdentity(reservation.UpstreamProvider) || !validSHA256(reservation.CapabilitySHA256) ||
 		!validSHA256(reservation.PromptSHA256) || reservation.RequestedNanoUSD < 0 || reservation.ReservedNanoUSD < 0 ||
 		(reservation.CandidateID != "" && !boundedLedgerID(reservation.CandidateID)) || len(reservation.Modalities) == 0 ||
 		(reservation.State != ReservationAccepted && reservation.State != ReservationHeldBudget) {
@@ -300,15 +300,15 @@ func validSettlement(settlement InferenceSettled) bool {
 	switch settlement.State {
 	case SettlementCompleted:
 		return settlement.Failure == FailureNone && validSHA256(settlement.ResponseSHA256) &&
-			boundedLedgerID(settlement.ResolvedProvider) && boundedLedgerID(settlement.ResolvedModel) &&
-			boundedLedgerID(settlement.UpstreamProvider) && boundedLedgerID(settlement.GenerationID) &&
+			boundedPublicIdentity(settlement.ResolvedProvider) && boundedPublicIdentity(settlement.ResolvedModel) &&
+			boundedPublicIdentity(settlement.UpstreamProvider) && boundedLedgerID(settlement.GenerationID) &&
 			validInferenceOutcome(settlement.Outcome) && settlement.ChargeKnown && validUSD(settlement.ChargedAmountUSD) &&
 			settlement.AccountedNanoUSD == settlement.ChargedNanoUSD
 	case SettlementFailed:
 		return settlement.Failure != FailureInterrupted && validSettlementFailure(settlement.Failure) &&
 			settlement.Outcome == "" && optionalSHA256(settlement.ResponseSHA256) &&
-			optionalLedgerID(settlement.ResolvedProvider) && optionalLedgerID(settlement.ResolvedModel) &&
-			optionalLedgerID(settlement.UpstreamProvider) && optionalLedgerID(settlement.GenerationID) &&
+			optionalPublicIdentity(settlement.ResolvedProvider) && optionalPublicIdentity(settlement.ResolvedModel) &&
+			optionalPublicIdentity(settlement.UpstreamProvider) && optionalLedgerID(settlement.GenerationID) &&
 			(settlement.ChargeKnown && validUSD(settlement.ChargedAmountUSD) && settlement.AccountedNanoUSD == settlement.ChargedNanoUSD ||
 				!settlement.ChargeKnown && settlement.ChargedAmountUSD == "" && settlement.ChargedNanoUSD == 0 && settlement.AccountedNanoUSD == 0)
 	case SettlementUnknown:
@@ -336,6 +336,8 @@ func optionalSHA256(value string) bool { return value == "" || validSHA256(value
 
 func optionalLedgerID(value string) bool { return value == "" || boundedLedgerID(value) }
 
+func optionalPublicIdentity(value string) bool { return value == "" || boundedPublicIdentity(value) }
+
 func validTerminal(terminal TerminalResult) bool {
 	if _, valid := validateEvidence(terminal.Evidence); !valid ||
 		!reflect.DeepEqual(terminal.Result, Reduce(terminal.Evidence)) || len(terminal.EventIDs) == 0 {
@@ -350,6 +352,16 @@ func validTerminal(terminal TerminalResult) bool {
 			return false
 		}
 		seen[id] = struct{}{}
+	}
+	for _, candidate := range terminal.Evidence.Candidates {
+		if !boundedLedgerID(candidate.ID) {
+			return false
+		}
+	}
+	for _, assessment := range terminal.Evidence.Audio {
+		if !boundedLedgerID(assessment.CandidateID) {
+			return false
+		}
 	}
 	return true
 }
@@ -415,11 +427,24 @@ func nilPayload(value any) bool {
 }
 
 func boundedLedgerID(value string) bool {
-	if value == "" || value != strings.TrimSpace(value) || !utf8.ValidString(value) || len(value) > maxLedgerIDBytes ||
+	if value == "" || len(value) > maxLedgerIDBytes || !utf8.ValidString(value) {
+		return false
+	}
+	return !strings.ContainsFunc(value, func(char rune) bool {
+		return !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '_' || char == '-')
+	})
+}
+
+// boundedPublicIdentity bounds public provider/model labels without treating
+// their namespaces as opaque ledger identifiers. Atomic helpers copy validated
+// caller and V62 route identities into the ledger; full runtime binding remains
+// staged by the design contract.
+func boundedPublicIdentity(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || len(value) > maxLedgerIDBytes || !utf8.ValidString(value) ||
 		strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
 		return false
 	}
-	return !strings.ContainsFunc(value, func(char rune) bool { return char <= ' ' || char == 0x7f })
+	return !strings.ContainsFunc(value, func(char rune) bool { return char < ' ' || char == 0x7f })
 }
 
 func (run LedgerRun) String() string {

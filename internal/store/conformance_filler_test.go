@@ -4069,6 +4069,14 @@ func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
 	if err := s.PutSpokenSafetyRun(ctx, run); err != nil {
 		t.Fatal(err)
 	}
+	invalidRun := run
+	invalidRun.ID = "source.mp4"
+	if err := s.PutSpokenSafetyRun(ctx, invalidRun); !errors.Is(err, fillersafety.ErrLedgerInvalid) {
+		t.Fatalf("source-shaped run ID = %v, want ErrLedgerInvalid", err)
+	}
+	if _, err := s.GetSpokenSafetyRun(ctx, invalidRun.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("invalid run persisted: %v", err)
+	}
 	if err := s.PutSpokenSafetyRun(ctx, run); err != nil {
 		t.Fatalf("idempotent run insert: %v", err)
 	}
@@ -4092,6 +4100,14 @@ func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
 		Source: &fillersafety.SourcePlanned{
 			Audio: fillersafety.Span{EndMS: 10_000}, Video: fillersafety.Span{EndMS: 10_000},
 		}, CreatedAt: at.Add(time.Nanosecond),
+	}
+	invalidEvent := plan
+	invalidEvent.ID = "source.mp4"
+	if err := s.AppendSpokenSafetyEvent(ctx, invalidEvent); !errors.Is(err, fillersafety.ErrLedgerInvalid) {
+		t.Fatalf("source-shaped event ID = %v, want ErrLedgerInvalid", err)
+	}
+	if events, err := s.ListSpokenSafetyEvents(ctx, run.ID); err != nil || len(events) != 0 {
+		t.Fatalf("invalid event persisted: %+v, %v", events, err)
 	}
 	proposal := fillersafety.LedgerEvent{
 		ID: "safety-event-proposal", RunID: run.ID, Ordinal: 1, Kind: fillersafety.LedgerProposalCompleted,
@@ -4158,8 +4174,8 @@ func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
 	reserveAt := callRun.CreatedAt.Add(3 * time.Nanosecond)
 	evaluation := InferenceEvaluation{
 		ID: "safety-inference-1", ClipHash: callRun.ClipHash, RunID: callRun.ID,
-		Role: "spoken-safety", Rung: "native-audio", RequestedProvider: "openrouter",
-		RequestedModel: "model-1", UpstreamProvider: "provider-1", Modalities: []string{"audio"},
+		Role: "spoken-safety", Rung: "native-audio", RequestedProvider: "OpenRouter Route",
+		RequestedModel: "openai/gpt-5-mini.2026-08-07", UpstreamProvider: "OpenAI Provider", Modalities: []string{"audio"},
 		DerivativeBytes: 1024, DerivativeDurationMS: 400, ReservedNanoUSD: 100,
 		Versions: InferenceVersions{
 			Evidence: hash, Extractor: hash, Prompt: hash, Schema: hash,
@@ -4192,6 +4208,11 @@ func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
 		reserveEvent.Reserve.State != fillersafety.ReservationAccepted {
 		t.Fatalf("atomic reservation = %+v, %+v, %v", reserved, reserveEvent, err)
 	}
+	if reserveEvent.Reserve.RequestedProvider != evaluation.RequestedProvider ||
+		reserveEvent.Reserve.RequestedModel != evaluation.RequestedModel ||
+		reserveEvent.Reserve.UpstreamProvider != evaluation.UpstreamProvider {
+		t.Fatalf("atomic reservation route identities = %+v", reserveEvent.Reserve)
+	}
 	if again, event, err := s.ReserveSpokenSafetyInference(ctx, reserveCommand, evaluation,
 		InferenceBudget{PerClipNanoUSD: 1000, PerDayNanoUSD: 1000, PerRunNanoUSD: 1000}); err != nil || again.ID != reserved.ID || event.ID != reserveEvent.ID {
 		t.Fatalf("idempotent atomic reservation = %+v, %+v, %v", again, event, err)
@@ -4209,7 +4230,7 @@ func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
 
 	settleAt := callRun.CreatedAt.Add(4 * time.Nanosecond)
 	settlement := InferenceSettlement{
-		ResolvedProvider: "openrouter", ResolvedModel: "model-1", UpstreamProvider: "provider-1",
+		ResolvedProvider: "OpenRouter Route", ResolvedModel: "openai/gpt-5-mini.2026-08-07", UpstreamProvider: "OpenAI Provider",
 		Tokens: InferenceTokens{Prompt: 20, Completion: 4, Audio: 10}, ChargedAmount: "0.00000005",
 		ChargedCurrency: "USD", ChargedNanoUSD: 50, Attempts: 1, GenerationID: "generation-1",
 		Outcome: string(fillersafety.AudioAbsent), State: InferenceCompleted, UpdatedAt: settleAt,
@@ -4247,6 +4268,11 @@ func testFillerSpokenSafetyLedger(t *testing.T, newStore NewStoreFunc) {
 	if err != nil || settled.State != InferenceCompleted || settleEvent.Settle == nil ||
 		settleEvent.Settle.State != fillersafety.SettlementCompleted {
 		t.Fatalf("atomic settlement = %+v, %+v, %v", settled, settleEvent, err)
+	}
+	if settleEvent.Settle.ResolvedProvider != settlement.ResolvedProvider ||
+		settleEvent.Settle.ResolvedModel != settlement.ResolvedModel ||
+		settleEvent.Settle.UpstreamProvider != settlement.UpstreamProvider {
+		t.Fatalf("atomic settlement response identities = %+v", settleEvent.Settle)
 	}
 
 	callEvidence := fillersafety.Evidence{
