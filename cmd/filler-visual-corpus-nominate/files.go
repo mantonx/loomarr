@@ -1,8 +1,7 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"io"
 	"os"
@@ -35,16 +34,7 @@ func readPrivateInput(path string) ([]byte, error) {
 }
 
 func decodeStrictJSON(raw []byte, destination any) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("trailing JSON")
-	}
-	return nil
+	return jsonv2.Unmarshal(raw, destination, jsonv2.RejectUnknownMembers(true))
 }
 
 func publishWorksheetDirectory(output string, worksheet, reviewCSV, board []byte) error {

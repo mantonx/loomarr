@@ -7,6 +7,11 @@ import (
 	"testing"
 )
 
+type strictNominationDocument struct {
+	Name  string   `json:"name"`
+	Items []string `json:"items"`
+}
+
 func TestRunRequiresKnownSubcommand(t *testing.T) {
 	t.Parallel()
 	for _, args := range [][]string{nil, {"unknown"}} {
@@ -50,5 +55,47 @@ func TestPrivateNominationInputsAndWorksheetPublication(t *testing.T) {
 	}
 	if err := publishWorksheetDirectory(output, []byte("changed"), []byte("changed"), []byte("changed")); err == nil {
 		t.Fatal("publishWorksheetDirectory overwrote an existing review")
+	}
+}
+
+func TestDecodeStrictJSONRejectsAmbiguousDocuments(t *testing.T) {
+	t.Parallel()
+	invalidUTF8 := append([]byte(`{"name":"`), 0xff)
+	invalidUTF8 = append(invalidUTF8, []byte(`","items":[]}`)...)
+	tests := map[string][]byte{
+		"unknown field":  []byte(`{"name":"alpha","items":[],"extra":true}`),
+		"case variant":   []byte(`{"Name":"alpha","items":[]}`),
+		"duplicate name": []byte(`{"name":"first","name":"second","items":[]}`),
+		"invalid UTF-8":  invalidUTF8,
+		"trailing value": []byte(`{"name":"alpha","items":[]} {}`),
+	}
+	for name, data := range tests {
+		t.Run(name, func(t *testing.T) {
+			if err := decodeStrictJSON(data, new(strictNominationDocument)); err == nil {
+				t.Fatal("decodeStrictJSON accepted an ambiguous document")
+			}
+		})
+	}
+}
+
+func TestDecodeStrictJSONPreservesNilAndEmptyCollections(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		data    string
+		wantNil bool
+	}{
+		{name: "null", data: `{"name":"alpha","items":null}`, wantNil: true},
+		{name: "empty", data: `{"name":"alpha","items":[]}`, wantNil: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var got strictNominationDocument
+			if err := decodeStrictJSON([]byte(test.data), &got); err != nil {
+				t.Fatal(err)
+			}
+			if (got.Items == nil) != test.wantNil || len(got.Items) != 0 {
+				t.Fatalf("items = %#v, want nil=%t and length 0", got.Items, test.wantNil)
+			}
+		})
 	}
 }
