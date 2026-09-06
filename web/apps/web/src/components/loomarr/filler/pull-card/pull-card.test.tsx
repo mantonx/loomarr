@@ -132,7 +132,10 @@ describe("PullCard", () => {
     await userEvent.type(screen.getByLabelText("Notes for this pull"), "reviewed by programming");
     await userEvent.click(screen.getByRole("button", { name: "Approve pull" }));
 
-    expect(onApprove).toHaveBeenCalledWith({ dropCandidateIds: ["candidate_psa"], note: "reviewed by programming" });
+    expect(onApprove).toHaveBeenCalledWith({
+      dropCandidateIds: ["candidate_psa"],
+      note: "reviewed by programming",
+    });
   });
 
   it("presents notes as annotations without changing the included candidates", async () => {
@@ -140,7 +143,9 @@ describe("PullCard", () => {
     render(<PullCard pull={pull()} onApprove={onApprove} onDismiss={() => {}} />);
 
     expect(screen.getByPlaceholderText("Optional annotation for your records")).toBeInTheDocument();
-    expect(screen.getByText("Optional annotation for your records. This does not change what is downloaded.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Optional annotation for your records. This does not change what is downloaded."),
+    ).toBeInTheDocument();
 
     await userEvent.type(screen.getByLabelText("Notes for this pull"), "keep the selected mix");
     await userEvent.click(screen.getByRole("button", { name: "Approve pull" }));
