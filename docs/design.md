@@ -130,6 +130,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 | `fillersafety` | 6 | `mediatools`, `openroutermedia` |
 | `fillerstructure` | 8 | — |
 | `fillerstructurewindow` | 6 | `fillerstructure` |
+| `fillervisualsafety` | 5 | `fillerbakeoff`, `fillereval`, `httpx`, `mediatools`, `openroutermedia` |
 | `httpx` | 12 | `metrics` |
 | `invitation` | 6 | `contact` |
 | `library` | 8 | `filler`, `httpx`, `metrics` |
@@ -268,12 +269,12 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns the fail-closed spoken-safety cascade and its shadow evidence.
 - **`fillerstructuremedia`** · 4 importers · → `fillerstructure`, `mediatools`
   Owns the exact media contract shared by complete-timeline structure qualification and production assessment.
-- **`fillervisualsafety`** · 4 importers · → `fillerbakeoff`, `fillercorpus`, `fillereval`, `httpx`, `mediatools`, `openroutermedia`
+- **`fillervisualsafety`** · 5 importers · → `fillerbakeoff`, `fillercorpus`, `fillereval`, `httpx`, `mediatools`, `openroutermedia`
   Owns complete-source visual-sensitive-content evidence.
 
 **Layer 6**
 
-- **`fillerairworthinessprojection`** · → `fillerairworthiness`, `fillersafety`
+- **`fillerairworthinessprojection`** · → `fillerairworthiness`, `fillersafety`, `fillervisualsafety`
   Authenticates safety-producer output and translates opaque certified matches into closed Airworthiness evidence.
 - **`fillersafetycert`** · 2 importers · → `fillersafety`
   Owns deterministic, non-authorizing certification of the durable spoken-safety cascade.
