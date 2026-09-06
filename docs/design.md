@@ -4684,11 +4684,11 @@ fails.
 
 Six distinct programme parents have unique bytes and unique `(provenance authority, reference)`
 pairs. Every submitted parent, including an unselected parent, is rejected if its content hash,
-canonical relative local path, authority/item-ID pair, or canonical authority/reference pair repeats
+canonical relative local path, authority/item-ID pair, or canonical reference URL repeats
 an entry in the complete 300-row digest-bound filler download ledger (including unselected, held,
 and excluded cases). A URL-identity collision is rejected even when bytes, local path, and item ID
-differ. A programme parent is bound to an immutable local
-metadata cache and a local `fillercorpus` inventory-v4 source record under the configured source
+differ, and does not depend on matching authority labels. A programme parent is bound to an immutable
+local metadata cache and a local `fillercorpus` inventory-v4 source record under the configured source
 root. The loader rejects missing, escaping, symlinked, or over-16-MiB metadata caches and source
 records, and rejects malformed source records. It hashes the raw metadata cache bytes and requires
 that digest to agree with both the programme inventory and the matched source record; this binds

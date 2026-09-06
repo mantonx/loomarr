@@ -204,7 +204,7 @@ func programmeSourceMatchesReference(source TemporalStructureChallengeSource, le
 		}
 		if item.ContentSHA256 == source.SHA256 ||
 			(strings.TrimSpace(item.Authority) == strings.TrimSpace(source.Provenance.Authority) && strings.TrimSpace(item.ItemID) == strings.TrimSpace(source.Provenance.ItemID)) ||
-			(itemReference == parentReference && strings.TrimSpace(item.Authority) == strings.TrimSpace(source.Provenance.Authority)) {
+			itemReference == parentReference {
 			return true
 		}
 		sourcePath, sourcePathOK := canonicalRelativeProgrammePath(source.Path)

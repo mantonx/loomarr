@@ -277,6 +277,13 @@ func TestLoadTemporalStructureHoldoutProgrammeInventoryRejectsSeventhProgrammeSo
 		t.Fatalf("seventh programme source matching unselected filler error = %v", err)
 	}
 	for name, mutate := range map[string]func(*fillerreference.DownloadCase, *TemporalStructureHoldoutProgrammeInventory){
+		"canonical URL with different authority": func(item *fillerreference.DownloadCase, _ *TemporalStructureHoldoutProgrammeInventory) {
+			item.Authority = "different-authority"
+			item.ItemID = "different-item"
+			item.ContentSHA256 = strings.Repeat("a", 64)
+			item.LocalFile = "different/path.mp4"
+			item.ItemURL = seventh.Provenance.Reference
+		},
 		"content hash": func(item *fillerreference.DownloadCase, _ *TemporalStructureHoldoutProgrammeInventory) {
 			item.ContentSHA256 = seventh.SHA256
 		},
