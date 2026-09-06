@@ -161,7 +161,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns the deterministic semantic boundary between versioned filler evidence and a catalog-admission decision.
 - **`fillercorpus`** · 2 importers
   Owns the source-neutral, non-authorizing inventory contract used to qualify certification corpus lanes.
-- **`fillereval`** · 3 importers
+- **`fillereval`** · 4 importers
   Owns the hermetic certification contract for filler admission.
 - **`images/rustgen`** · 4 importers
   Concrete adapter for Loomarr's required Rust image worker (§22).
@@ -206,6 +206,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns administrator admission decisions and their bearer grants (§11).
 - **`metrics`** · 8 importers · → `images/rustgen`, `provision`
   Owns Loomarr's generation-scoped Prometheus surface (design §7 /metrics, §17).
+- **`openroutermedia`** · 2 importers · → `fillereval`
+  Owns Loomarr's bounded OpenRouter structured-media transport.
 - **`prepared`** · 4 importers · → `diagnostics`, `media`
   Owns immutable, reusable playout publications.
 - **`quality`** · 7 importers · → `provision`
@@ -255,7 +257,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 - **`clipfetch`** · 1 importer · → `filler`, `proctree`
   Downloads filler clips into the drop-folder (design §10, §16).
-- **`fillerreview`** · → `filler`, `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `fillerreference`, `httpx`, `mediatools`
+- **`fillerreview`** · → `filler`, `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `fillerreference`, `fillersafety`, `httpx`, `mediatools`, `openroutermedia`
   Materializes identity-blind evidence for independent semantic review.
 - **`library`** · 8 importers · → `episodeevidence`, `filler`, `httpx`, `inventory`, `metrics`
   Library port (design §6, §2 boundaries): a shared Emby/Jellyfin adapter.
