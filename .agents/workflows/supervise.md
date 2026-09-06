@@ -76,6 +76,31 @@ checkpoint; change it only with the next bounded assignment after the worker has
 For an external session whose model cannot be controlled or verified, record `uncontrolled` instead
 of guessing.
 
+## Review a PR backlog concurrently
+
+When the goal spans multiple PRs, default to parallel bounded work wherever the evidence or edits
+are independent. Do not serialize the entire backlog behind one PR's review, repair, or hosted CI.
+Before assigning workers, record each PR's fixed base/head, dependencies, required evidence,
+mutable seams, and next action on the tracking issue.
+
+- Review independent PRs concurrently. For a stack, review later PRs against their exact parent
+  commits while earlier PRs are repaired or await CI; merge in dependency order.
+- Keep each review frozen. A worker reads the recorded commits or saved diff, not another worker's
+  changing checkout. After integration, review the delta against the accepted evidence and rerun
+  affected gates; an early review does not certify a different final tree.
+- Parallelize repairs only across disjoint files and claimed interfaces, with isolated worktrees
+  and explicit write authority. Keep one writer for overlapping files or generated outputs and one
+  delivery owner per PR. The supervisor coordinates integration and delivery.
+- Use waiting time for another ready review, bounded evidence check, or independent repair. Do
+  not launch duplicate reviews or invent work merely to fill panes. Close completed panes promptly.
+- Report the active PRs, each worker's scope, dependencies that still serialize delivery, and the
+  next integration decision. If useful parallel work is unavailable, state the concrete dependency
+  or constraint instead of silently processing the whole backlog serially.
+
+Visible panes, task-based model routing, token limits, report reserves, claims, independent review,
+and final gates apply to every concurrent assignment. More PRs in flight never weakens acceptance
+or authorizes closing a PR without evidence that its intended outcome is delivered or superseded.
+
 ## Bound every checkpoint
 
 Treat one implementation assignment or one review pass as a checkpoint with a declared token limit.

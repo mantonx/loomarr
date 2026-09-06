@@ -32,6 +32,11 @@ they do not self-assign follow-up work. Record model and reasoning choices when 
 them. Change those choices only at assignment boundaries, and never let them expand the worker's
 authority, scope, claims, tools, or acceptance criteria.
 
+For multi-PR delivery, run independent reviews and disjoint repairs concurrently, including early
+review of later stack members against fixed parent commits. Preserve dependency order for merges,
+one writer per overlapping seam, and final integrated-tree evidence. Follow the
+[concurrent backlog procedure](.agents/workflows/supervise.md#review-a-pr-backlog-concurrently).
+
 ### Task-based model routing
 
 Choose the least expensive model clearly capable of meeting the assignment's acceptance criteria.
