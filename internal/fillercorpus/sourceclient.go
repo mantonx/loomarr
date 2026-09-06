@@ -28,6 +28,7 @@ type SourceClient struct {
 	delay            time.Duration
 	allowedHosts     []string
 	requests         int
+	cacheHits        int
 	responseBytes    int64
 	lastRequest      time.Time
 }
@@ -47,6 +48,24 @@ type SourceClientConfig struct {
 type SourceHead struct {
 	ContentLength int64  `json:"contentLength"`
 	ContentType   string `json:"contentType"`
+}
+
+type sourceHTTPStatusError struct {
+	method     string
+	rawURL     string
+	status     string
+	statusCode int
+}
+
+func (e *sourceHTTPStatusError) Error() string {
+	return fmt.Sprintf("%s %s: %s", e.method, e.rawURL, e.status)
+}
+
+// IsSourceHTTPStatus reports whether err came from a completed source request
+// with the given HTTP status. Callers retain no access to the response body.
+func IsSourceHTTPStatus(err error, statusCode int) bool {
+	var statusErr *sourceHTTPStatusError
+	return errors.As(err, &statusErr) && statusErr.statusCode == statusCode
 }
 
 func NewSourceClient(config SourceClientConfig) (*SourceClient, error) {
@@ -93,6 +112,7 @@ func (c *SourceClient) Get(ctx context.Context, rawURL string) ([]byte, time.Tim
 			return nil, time.Time{}, err
 		}
 		c.responseBytes += int64(len(raw))
+		c.cacheHits++
 		return raw, info.ModTime().UTC(), nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, time.Time{}, fmt.Errorf("read source cache: %w", err)
@@ -103,7 +123,7 @@ func (c *SourceClient) Get(ctx context.Context, rawURL string) ([]byte, time.Tim
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, time.Time{}, fmt.Errorf("GET %s: %s", rawURL, resp.Status)
+		return nil, time.Time{}, &sourceHTTPStatusError{method: http.MethodGet, rawURL: rawURL, status: resp.Status, statusCode: resp.StatusCode}
 	}
 	remaining := c.maxResponseBytes - c.responseBytes
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, remaining+1))
@@ -139,6 +159,7 @@ func (c *SourceClient) Head(ctx context.Context, rawURL string) (SourceHead, tim
 			return SourceHead{}, time.Time{}, err
 		}
 		c.responseBytes += int64(len(raw))
+		c.cacheHits++
 		return head, info.ModTime().UTC(), nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return SourceHead{}, time.Time{}, fmt.Errorf("read source HEAD cache: %w", err)
@@ -149,7 +170,7 @@ func (c *SourceClient) Head(ctx context.Context, rawURL string) (SourceHead, tim
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return SourceHead{}, time.Time{}, fmt.Errorf("HEAD %s: %s", rawURL, resp.Status)
+		return SourceHead{}, time.Time{}, &sourceHTTPStatusError{method: http.MethodHead, rawURL: rawURL, status: resp.Status, statusCode: resp.StatusCode}
 	}
 	head := SourceHead{ContentLength: resp.ContentLength, ContentType: resp.Header.Get("Content-Type")}
 	if head.ContentLength <= 0 || head.ContentType == "" {
@@ -220,6 +241,7 @@ func decodeSourceHead(raw []byte) (SourceHead, error) {
 }
 
 func (c *SourceClient) RequestsUsed() int    { return c.requests }
+func (c *SourceClient) CacheHits() int       { return c.cacheHits }
 func (c *SourceClient) ResponseBytes() int64 { return c.responseBytes }
 
 func sourceCacheKey(value string) string {

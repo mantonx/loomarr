@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "terms": [
+    "architecture",
+    "botanical",
+    "ceramic",
+    "decorative arts",
+    "furniture",
+    "landscape",
+    "map",
+    "mineral",
+    "still life",
+    "textile",
+    "transportation"
+  ],
+  "excludedSubjectTerms": [
+    "Adolescents",
+    "Angels",
+    "Boys",
+    "Cherubs",
+    "Children",
+    "Christ Child",
+    "Cupid",
+    "Cupids",
+    "Female Nudes",
+    "Girls",
+    "Infants",
+    "Male Nudes",
+    "Nudes",
+    "Putti",
+    "Putto",
+    "Youth"
+  ]
+}

@@ -11,7 +11,7 @@ const (
 	RightsProfileDevelopment   = "development"
 	RightsProfileCertification = "certification"
 
-	HoldoutRightsWorksheetSchemaVersion = 4
+	HoldoutRightsWorksheetSchemaVersion = 5
 	HoldoutRightsContractSchemaVersion  = 1
 
 	RightsStatusCleared     = "cleared"

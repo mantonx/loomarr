@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "evidenceId": "met-open-access-metadata-prescreen-v1",
+  "capturedAt": "2026-09-04T11:02:45Z",
+  "sources": [
+    {
+      "kind": "api_documentation",
+      "url": "https://metmuseum.github.io/",
+      "sha256": "037f875cd22180ecb31a67cb38707ce2ea88eb7087c2f81edd27a0a1aa56dd6a"
+    },
+    {
+      "kind": "openaccess_license",
+      "url": "https://raw.githubusercontent.com/metmuseum/openaccess/6fa206f0df6cf349d4fe558028d4c08e95f44eb6/LICENSE",
+      "sha256": "36ffd9dc085d529a7e60e1276d73ae5a030b020313e6c5408593a6ae2af39673",
+      "commit": "6fa206f0df6cf349d4fe558028d4c08e95f44eb6"
+    },
+    {
+      "kind": "openaccess_readme",
+      "url": "https://raw.githubusercontent.com/metmuseum/openaccess/6fa206f0df6cf349d4fe558028d4c08e95f44eb6/README.md",
+      "sha256": "26f24c669b3eb888a02498113dc94feb2674ee9d007a1d470c13be36413a29c2",
+      "commit": "6fa206f0df6cf349d4fe558028d4c08e95f44eb6"
+    }
+  ],
+  "limitations": [
+    "cc0_does_not_resolve_non_copyright_rights",
+    "dataset_cc0_does_not_license_images",
+    "metadata_prescreen_is_not_rights_approval",
+    "source_policy_pages_require_independent_review"
+  ]
+}

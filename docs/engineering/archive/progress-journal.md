@@ -3684,3 +3684,50 @@ provider (opt-in); (c) Archive.org downloader live HTTP walk (sidecar manual-smo
 conn id 3 left up to catch it — remove after). Phase-0 findings:
 [`docs/engineering/phase-0-findings.md`](../phase-0-findings.md). Deferred captures:
 Sonarr Grab/Download → Phase 6; Emby login success body → Phase 9.
+
+## Visual corpus source-branch evidence (PR #982)
+
+The source branch recorded the following private development evidence before delivery integration.
+These captures and model runs were not repeated during backlog review.
+
+Filler visual acquisition now has a rights-approved, privately materialized 120-case development
+pool with 120 distinct Met creator, work, source-family, and exact-content identities. The first real
+download exposed a Met CDN split in which `HEAD` advertised origin bytes while bare and shared-key
+`GET` requests could return a differently sized cached representation. Both attempts failed closed
+without a ledger. The adapter now freezes an exact `download=1` URL with a cache-isolation key derived
+from the already frozen item-metadata SHA-256; the downloader's exact-byte rule was not relaxed. The
+final schema-4 inventory is `3a663b77d675fa209cffb496a3f27505664989629b03f9f38cd8bf70fff49847`,
+has the same 120 item/work/creator/metadata and representation facts as the original pool, and again
+produced 120 mechanical rights passes with zero holds at
+`d1e85d3e35ab6188200f4930b68f4740785f8b4cf041345072a0dc9d2b0e8896`. The maintainer's
+development-only attestation is `848b8258c6f2606eb30221e6cd0f3cd6413697202c57b2f155b7db6bac57a039`;
+the ordinary locker produced 120 item-bound approvals. The serial materializer downloaded and fully
+decoded 120 JPEGs totaling exactly 292,769,745 bytes in 120 requests, with no duplicate content;
+schema-3 ledger `9bda3154575635af954058d3f86a40744ad3820d5e91a9e4989e6546025e0152`.
+Nomination preparation reopened every image and emitted 120 inert four-field rows; worksheet file
+`04710cb604da6f28f4ff28b38ada65b95caa459bb1a79cf2b8fe9e3f8a70939c`, review CSV
+`601889a02e80f4efa4fa34a91bb41159cd238a68ca2c2352683ca7d1f5285942`. No nomination, truth,
+training, certification, provider transfer, production, ingestion, scheduling, or broadcast
+authority exists.
+
+A separate local model-assistance pass now covers all 120 exact Met images without editing that
+worksheet. Marqo and Freepik completed 120/120 network-disabled inferences; Gemma 4 12B and Llama
+3.2 Vision 11B completed two source-bound local VLM assessments per image. The conservative join
+produced 47 two-VLM adult-positive proposals, 16 safe age-risk exclusions, two agreed no-visible-nudity
+exclusions, and 55 targeted disagreements. Llama's single age-risk call versus Gemma's 15 establishes
+that its adult-only output is too optimistic to clear a Gemma hold. Three Llama free-text generations
+looped until the bound; a categorical-only recovery completed all three, so future assistance should
+return closed fields and Loomarr-owned reason codes. Private proposal manifest file
+`cc8d5fbde8d5d17222166e559abc49f32a8b06067d5f6ec8644dea8b87dda4e4`; internal digest
+`3a2457ff1d4ebd8c84fabb2894dd401b31cb6aa92d9ab6953c87516513f6fc7c`. The batch could not honestly
+supply 120 positives, so a stricter authorized 240-item Met refill was captured, rights-screened, and
+materialized as 240 distinct images and 541,961,618 exact bytes. A real CDN mismatch exposed an unstable
+`download=1` body; the downloader now selects the original-image route, assigns each Met GET a deterministic
+per-run/case/attempt cache identity, and retries only exact representation-identity mismatch three times inside
+the existing ceilings. Gemma covered all 240 refill images, Llama inspected its 93 clear candidates and
+confirmed 91, and a
+categorical Llama/Qwen 3.5 third-opinion pass examined only 20 high-signal unresolved cases. The refill yields
+75 creator-independent positive proposals, 39 age-risk exclusions, 23 cross-batch creator holds, and 103
+unresolved cases. Combined with the first 47 proposals, 122 independent candidates now exist—two reserves
+above the 120-positive target. No model output entered either worksheet, and all truth, training,
+provider-transfer, production, ingestion, scheduling, and broadcast authority remains false.
