@@ -43,7 +43,7 @@ func (ffmpegAudioExtractor) Extract(
 	if ctx == nil || ctx.Err() != nil || plan == nil || maximumBytes < 12 {
 		return nil, fmt.Errorf("model review audio extraction input is invalid")
 	}
-	actual, _, err := identifyResolvedFFmpeg(ctx, ffmpegPath)
+	actual, _, err := identifyResolvedFFmpeg(ctx, ffmpegPath, &expected)
 	if err != nil || actual != expected {
 		return nil, fmt.Errorf("model review ffmpeg identity changed before extraction")
 	}
@@ -86,14 +86,14 @@ func identifyFFmpeg(ctx context.Context, value string) (fillersafety.ToolIdentit
 	if err != nil {
 		return fillersafety.ToolIdentity{}, "", err
 	}
-	identity, _, err := identifyResolvedFFmpeg(ctx, path)
+	identity, _, err := identifyResolvedFFmpeg(ctx, path, nil)
 	if err != nil {
 		return fillersafety.ToolIdentity{}, "", err
 	}
 	return identity, path, nil
 }
 
-func identifyResolvedFFmpeg(ctx context.Context, path string) (fillersafety.ToolIdentity, string, error) {
+func identifyResolvedFFmpeg(ctx context.Context, path string, expected *fillersafety.ToolIdentity) (fillersafety.ToolIdentity, string, error) {
 	if err := ctx.Err(); err != nil {
 		return fillersafety.ToolIdentity{}, "", err
 	}
@@ -104,6 +104,9 @@ func identifyResolvedFFmpeg(ctx context.Context, path string) (fillersafety.Tool
 	digest, err := hashTool(ctx, path, info)
 	if err != nil {
 		return fillersafety.ToolIdentity{}, "", fmt.Errorf("read model review ffmpeg identity")
+	}
+	if expected != nil && (!validSHA256(expected.BinarySHA256) || digest != expected.BinarySHA256) {
+		return fillersafety.ToolIdentity{}, "", fmt.Errorf("model review ffmpeg identity changed before version probe")
 	}
 	command := exec.CommandContext(ctx, path, "-version") //nolint:gosec // operator-selected resolved regular executable
 	var stdout, stderr boundedToolBuffer

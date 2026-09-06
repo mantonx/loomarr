@@ -34,6 +34,52 @@ func TestFFmpegAudioExtractorRejectsReplacedExecutable(t *testing.T) {
 	}
 }
 
+func TestFFmpegAudioExtractorDoesNotExecuteReplacementBeforeIdentityRejection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ffmpeg")
+	marker := filepath.Join(dir, "replacement-invoked")
+	original := []byte("#!/bin/sh\necho 'ffmpeg version 7.1'\n")
+	if err := os.WriteFile(path, original, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	expected, _, err := identifyFFmpeg(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := []byte("#!/bin/sh\necho invoked > " + marker + "\necho 'ffmpeg version 7.1'\n")
+	if err := os.WriteFile(path, replacement, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err = (ffmpegAudioExtractor{}).Extract(t.Context(), path, expected, &fillersafety.CompleteMediaPlan{}, 12)
+	if err == nil || !strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("replacement executable was invoked")
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("marker stat err=%v", statErr)
+	}
+}
+
+func TestFFmpegAudioExtractorRejectsMissingExpectedIdentityBeforeVersionProbe(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ffmpeg")
+	marker := filepath.Join(dir, "version-probe-invoked")
+	script := []byte("#!/bin/sh\necho invoked > " + marker + "\necho 'ffmpeg version 7.1'\n")
+	if err := os.WriteFile(path, script, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := (ffmpegAudioExtractor{}).Extract(t.Context(), path, fillersafety.ToolIdentity{}, &fillersafety.CompleteMediaPlan{}, 12)
+	if err == nil || !strings.Contains(err.Error(), "identity changed") {
+		t.Fatalf("err=%v", err)
+	}
+	if _, statErr := os.Stat(marker); statErr == nil {
+		t.Fatal("version probe was invoked without an expected identity")
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("marker stat err=%v", statErr)
+	}
+}
+
 func TestRunOpenRouterCancelsMaterialPreflightBeforeToolIdentity(t *testing.T) {
 	fixture := newReviewFixture(t, testReviewBaseURL)
 	runtime := fixture.runtime(&http.Client{}, testReviewBaseURL)
