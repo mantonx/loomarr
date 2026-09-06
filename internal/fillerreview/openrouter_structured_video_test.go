@@ -2,10 +2,14 @@ package fillerreview
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/loomarr/loomarr/internal/testkit/httpfixture"
 )
 
 func TestCallOpenRouterStructuredCarriesOneDataVideoOnPinnedRoute(t *testing.T) {
@@ -41,6 +45,24 @@ func TestCallOpenRouterStructuredCarriesOneDataVideoOnPinnedRoute(t *testing.T) 
 	parts := request.Messages[1].Content
 	if result.StructuredOutput != `{"ok":true}` || len(parts) != 2 || parts[1].Type != "video_url" || parts[1].VideoURL == nil || parts[1].VideoURL.URL != "data:video/mp4;base64,YWJj" || request.Provider.AllowFallbacks || !request.Provider.ZDR || request.Provider.DataCollection != "deny" {
 		t.Fatalf("result=%+v request=%+v", result, request)
+	}
+}
+
+func TestCallOpenRouterStructuredReturnsNestedChoiceErrorAsSettledProviderStatus(t *testing.T) {
+	client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"id":"generation","model":"review/video-model","choices":[{"error":{"code":429,"message":"temporarily rate-limited upstream"},"message":{"content":null,"reasoning":"partial"}}],"usage":{"prompt_tokens":0,"completion_tokens":0,"cost":0}}`)),
+		Header:     make(http.Header),
+	}})}
+	result, err := callOpenRouterStructured(t.Context(), client, "https://openrouter.test/api/v1", openRouterStructuredCallConfig{
+		APIKey: "key", Model: "review/video-model", ResolvedModel: "review/video-model-2026",
+		UpstreamProvider: "Video Route", ProviderSlug: "video/route", SchemaName: "video_test",
+		Schema: map[string]any{"type": "object"}, SystemPrompt: "screen", Content: "one video",
+		MaxTokens: 32, MaxChargeNanoUSD: 2_000_000, Title: "test", Reserve: func(string) error { return nil },
+	})
+	var statusErr *openRouterStructuredStatusError
+	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusTooManyRequests || !result.ChargeKnown || result.ChargedNanoUSD != 0 || result.ResponseSHA256 == "" {
+		t.Fatalf("result=%+v err=%v", result, err)
 	}
 }
 

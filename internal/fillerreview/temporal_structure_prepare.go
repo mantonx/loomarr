@@ -28,8 +28,8 @@ func verifyTemporalStructureSources(ctx context.Context, config TemporalStructur
 				return fmt.Errorf("source %q content hash mismatch", source.ID)
 			}
 			probe, err := config.Media.Probe(ctx, path)
-			if err != nil || absoluteInt64(probe.DurationMS-source.DurationMS) > 1_000 {
-				return fmt.Errorf("source %q duration authority mismatch", source.ID)
+			if err != nil || absoluteInt64(probe.DurationMS-source.DurationMS) > 1_000 || !probe.HasAudio {
+				return fmt.Errorf("source %q duration or required-audio authority mismatch", source.ID)
 			}
 			verified[source.ID] = struct{}{}
 		}
@@ -117,8 +117,8 @@ func prepareTemporalStructureCase(config TemporalStructureChallengeConfig, item 
 }
 
 func validateTemporalStructureChallengeConfig(config TemporalStructureChallengeConfig) error {
-	if strings.TrimSpace(config.AuthoringPath) == "" || strings.TrimSpace(config.SourceRoot) == "" || strings.TrimSpace(config.OutputDir) == "" || strings.TrimSpace(config.ChallengeID) == "" || strings.TrimSpace(config.Seed) == "" || config.GeneratedAt.IsZero() || config.Media == nil {
-		return fmt.Errorf("authoring, source root, output, challenge id, seed, fixed generation time, and media adapter are required")
+	if strings.TrimSpace(config.AuthoringPath) == "" || strings.TrimSpace(config.PlanReceiptPath) == "" || strings.TrimSpace(config.SourceRoot) == "" || strings.TrimSpace(config.OutputDir) == "" || strings.TrimSpace(config.ChallengeID) == "" || strings.TrimSpace(config.Seed) == "" || config.GeneratedAt.IsZero() || config.Media == nil {
+		return fmt.Errorf("authoring, plan receipt, source root, output, challenge id, seed, fixed generation time, and media adapter are required")
 	}
 	return nil
 }
@@ -169,7 +169,7 @@ func temporalStructureBlindValue(seed, value string) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func auditTemporalStructureChallengeLeakage(publicRoot string, authoring TemporalStructureChallengeAuthoring) error {
+func auditTemporalStructureChallengeLeakage(publicRoot string, authoring TemporalStructureChallengeAuthoring, receipt *TemporalStructureHoldoutReceipt) error {
 	var public []byte
 	err := filepath.WalkDir(publicRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil || entry.IsDir() {
@@ -191,6 +191,18 @@ func auditTemporalStructureChallengeLeakage(publicRoot string, authoring Tempora
 	}
 	for _, item := range authoring.Cases {
 		secrets = append(secrets, item.ID)
+	}
+	if receipt != nil {
+		secrets = append(secrets, receipt.SeedSHA256, receipt.AuthoringSHA256)
+		for _, input := range receipt.Inputs {
+			secrets = append(secrets, input.SHA256)
+		}
+		for _, anchor := range receipt.SelectedAnchors {
+			secrets = append(secrets, anchor.EvidenceAlias, anchor.CaseID, anchor.FamilyID, anchor.RankSHA256)
+		}
+		for _, provenance := range receipt.FutureTrainingExclusion.ProgrammeProvenance {
+			secrets = append(secrets, provenance.Authority, provenance.Reference)
+		}
 	}
 	for _, secret := range secrets {
 		if strings.TrimSpace(secret) != "" && strings.Contains(string(public), secret) {

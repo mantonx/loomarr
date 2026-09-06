@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -12,7 +11,7 @@ import (
 )
 
 const (
-	TemporalStructureOpenRouterPromptVersion = "filler-temporal-structure-direct-video-v1"
+	TemporalStructureOpenRouterPromptVersion = "filler-temporal-structure-direct-video-v4"
 	temporalStructureRoleNone                = "none"
 	temporalStructureReasonMaximumCharacters = 320
 )
@@ -53,6 +52,10 @@ func temporalStructureOpenRouterSchema(durationMS int64) map[string]any {
 		string(fillereval.TemporalRoleBumper), string(fillereval.TemporalRolePSA), string(fillereval.TemporalRoleStationID),
 		string(fillereval.TemporalRoleTrailer), string(fillereval.TemporalRoleInterstitial), string(fillereval.TemporalRoleUnclear),
 	}
+	// Keep the provider-facing grammar to the portable structured-output subset.
+	// CoreWeave's Qwen grammar compiler rejects JSON Schema's uniqueItems
+	// keyword. Timestamps are set-like, so normalizeTemporalStructureOpenRouterWire
+	// sorts and deduplicates them before the closed validator checks the claim.
 	times := map[string]any{"type": "array", "maxItems": temporalStructureMaximumDecisiveTimes, "items": map[string]any{"type": "integer", "minimum": 0, "maximum": durationMS}}
 	return map[string]any{
 		"type": "object", "additionalProperties": false,
@@ -66,6 +69,17 @@ func temporalStructureOpenRouterSchema(durationMS int64) map[string]any {
 			"roleReason":       map[string]any{"type": "string", "maxLength": temporalStructureReasonMaximumCharacters},
 		},
 	}
+}
+
+func normalizeTemporalStructureOpenRouterWire(wire *temporalStructureOpenRouterWire) {
+	wire.UnitDecisiveAtMS = normalizedTemporalStructureTimes(wire.UnitDecisiveAtMS)
+	wire.RoleDecisiveAtMS = normalizedTemporalStructureTimes(wire.RoleDecisiveAtMS)
+}
+
+func normalizedTemporalStructureTimes(values []int64) []int64 {
+	result := slices.Clone(values)
+	slices.Sort(result)
+	return slices.Compact(result)
 }
 
 func temporalStructureOpenRouterContent(durationMS int64) string {
@@ -92,8 +106,8 @@ func validateTemporalStructureOpenRouterWire(wire temporalStructureOpenRouterWir
 }
 
 func temporalStructureAssessmentFromWire(alias string, wire temporalStructureOpenRouterWire, assessedAt time.Time, call fillereval.TemporalInferenceCall) TemporalStructureAssessment {
+	normalizeTemporalStructureOpenRouterWire(&wire)
 	unitTimes := slices.Clone(wire.UnitDecisiveAtMS)
-	sort.Slice(unitTimes, func(i, j int) bool { return unitTimes[i] < unitTimes[j] })
 	assessment := TemporalStructureAssessment{
 		Alias:     alias,
 		Unit:      &TemporalStructureUnitClaim{Kind: fillereval.UnitKind(wire.Unit), DecisiveAtMS: unitTimes, Reason: strings.TrimSpace(wire.UnitReason)},
@@ -101,7 +115,6 @@ func temporalStructureAssessmentFromWire(alias string, wire temporalStructureOpe
 	}
 	if assessment.Unit.Kind == fillereval.UnitStandalone {
 		roleTimes := slices.Clone(wire.RoleDecisiveAtMS)
-		sort.Slice(roleTimes, func(i, j int) bool { return roleTimes[i] < roleTimes[j] })
 		assessment.Role = &TemporalStructureRoleClaim{Kind: fillereval.TemporalRole(wire.Role), DecisiveAtMS: roleTimes, Reason: strings.TrimSpace(wire.RoleReason)}
 	}
 	return assessment

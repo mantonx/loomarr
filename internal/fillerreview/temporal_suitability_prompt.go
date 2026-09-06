@@ -1,12 +1,15 @@
 package fillerreview
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 )
 
 const (
-	TemporalSuitabilityPromptVersion = "filler-suitability-direct-video-v1"
+	TemporalSuitabilityPromptVersion = "filler-suitability-direct-video-v2"
+	temporalSuitabilityMaxTokens     = 4_096
+	temporalSuitabilityRequestTitle  = "Loomarr filler suitability screening"
 	suitabilityVisualCompleted       = "completed"
 	suitabilityVisualInsufficient    = "insufficient"
 	suitabilityLanguageCompleted     = "completed"
@@ -78,5 +81,26 @@ func temporalSuitabilityContent(item TemporalTruthEvidenceCase) string {
 }
 
 func temporalSuitabilityPromptSHA256() string {
-	return hashBytes([]byte(temporalSuitabilitySystemPrompt))
+	// Bind the complete request contract, including the dynamic parts through a
+	// sentinel case. Each real request digest separately binds its duration,
+	// transcript, and video bytes.
+	contract := struct {
+		Version      string         `json:"version"`
+		System       string         `json:"system"`
+		Content      string         `json:"content"`
+		SchemaName   string         `json:"schemaName"`
+		Schema       map[string]any `json:"schema"`
+		MaxTokens    int            `json:"maxTokens"`
+		RequestTitle string         `json:"requestTitle"`
+	}{
+		Version: TemporalSuitabilityPromptVersion, System: temporalSuitabilitySystemPrompt,
+		Content:    temporalSuitabilityContent(TemporalTruthEvidenceCase{DurationMS: 1}),
+		SchemaName: "filler_suitability", Schema: temporalSuitabilitySchema(1),
+		MaxTokens: temporalSuitabilityMaxTokens, RequestTitle: temporalSuitabilityRequestTitle,
+	}
+	raw, err := json.Marshal(contract)
+	if err != nil {
+		panic(err)
+	}
+	return hashBytes(raw)
 }

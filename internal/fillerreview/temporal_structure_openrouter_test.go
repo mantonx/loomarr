@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,9 @@ func TestRunOpenRouterTemporalStructureBindsOneAtomicVideoAssessment(t *testing.
 	parts := request.Messages[1].Content
 	if len(parts) != 2 || parts[1].Type != "video_url" || parts[1].VideoURL == nil || !strings.HasPrefix(parts[1].VideoURL.URL, "data:video/mp4;base64,") {
 		t.Fatalf("structure request parts = %+v", parts)
+	}
+	if request.MaxTokens != 4_096 || result.Assessor.PromptVersion != TemporalStructureOpenRouterPromptVersion {
+		t.Fatalf("request max tokens=%d prompt version=%q", request.MaxTokens, result.Assessor.PromptVersion)
 	}
 	attempt := result.Attempts[0]
 	rawPath := filepath.Join(checkpointDir, filepath.FromSlash(attempt.RawResponsePath))
@@ -133,6 +137,17 @@ func TestTemporalStructureOpenRouterWireEnforcesClosedConditionalShape(t *testin
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestNormalizeTemporalStructureOpenRouterWireSortsAndDeduplicatesEvidenceTimes(t *testing.T) {
+	wire := temporalStructureOpenRouterWire{
+		UnitDecisiveAtMS: []int64{59_000, 102_000, 131_500, 20_150, 20_150},
+		RoleDecisiveAtMS: []int64{300, 100, 300},
+	}
+	normalizeTemporalStructureOpenRouterWire(&wire)
+	if !slices.Equal(wire.UnitDecisiveAtMS, []int64{20_150, 59_000, 102_000, 131_500}) || !slices.Equal(wire.RoleDecisiveAtMS, []int64{100, 300}) {
+		t.Fatalf("normalized wire = %+v", wire)
 	}
 }
 

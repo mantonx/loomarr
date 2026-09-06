@@ -15,7 +15,7 @@ import (
 
 const (
 	temporalStructureOpenRouterSchemaName = "filler_temporal_structure"
-	temporalStructureOpenRouterMaxTokens  = 1024
+	temporalStructureOpenRouterMaxTokens  = 4096
 	temporalStructureOpenRouterTitle      = "Loomarr temporal structure challenge"
 )
 
@@ -68,6 +68,8 @@ func assessOpenRouterTemporalStructureCase(ctx context.Context, client *http.Cli
 	if callErr == nil {
 		if decodeErr := decodeStrictReviewJSON([]byte(callResult.StructuredOutput), &wire); decodeErr != nil {
 			callErr = fmt.Errorf("structure assessment JSON is invalid: %w", decodeErr)
+		} else {
+			normalizeTemporalStructureOpenRouterWire(&wire)
 		}
 	}
 	var failure *temporalCallError

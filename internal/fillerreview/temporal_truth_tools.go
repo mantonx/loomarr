@@ -96,18 +96,27 @@ func (media *FFmpegTemporalTruthMedia) Frames(ctx context.Context, path string, 
 
 func (media *FFmpegTemporalTruthMedia) probeReviewVideo(ctx context.Context, path string) (TemporalTruthVideoInfo, error) {
 	output, err := exec.CommandContext(ctx, media.identity.FFprobe.Path,
-		"-v", "error", "-show_entries", "format=duration:stream=codec_type,width,height",
+		"-v", "error", "-show_entries", "format=duration:stream=codec_type,codec_name,width,height,pix_fmt,avg_frame_rate,sample_rate,channels",
 		"-of", "json", path).Output()
 	if err != nil {
 		return TemporalTruthVideoInfo{}, fmt.Errorf("ffprobe review video: %w", err)
 	}
+	return decodeTemporalTruthVideoProbe(output)
+}
+
+func decodeTemporalTruthVideoProbe(output []byte) (TemporalTruthVideoInfo, error) {
 	var probe struct {
 		Programs     []json.RawMessage `json:"programs"`
 		StreamGroups []json.RawMessage `json:"stream_groups"`
 		Streams      []struct {
-			CodecType string `json:"codec_type"`
-			Width     int    `json:"width"`
-			Height    int    `json:"height"`
+			CodecType   string `json:"codec_type"`
+			Width       int    `json:"width"`
+			Height      int    `json:"height"`
+			CodecName   string `json:"codec_name"`
+			PixelFormat string `json:"pix_fmt"`
+			FrameRate   string `json:"avg_frame_rate"`
+			SampleRate  string `json:"sample_rate"`
+			Channels    int    `json:"channels"`
 		} `json:"streams"`
 		Format struct {
 			Duration string `json:"duration"`
@@ -132,6 +141,17 @@ func (media *FFmpegTemporalTruthMedia) probeReviewVideo(ctx context.Context, pat
 				return TemporalTruthVideoInfo{}, fmt.Errorf("review video contains more than one video stream")
 			}
 			result.Width, result.Height = stream.Width, stream.Height
+			result.Profile.VideoCodec, result.Profile.PixelFormat, result.Profile.FrameRate = stream.CodecName, stream.PixelFormat, stream.FrameRate
+		}
+		if stream.CodecType == "audio" {
+			result.HasAudio = true
+			result.Profile.AudioStreams++
+			if result.Profile.AudioStreams == 1 {
+				result.Profile.AudioCodec = stream.CodecName
+				result.Profile.Channels = stream.Channels
+				// Absent or malformed measurements remain zero and cannot satisfy a profile.
+				result.Profile.SampleRate, _ = strconv.Atoi(stream.SampleRate)
+			}
 		}
 	}
 	if result.Width <= 0 || result.Height <= 0 {

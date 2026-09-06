@@ -125,6 +125,9 @@ func TestBuildTemporalStructureChallengeRejectsInvalidConstructionAndTamperAtomi
 				t.Fatal(err)
 			}
 		}, want: "content hash mismatch"},
+		{name: "source without audio", mutate: func(f *temporalStructureFixture) {
+			f.media.missingAudioPath = filepath.Join(f.root, "sources", "programme.mp4")
+		}, want: "required-audio authority mismatch"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -132,7 +135,7 @@ func TestBuildTemporalStructureChallengeRejectsInvalidConstructionAndTamperAtomi
 			test.mutate(&fixture)
 			output := filepath.Join(fixture.root, "rejected")
 			fixture.writeAuthoring(t)
-			_, err := BuildTemporalStructureChallenge(context.Background(), fixture.config(output, "seed"))
+			_, err := buildFixtureTemporalStructureChallenge(context.Background(), fixture.config(output, "seed"))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
@@ -161,9 +164,21 @@ func TestTemporalStructureChallengeRejectsUnknownAuthoringFields(t *testing.T) {
 	if err := os.WriteFile(fixture.authoringPath, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err = BuildTemporalStructureChallenge(context.Background(), fixture.config(filepath.Join(fixture.root, "unknown"), "seed"))
+	_, err = buildFixtureTemporalStructureChallenge(context.Background(), fixture.config(filepath.Join(fixture.root, "unknown"), "seed"))
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("unknown-field error = %v", err)
+	}
+}
+
+func TestAuditTemporalStructureChallengeLeakageIncludesReceiptOnlySecrets(t *testing.T) {
+	publicRoot := t.TempDir()
+	secret := "receipt-only-evidence-alias"
+	if err := os.WriteFile(filepath.Join(publicRoot, "manifest.json"), []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receipt := TemporalStructureHoldoutReceipt{SelectedAnchors: []TemporalStructureHoldoutAnchor{{EvidenceAlias: secret}}}
+	if err := auditTemporalStructureChallengeLeakage(publicRoot, TemporalStructureChallengeAuthoring{}, &receipt); err == nil || !strings.Contains(err.Error(), secret) {
+		t.Fatalf("receipt-only leak error = %v", err)
 	}
 }
 
@@ -172,6 +187,19 @@ func TestTemporalStructureConcatArgumentsPinDeterministicMetadataFreeCopy(t *tes
 	for _, required := range []string{"-safe 1", "-map_metadata -1", "-map_chapters -1", "-c copy", "-fflags +bitexact", "creation_time=", "encoder="} {
 		if !strings.Contains(arguments, required) {
 			t.Fatalf("concat arguments omit %q: %s", required, arguments)
+		}
+	}
+}
+
+func TestTemporalStructurePartArgumentsPinOneJoinCompatibleProfile(t *testing.T) {
+	arguments := strings.Join(temporalStructurePartArguments("source.mp4", 1_000, 2_000, "part.mp4"), " ")
+	for _, required := range []string{
+		"-ss 1.000", "-t 2.000", "fps=30", "scale=w=960:h=720:force_original_aspect_ratio=decrease",
+		"pad=960:720", "-pix_fmt yuv420p", "-ar 48000", "-ac 2", "-video_track_timescale 90000",
+		"-threads 1", "-fflags +bitexact", "creation_time=", "encoder=",
+	} {
+		if !strings.Contains(arguments, required) {
+			t.Fatalf("structure part arguments omit %q: %s", required, arguments)
 		}
 	}
 }
@@ -238,7 +266,7 @@ func newTemporalStructureFixture(t *testing.T) temporalStructureFixture {
 
 func (fixture temporalStructureFixture) config(output, seed string) TemporalStructureChallengeConfig {
 	return TemporalStructureChallengeConfig{
-		AuthoringPath: fixture.authoringPath, SourceRoot: filepath.Join(fixture.root, "sources"), OutputDir: output,
+		AuthoringPath: fixture.authoringPath, PlanReceiptPath: filepath.Join(fixture.root, "fixture-plan-receipt.json"), SourceRoot: filepath.Join(fixture.root, "sources"), OutputDir: output,
 		ChallengeID: "opaque-challenge-01", Seed: seed, GeneratedAt: fixture.generatedAt, Media: fixture.media,
 	}
 }
@@ -246,11 +274,22 @@ func (fixture temporalStructureFixture) config(output, seed string) TemporalStru
 func (fixture temporalStructureFixture) build(t *testing.T, seed string) (string, TemporalStructureChallengeResult) {
 	t.Helper()
 	output := filepath.Join(t.TempDir(), "challenge")
-	result, err := BuildTemporalStructureChallenge(context.Background(), fixture.config(output, seed))
+	result, err := buildFixtureTemporalStructureChallenge(context.Background(), fixture.config(output, seed))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return output, result
+}
+
+func buildFixtureTemporalStructureChallenge(ctx context.Context, config TemporalStructureChallengeConfig) (TemporalStructureChallengeResult, error) {
+	if err := validateTemporalStructureChallengeConfig(config); err != nil {
+		return TemporalStructureChallengeResult{}, err
+	}
+	raw, authoring, err := loadTemporalStructureChallengeAuthoring(config.AuthoringPath)
+	if err != nil {
+		return TemporalStructureChallengeResult{}, err
+	}
+	return buildTemporalStructureChallenge(ctx, config, raw, authoring, nil, strings.Repeat("c", 64), TemporalStructureHoldoutContractVersion)
 }
 
 func (fixture temporalStructureFixture) writeAuthoring(t *testing.T) {
@@ -265,8 +304,10 @@ func (fixture temporalStructureFixture) writeAuthoring(t *testing.T) {
 }
 
 type fakeTemporalStructureMedia struct {
-	durationByPath map[string]int64
-	probeCalls     int
+	durationByPath     map[string]int64
+	missingAudioPath   string
+	probeCalls         int
+	renderVideoMutator func(*TemporalTruthVideoInfo)
 }
 
 func (media *fakeTemporalStructureMedia) Identity() TemporalTruthMediaIdentity {
@@ -282,12 +323,12 @@ func (media *fakeTemporalStructureMedia) Probe(_ context.Context, path string) (
 	if !exists {
 		return TemporalTruthVideoInfo{}, fmt.Errorf("unknown fixture path")
 	}
-	return TemporalTruthVideoInfo{DurationMS: duration, Width: 640, Height: 360}, nil
+	return TemporalTruthVideoInfo{DurationMS: duration, Width: 640, Height: 360, HasAudio: path != media.missingAudioPath}, nil
 }
 
 func (media *fakeTemporalStructureMedia) Render(_ context.Context, segments []TemporalStructureRenderSegment, output string) (TemporalStructureRenderResult, error) {
 	hasher := sha256.New()
-	result := TemporalStructureRenderResult{Video: TemporalTruthVideoInfo{Width: 640, Height: 360}}
+	result := TemporalStructureRenderResult{Video: TemporalTruthVideoInfo{Width: 960, Height: 720, HasAudio: true, Profile: temporalStructureTestProfile()}}
 	for _, segment := range segments {
 		digest, err := hashFile(segment.SourcePath)
 		if err != nil {
@@ -299,6 +340,9 @@ func (media *fakeTemporalStructureMedia) Render(_ context.Context, segments []Te
 	}
 	if err := os.WriteFile(output, []byte(hex.EncodeToString(hasher.Sum(nil))), 0o640); err != nil {
 		return TemporalStructureRenderResult{}, err
+	}
+	if media.renderVideoMutator != nil {
+		media.renderVideoMutator(&result.Video)
 	}
 	return result, nil
 }

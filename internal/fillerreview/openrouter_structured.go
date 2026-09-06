@@ -68,6 +68,7 @@ type openRouterStructuredResponse struct {
 			Content   string `json:"content"`
 			Reasoning string `json:"reasoning"`
 		} `json:"message"`
+		Error *openRouterStructuredWireError `json:"error"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int64       `json:"prompt_tokens"`
@@ -92,6 +93,11 @@ type openRouterStructuredResponse struct {
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+type openRouterStructuredWireError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
 type openRouterStructuredCallConfig struct {
@@ -210,6 +216,14 @@ func callOpenRouterStructured(ctx context.Context, client *http.Client, baseURL 
 		return result, fmt.Errorf("OpenRouter structured call returned missing or out-of-reservation cost")
 	}
 	result.ChargedNanoUSD, result.ChargeKnown = charged, true
+	if len(result.Wire.Choices) == 1 && result.Wire.Choices[0].Error != nil {
+		wireError := result.Wire.Choices[0].Error
+		status := wireError.Code
+		if status < 100 || status > 599 {
+			status = http.StatusBadGateway
+		}
+		return result, &openRouterStructuredStatusError{StatusCode: status, Detail: strings.TrimSpace(wireError.Message)}
+	}
 	if result.Wire.ID == "" || result.Wire.Model != config.Model || len(result.Wire.Choices) != 1 || result.Wire.Metadata.Attempt != 1 || !validStructuredAttemptLedger(result.Wire, config) || !selectedStructuredEndpoint(result.Wire, config) {
 		return result, fmt.Errorf("OpenRouter structured response does not bind the requested one-attempt route (generation=%t model=%q choices=%d attempt=%d attempts=%s selected=%s)", result.Wire.ID != "", result.Wire.Model, len(result.Wire.Choices), result.Wire.Metadata.Attempt, structuredAttemptSummary(result.Wire), structuredEndpointSummary(result.Wire))
 	}

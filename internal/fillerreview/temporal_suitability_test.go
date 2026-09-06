@@ -36,6 +36,9 @@ func TestRunOpenRouterTemporalSuitabilityBindsFullVideoFlagsAndRawResponse(t *te
 	if len(parts) != 2 || parts[1].Type != "video_url" || parts[1].VideoURL == nil || !strings.HasPrefix(parts[1].VideoURL.URL, "data:video/mp4;base64,") {
 		t.Fatalf("video request parts = %+v", parts)
 	}
+	if request.MaxTokens != temporalSuitabilityMaxTokens || result.Assessor.PromptVersion != TemporalSuitabilityPromptVersion || result.PromptSHA256 != temporalSuitabilityPromptSHA256() {
+		t.Fatalf("request max tokens=%d prompt version=%q prompt sha=%q", request.MaxTokens, result.Assessor.PromptVersion, result.PromptSHA256)
+	}
 	attempt := result.Attempts[0]
 	rawPath := filepath.Join(checkpointDir, filepath.FromSlash(attempt.RawResponsePath))
 	info, err := os.Stat(rawPath)

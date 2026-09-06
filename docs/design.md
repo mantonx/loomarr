@@ -245,14 +245,14 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 - **`filler`** · 7 importers · → `diagnostics`, `filleradmission`, `fillerdecision`, `llm`, `mediatools`, `taxonomy`
   Commercials & filler domain (design §10): the clip catalog model and pod assembly.
-- **`fillerreference`** · → `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `mediatools`, `taxonomy`
+- **`fillerreference`** · 1 importer · → `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `mediatools`, `taxonomy`
   Owns the deterministic pre-screen for the production-ready filler reference cohort.
 
 **Layer 6**
 
 - **`clipfetch`** · 1 importer · → `filler`, `proctree`
   Downloads filler clips into the drop-folder (design §10, §16).
-- **`fillerreview`** · → `filler`, `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `httpx`, `mediatools`
+- **`fillerreview`** · → `filler`, `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `fillerreference`, `httpx`, `mediatools`
   Materializes identity-blind evidence for independent semantic review.
 - **`library`** · 8 importers · → `episodeevidence`, `filler`, `httpx`, `inventory`, `metrics`
   Library port (design §6, §2 boundaries): a shared Emby/Jellyfin adapter.
@@ -4631,6 +4631,137 @@ unit agreement separately from role agreement. More than 15% disputed cases, or 
 accounts for more than half the disputes, stops the development run for contract repair instead of
 being hidden behind adjudication. This diagnostic artifact is non-certifying and does not replace the
 complete label or holdout contracts above.
+
+The next temporal-structure gate is a private, mechanically constructed 36-case holdout; it does
+not require another full blind human viewing pass. Its planner strictly decodes and hashes the exact
+48-case selection, evidence manifest and private map, locked human assessment and attestation,
+full-decode media-quality report, two-family broadcast-suitability comparison, the exact 300-case
+reference audit behind the duplicate-family audit, that audit's exact digest-bound download ledger,
+that recomputed duplicate-family graph, a content-bound transition-edge authority, and the
+programme-parent inventory. The download ledger is bounded to 16 MiB, decoded only by the
+reference-audit hostile-input decoder, and joins every audit case exactly by case ID, item ID,
+content SHA-256, and canonical relative local path where present. An audit case's `Source` is a
+dataset label, not provenance authority: the digest-bound ledger alone supplies the authority and
+canonical HTTPS item URL used for known-filler lineage exclusion. It selects 12
+quality-eligible, non-prohibited standalone anchors with two bumpers, three commercials, two promos,
+two PSAs, and three trailers. Every anchor has distinct source bytes and duplicate-family identity;
+the family authority covers every non-excluded reference case, not merely the later 48-case
+selection, and the planner independently recomputes its canonical relationship graph before use.
+
+**Transition evidence is a prior measurement authority, not a label inferred from the chosen
+corpus.** A development-only generator measures all 48 exact evidence cases before role, safety, or
+quality eligibility is consulted. It binds the evidence-manifest and private-map hashes, each exact
+source SHA-256 and duration, the resolved FFmpeg path/version/binary SHA-256, one fixed generation
+time, and the common renderer profile (960-by-720 aspect-preserving padding, 30 fps, yuv420p,
+48 kHz stereo). For both the first and final 1,000 ms it retains the PTS-normalised, window-clamped black and
+silence intervals plus RMS and peak support over the boundary-adjacent 100 ms. The detectors are
+fixed at `blackdetect=d=0.040:pix_th=0.10` and `silencedetect=n=-40dB:d=0.040`; an interval touches a
+boundary only when it begins or ends within one rendered frame (34 ms) of that boundary. Missing or
+extra cases, repeated case/source identities, changed bytes/duration/tool/profile/policy, malformed
+intervals, a missing required stream, or any decode failure invalidates the complete authority.
+Generation performs no semantic classification, inference, rendering, training, or admission.
+
+The earlier words *abrupt*, *black-frame*, and *audio-continuous* mixed a construction property with
+two overlapping media cues and claimed more than an amplitude detector proves. Every compilation is
+already a hard concatenation. Quota selection therefore uses three closed, factual strata derived
+from the two independently measured edges, in precedence order: `black_boundary` when either edge
+has boundary-touching black; `audible_nonblack_cut` when neither edge has boundary black and neither
+has measured boundary silence; and `silence_touched_nonblack_cut` when neither edge has boundary
+black and at least one has measured boundary silence. “Audible” here means only “no >=40 ms interval
+below -40 dBFS was measured”; it is not a perceptual continuity or airworthiness claim. A pair whose
+edge record is absent or failed is unresolved and ineligible.
+
+Anchor and pair selection is one deterministic constraint search over the complete otherwise-
+eligible pool, not role selection followed by a best-effort transition bolt-on. Anchor feasibility
+uses stable private case-id order so a secret used for blinding cannot make planning time unbounded;
+qualifying pair choice, case identity, parent choice, and public alias/order remain seed-ranked. The chosen anchors
+construct 12 two-item compilations with four actual joins in each of the first 40%, middle 20%, and
+final 40% of playback. Within every band, all eight source uses are distinct, exactly two pairs are
+same-role and two cross-role, and at least one pair occupies each transition stratum; the fourth
+stratum is seed-ranked rather than silently used to weaken another quota. If all role, family,
+source, timing, role-pair, and transition constraints cannot be satisfied simultaneously, planning
+fails.
+
+Six distinct programme parents have unique bytes and unique `(provenance authority, reference)`
+pairs. Every submitted parent, including an unselected parent, is rejected if its content hash,
+canonical relative local path, authority/item-ID pair, or canonical reference URL repeats
+an entry in the complete 300-row digest-bound filler download ledger (including unselected, held,
+and excluded cases). A URL-identity collision is rejected even when bytes, local path, and item ID
+differ, and does not depend on matching authority labels. A programme parent is bound to an immutable
+local metadata cache and a local `fillercorpus` inventory-v4 source record under the configured source
+root. The loader rejects missing, escaping, symlinked, or over-16-MiB metadata caches and source
+records, and rejects malformed source records. It hashes the raw metadata cache bytes and requires
+that digest to agree with both the programme inventory and the matched source record; this binds
+the cache's byte integrity, not its source-specific semantic format. Source records use only the
+canonical `fillercorpus` decoder, never an
+arbitrary JSON self-description. A parent names the source record path and the exact source
+`(authority, itemId)`; its public provenance `reference` is the canonical HTTPS item URL (no
+fragment, lower-case host), and must equal that record's normalized `itemUrl`. The record's
+`metadataUrl`, retrieval time, metadata digest/cache, and local representation path, SHA-256,
+byte size, and duration must all bind the parent to the actual source-root bytes. Authority and
+item ID compare exactly after trimming; URLs compare by this canonical form; local source-root
+paths compare as slash-normalized relative paths. Unsupported source-record formats or ambiguous
+identity matches are rejected. This is origin binding and known-filler lineage exclusion only: it
+does not certify that a programme is globally non-filler.
+
+Seed-ranked parents each supply two
+different position-authoritative cuts, balanced to exactly four cases per pattern: `dependent_start`
+is 30 seconds at `[10s,40s)`; `dependent_end` is 45 seconds ending 10 seconds before the parent;
+`both_edges` is a centred 45-second internal cut. Parent ranks 0 and 3 receive start+end, ranks 1 and
+4 start+both, and ranks 2 and 5 end+both. These names describe which omitted parent context the
+construction is meant to challenge, not a semantic scene-boundary claim. Every parent is at least
+120 seconds, every cut retains at least ten seconds before and after it, and no cut touches a parent
+edge.
+
+The planner emits only coordinator-private construction authoring and a receipt binding all input
+and output digests, deterministic seed ranks, selected families, role quotas, compilation pairs,
+their measured transition stratum and join positions, and programme cuts. The receipt is also the
+future split authority: it declares `split=holdout` and enumerates every selected source SHA-256,
+duplicate-family id, and programme provenance pair that later development/training corpus builders
+must exclude. Missing or broader inferred exclusions are not accepted; a future split change needs
+a new independently reviewed artifact. It performs no rendering or inference. The structure
+challenge preparer requires the authoring and its structurally validated current-contract receipt,
+then records both digests and the plan contract in private challenge authority; authoring alone is
+not render authority. It renders and freshly blinds the bound plan before two distinct direct-video
+model families assess it serially. The direct-video request contract reserves 4,096 completion
+tokens so provider-required hidden reasoning cannot consume the output budget needed for the strict
+JSON answer. In-range decisive timestamps are deterministically sorted and deduplicated before
+semantic validation because response order and repetition carry no claim; the untouched raw
+response remains the inference authority. The array ceiling and canonicalization rule are part of
+the prompt digest and prompt-contract version; provider-facing schemas do not use `uniqueItems`
+because otherwise qualifying CoreWeave structured-output routes reject the grammar. Every source
+must have an audio stream. Before concatenation,
+every segment is encoded deterministically to a common 960-by-720, 30-frame-per-second video and
+48 kHz stereo AAC audio profile with aspect-preserving padding and a fixed video track time base;
+The renderer probes each normalized part and the concatenated output, rejecting any departure
+from 960-by-720 H.264/yuv420p at 30 fps with exactly one 48 kHz stereo AAC stream. The builder
+independently validates the returned measured profile before publication. Challenge contract v3
+binds those stream facts alongside each public video's dimensions and byte hash, and its loader
+rejects missing or nonconforming profiles. These uniform technical facts disclose no source or
+semantic labels. Historical challenge artifacts are not rewritten or upgraded by inference;
+the measured part durations, rather than requested timestamps, remain the join
+authority. Coverage-only suitability holds may remain as evaluation material;
+prohibited and operational holds cannot be selected. The constructed truth can test unit boundaries
+without a second blind full-corpus review, but it cannot establish broadcast suitability, enter
+training data, or authorize production admission. Plan contract v4 requires the receipt to contain
+`blindHumanAuditRequired=false`, `trainingAllowed=false`, and `productionAdmissionAllowed=false`.
+Missing, null, or true dispositions are rejected before media probing or rendering. Older receipts
+remain immutable historical evidence, not current-contract rendering authority. This explicit
+no-full-blind-audit disposition does not replace targeted human adjudication of challenged anchors.
+
+Suitability screening is repeated over every freshly rendered structure case because concatenation
+and excerpt construction create new viewing contexts. Its prompt identity binds the system prompt,
+sentinel dynamic content and schema, request title, and 4,096-token completion ceiling so mandatory
+provider reasoning cannot consume the structured answer budget. A prohibited signal in any derivative is a
+conservative source-level quarantine: the private construction authority projects the observation
+back to every overlapping source segment, and every case derived from that source remains held even
+when another model reports no signal. Repetition at the same source-relative interval strengthens
+the quarantine evidence; it is not counted as independent corroboration. A model non-flag is never a
+safety certificate, and majority voting cannot clear a prohibited observation. Quarantined media may
+remain in the immutable evaluation package so the miss is measurable, but cannot enter training,
+catalog ingestion, scheduling, or production. Operational and incomplete-modality outcomes also
+remain held. Only an independently specified suitability-recall certification can turn complete
+no-signal observations into an admission claim.
 
 The temporal `unusable` answer is diagnostic history, not media-integrity truth. Media integrity,
 presentation/source defects, broadcast suitability, semantic unit/role, and rights are five
