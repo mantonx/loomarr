@@ -74,11 +74,14 @@ type TemporalStructureChallengeSource struct {
 }
 
 type TemporalStructureSourceProvenance struct {
-	Kind           string    `json:"kind"`
-	Authority      string    `json:"authority"`
-	Reference      string    `json:"reference"`
-	MetadataSHA256 string    `json:"metadataSha256"`
-	RetrievedAt    time.Time `json:"retrievedAt"`
+	Kind               string    `json:"kind"`
+	Authority          string    `json:"authority"`
+	ItemID             string    `json:"itemId,omitempty"`
+	Reference          string    `json:"reference"`
+	SourceRecordPath   string    `json:"sourceRecordPath,omitempty"`
+	SourceRecordSHA256 string    `json:"sourceRecordSha256,omitempty"`
+	MetadataSHA256     string    `json:"metadataSha256"`
+	RetrievedAt        time.Time `json:"retrievedAt"`
 }
 
 type TemporalStructureChallengeCase struct {

@@ -12,7 +12,7 @@ import (
 
 const (
 	TemporalStructureHoldoutSchemaVersion   = 1
-	TemporalStructureHoldoutContractVersion = "filler-temporal-structure-holdout-plan-v4"
+	TemporalStructureHoldoutContractVersion = "filler-temporal-structure-holdout-plan-v5"
 	TemporalStructureHoldoutCases           = 36
 	temporalStructureHoldoutClassCases      = 12
 	temporalStructureHoldoutParentSources   = 6

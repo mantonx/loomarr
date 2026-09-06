@@ -4678,7 +4678,25 @@ source, timing, role-pair, and transition constraints cannot be satisfied simult
 fails.
 
 Six distinct programme parents have unique bytes and unique `(provenance authority, reference)`
-pairs, neither of which may repeat a selected filler anchor. Seed-ranked parents each supply two
+pairs, neither of which may repeat any case in the complete 300-row filler-reference audit
+(including unselected, held, and excluded cases). A programme parent is bound to an immutable local
+metadata cache and a local `fillercorpus` inventory-v4 source record under the configured source
+root. The loader rejects missing, escaping, symlinked, or over-16-MiB metadata caches and source
+records, and rejects malformed source records. It hashes the raw metadata cache bytes and requires
+that digest to agree with both the programme inventory and the matched source record; this binds
+the cache's byte integrity, not its source-specific semantic format. Source records use only the
+canonical `fillercorpus` decoder, never an
+arbitrary JSON self-description. A parent names the source record path and the exact source
+`(authority, itemId)`; its public provenance `reference` is the canonical HTTPS item URL (no
+fragment, lower-case host), and must equal that record's normalized `itemUrl`. The record's
+`metadataUrl`, retrieval time, metadata digest/cache, and local representation path, SHA-256,
+byte size, and duration must all bind the parent to the actual source-root bytes. Authority and
+item ID compare exactly after trimming; URLs compare by this canonical form; local source-root
+paths compare as slash-normalized relative paths. Unsupported source-record formats or ambiguous
+identity matches are rejected. This is origin binding and known-filler lineage exclusion only: it
+does not certify that a programme is globally non-filler.
+
+Seed-ranked parents each supply two
 different position-authoritative cuts, balanced to exactly four cases per pattern: `dependent_start`
 is 30 seconds at `[10s,40s)`; `dependent_end` is 45 seconds ending 10 seconds before the parent;
 `both_edges` is a centred 45-second internal cut. Parent ranks 0 and 3 receive start+end, ranks 1 and

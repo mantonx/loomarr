@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/loomarr/loomarr/internal/fillercorpus"
 	"github.com/loomarr/loomarr/internal/fillereval"
 	"github.com/loomarr/loomarr/internal/fillerreference"
 )
@@ -158,6 +159,9 @@ func TestBuildTemporalStructureHoldoutPlanRejectsRepeatedProgrammeProvenancePare
 	inventory := readStrictTestJSON[TemporalStructureHoldoutProgrammeInventory](t, fixture.inventory)
 	inventory.Sources[1].Provenance.Authority = inventory.Sources[0].Provenance.Authority
 	inventory.Sources[1].Provenance.Reference = inventory.Sources[0].Provenance.Reference
+	mutateTemporalStructureProgrammeRecord(t, fixture, &inventory, func(record *fillercorpus.Inventory) {
+		record.Cases[1].ItemURL = inventory.Sources[0].Provenance.Reference
+	})
 	fixture.inventory = writeTemporalHumanJSON(t, t.TempDir(), "programme-inventory.json", inventory)
 	_, err := BuildTemporalStructureHoldoutPlan(fixture.config(filepath.Join(t.TempDir(), "output")))
 	if err == nil || !strings.Contains(err.Error(), "repeats a provenance parent") {
@@ -165,34 +169,105 @@ func TestBuildTemporalStructureHoldoutPlanRejectsRepeatedProgrammeProvenancePare
 	}
 }
 
-func TestBuildTemporalStructureHoldoutPlanRejectsProgrammeParentDerivedFromFiller(t *testing.T) {
-	tests := map[string]func(*testing.T, *temporalStructureHoldoutFixture, *TemporalStructureHoldoutProgrammeInventory){
-		"same bytes": func(t *testing.T, fixture *temporalStructureHoldoutFixture, inventory *TemporalStructureHoldoutProgrammeInventory) {
-			manifest := readStrictTestJSON[TemporalTruthEvidenceManifest](t, fixture.manifest)
-			path, err := filepath.Rel(fixture.root, filepath.Join(filepath.Dir(fixture.manifest), manifest.Cases[0].Video.Path))
-			if err != nil {
-				t.Fatal(err)
-			}
-			inventory.Sources[0].Path = filepath.ToSlash(path)
-			inventory.Sources[0].SHA256 = manifest.Cases[0].Video.SHA256
+func TestLoadTemporalStructureHoldoutProgrammeInventoryRejectsProgrammeParentDerivedFromFiller(t *testing.T) {
+	tests := map[string]func(*testing.T, *temporalStructureHoldoutFixture, *TemporalStructureHoldoutProgrammeInventory, *fillerreference.Audit){
+		"same bytes": func(t *testing.T, fixture *temporalStructureHoldoutFixture, inventory *TemporalStructureHoldoutProgrammeInventory, reference *fillerreference.Audit) {
+			reference.Cases[0].ContentSHA256 = inventory.Sources[0].SHA256
 		},
-		"same provenance": func(t *testing.T, fixture *temporalStructureHoldoutFixture, inventory *TemporalStructureHoldoutProgrammeInventory) {
-			privateMap := readStrictTestJSON[TemporalTruthEvidencePrivateMap](t, fixture.privateMap)
-			inventory.Sources[0].Provenance.Authority = "locked-temporal-human-review"
-			inventory.Sources[0].Provenance.Reference = privateMap.Entries[0].CaseID
+		"same provenance": func(t *testing.T, fixture *temporalStructureHoldoutFixture, inventory *TemporalStructureHoldoutProgrammeInventory, reference *fillerreference.Audit) {
+			inventory.Sources[0].Provenance.Authority = reference.Cases[0].Source
+			inventory.Sources[0].Provenance.ItemID = reference.Cases[0].SourceItemID
+			mutateTemporalStructureProgrammeRecord(t, *fixture, inventory, func(record *fillercorpus.Inventory) {
+				record.Cases[0].Authority = reference.Cases[0].Source
+				record.Cases[0].ItemID = reference.Cases[0].SourceItemID
+				record.Cases[0].CaseID = fillercorpus.CaseID(reference.Cases[0].Source, reference.Cases[0].SourceItemID)
+				record.Captures[0].PredictedMediaBytes -= record.Cases[0].Representation.Bytes
+				record.Captures[0].MaxPredictedMediaBytes = record.Captures[0].PredictedMediaBytes
+				capture := record.Captures[0]
+				capture.CaptureID = fillercorpus.NewCaptureID(reference.Cases[0].Source, "", "programme")
+				capture.Authority = reference.Cases[0].Source
+				capture.PredictedMediaBytes = record.Cases[0].Representation.Bytes
+				capture.MaxPredictedMediaBytes = capture.PredictedMediaBytes
+				record.Captures = append(record.Captures, capture)
+				record.Cases[0].CaptureIDs = []string{capture.CaptureID}
+			})
 		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			fixture := newTemporalStructureHoldoutFixture(t)
 			inventory := readStrictTestJSON[TemporalStructureHoldoutProgrammeInventory](t, fixture.inventory)
-			mutate(t, &fixture, &inventory)
+			reference := readStrictTestJSON[fillerreference.Audit](t, fixture.referenceAudit)
+			mutate(t, &fixture, &inventory, &reference)
 			fixture.inventory = writeTemporalHumanJSON(t, t.TempDir(), "programme-inventory.json", inventory)
-			_, err := BuildTemporalStructureHoldoutPlan(fixture.config(filepath.Join(t.TempDir(), "output")))
+			_, _, err := loadTemporalStructureHoldoutProgrammeInventory(fixture.inventory, fixture.root, reference, fixture.plannedAt)
 			if err == nil || !strings.Contains(err.Error(), "repeats bounded filler") {
 				t.Fatalf("programme parent derived from filler error = %v", err)
 			}
 		})
+	}
+}
+
+func TestBuildTemporalStructureHoldoutPlanRejectsProgrammeParentWithReferenceLineage(t *testing.T) {
+	fixture := newTemporalStructureHoldoutFixture(t)
+	inventory := readStrictTestJSON[TemporalStructureHoldoutProgrammeInventory](t, fixture.inventory)
+	reference := readStrictTestJSON[fillerreference.Audit](t, fixture.referenceAudit)
+	inventory.Sources[0].Provenance.Authority = reference.Cases[0].Source
+	inventory.Sources[0].Provenance.ItemID = reference.Cases[0].SourceItemID
+	mutateTemporalStructureProgrammeRecord(t, fixture, &inventory, func(record *fillercorpus.Inventory) {
+		record.Cases[0].Authority = reference.Cases[0].Source
+		record.Cases[0].ItemID = reference.Cases[0].SourceItemID
+		record.Cases[0].CaseID = fillercorpus.CaseID(reference.Cases[0].Source, reference.Cases[0].SourceItemID)
+		record.Captures[0].PredictedMediaBytes -= record.Cases[0].Representation.Bytes
+		record.Captures[0].MaxPredictedMediaBytes = record.Captures[0].PredictedMediaBytes
+		capture := record.Captures[0]
+		capture.CaptureID = fillercorpus.NewCaptureID(reference.Cases[0].Source, "", "programme")
+		capture.Authority = reference.Cases[0].Source
+		capture.PredictedMediaBytes = record.Cases[0].Representation.Bytes
+		capture.MaxPredictedMediaBytes = capture.PredictedMediaBytes
+		record.Captures = append(record.Captures, capture)
+		record.Cases[0].CaptureIDs = []string{capture.CaptureID}
+	})
+	fixture.inventory = writeTemporalHumanJSON(t, t.TempDir(), "programme-inventory.json", inventory)
+	_, err := BuildTemporalStructureHoldoutPlan(fixture.config(filepath.Join(t.TempDir(), "output")))
+	if err == nil || !strings.Contains(err.Error(), "repeats bounded filler") {
+		t.Fatalf("programme parent reference-lineage error = %v", err)
+	}
+}
+
+func TestLoadTemporalStructureHoldoutProgrammeInventoryRejectsProgrammeParentMatchingUnselectedReference(t *testing.T) {
+	fixture := newTemporalStructureHoldoutFixture(t)
+	inventory := readStrictTestJSON[TemporalStructureHoldoutProgrammeInventory](t, fixture.inventory)
+	reference := readStrictTestJSON[fillerreference.Audit](t, fixture.referenceAudit)
+	if len(reference.Cases) != 300 {
+		t.Fatalf("reference cases = %d, want 300", len(reference.Cases))
+	}
+	reference.Cases[len(reference.Cases)-1].ContentSHA256 = inventory.Sources[0].SHA256
+	_, _, err := loadTemporalStructureHoldoutProgrammeInventory(fixture.inventory, fixture.root, reference, fixture.plannedAt)
+	if err == nil || !strings.Contains(err.Error(), "repeats bounded filler") {
+		t.Fatalf("unselected reference-lineage error = %v", err)
+	}
+}
+
+func mutateTemporalStructureProgrammeRecord(t *testing.T, fixture temporalStructureHoldoutFixture, inventory *TemporalStructureHoldoutProgrammeInventory, mutate func(*fillercorpus.Inventory)) {
+	t.Helper()
+	recordPath := filepath.Join(fixture.root, filepath.FromSlash(inventory.Sources[0].Provenance.SourceRecordPath))
+	raw, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := fillercorpus.DecodeInventoryBytes(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutate(&record)
+	writeTemporalHumanJSON(t, filepath.Dir(recordPath), filepath.Base(recordPath), record)
+	raw, err = os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range inventory.Sources {
+		inventory.Sources[index].Provenance.SourceRecordSHA256 = hashBytes(raw)
 	}
 }
 

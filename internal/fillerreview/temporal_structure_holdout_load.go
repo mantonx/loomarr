@@ -80,7 +80,7 @@ func loadTemporalStructureHoldout(config TemporalStructureHoldoutConfig) (tempor
 	if err != nil {
 		return temporalStructureHoldoutLoaded{}, err
 	}
-	inventory, inventorySHA, err := loadTemporalStructureHoldoutProgrammeInventory(config.ProgrammeInventoryPath, config.SourceRoot, config.PlannedAt)
+	inventory, inventorySHA, err := loadTemporalStructureHoldoutProgrammeInventory(config.ProgrammeInventoryPath, config.SourceRoot, referenceAudit, config.PlannedAt)
 	if err != nil {
 		return temporalStructureHoldoutLoaded{}, err
 	}

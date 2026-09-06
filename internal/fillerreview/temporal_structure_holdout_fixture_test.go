@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/loomarr/loomarr/internal/fillercorpus"
 	"github.com/loomarr/loomarr/internal/fillereval"
 	"github.com/loomarr/loomarr/internal/fillerreference"
 	"github.com/loomarr/loomarr/internal/mediatools"
@@ -152,8 +153,10 @@ func newTemporalStructureHoldoutFixture(t *testing.T) temporalStructureHoldoutFi
 	}
 	for _, item := range privateMap.Entries {
 		reference.Cases = append(reference.Cases, fillerreference.Case{
-			CaseID: item.CaseID, ContentSHA256: item.ContentSHA256, SourceLocalFile: item.SourceLocalFile,
-			Disposition: fillerreference.DispositionCandidate,
+			CaseID: item.CaseID, ContentSHA256: item.ContentSHA256,
+			Source: "locked-temporal-human-review", SourceItemID: "locked-item-" + item.CaseID,
+			SourceLocalFile: item.SourceLocalFile,
+			Disposition:     fillerreference.DispositionCandidate,
 		})
 	}
 	for index := len(reference.Cases); index < 300; index++ {
@@ -227,21 +230,58 @@ func newTemporalStructureHoldoutFixture(t *testing.T) temporalStructureHoldoutFi
 		SchemaVersion: TemporalStructureHoldoutSchemaVersion, ContractVersion: TemporalStructureHoldoutProgrammeInventoryContract,
 		GeneratedAt: family.GeneratedAt.Add(time.Hour),
 	}
+	record := fillercorpus.Inventory{
+		SchemaVersion: fillercorpus.InventorySchemaVersion, SnapshotAt: inventory.GeneratedAt,
+		Captures: []fillercorpus.Capture{{
+			CaptureID: fillercorpus.NewCaptureID("test-programme-authority", "", "programme"), Transport: fillercorpus.TransportLocal,
+			Authority: "test-programme-authority", RoleHint: "programme", SnapshotAt: inventory.GeneratedAt,
+		}},
+	}
 	for index := 0; index < temporalStructureHoldoutParentSources; index++ {
 		raw := []byte(strings.Repeat(string(rune('a'+index)), index+1))
 		path := filepath.Join(programmeRoot, "parent-"+string(rune('a'+index))+".mp4")
 		if err := os.WriteFile(path, raw, 0o640); err != nil {
 			t.Fatal(err)
 		}
+		metadata := []byte("metadata-" + string(rune('a'+index)))
+		metadataPath := filepath.Join(programmeRoot, "parent-"+string(rune('a'+index))+".json")
+		if err := os.WriteFile(metadataPath, metadata, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		itemID := "test-programme-" + string(rune('a'+index))
+		relativePath := filepath.ToSlash(path[len(base.root)+1:])
+		relativeMetadataPath := filepath.ToSlash(metadataPath[len(base.root)+1:])
+		record.Cases = append(record.Cases, fillercorpus.InventoryCase{
+			CaseID: fillercorpus.CaseID("test-programme-authority", itemID), CaptureIDs: []string{record.Captures[0].CaptureID},
+			Authority: "test-programme-authority", ItemID: itemID, Title: itemID, RoleHints: []string{"programme"}, RightsAssertions: []string{"fixture"},
+			ItemURL: "https://example.invalid/items/" + itemID, MetadataURL: "https://example.invalid/metadata/" + itemID,
+			MetadataCache: relativeMetadataPath, MetadataRetrievedAt: inventory.GeneratedAt.Add(-time.Hour), MetadataSHA256: hashBytes(metadata),
+			Representation: fillercorpus.InventoryRepresentation{Transport: fillercorpus.TransportLocal, Name: filepath.Base(path), Path: relativePath, MIMEType: "video/mp4", Bytes: int64(len(raw)), SHA256: hashBytes(raw), DurationMS: 180_000 + int64(index)*10_000},
+			Evidence:       []fillercorpus.InventoryEvidence{{Kind: "rights", Path: relativeMetadataPath, Bytes: int64(len(metadata)), SHA256: hashBytes(metadata)}, {Kind: "provenance", Path: relativeMetadataPath, Bytes: int64(len(metadata)), SHA256: hashBytes(metadata)}},
+		})
 		inventory.Sources = append(inventory.Sources, TemporalStructureChallengeSource{
 			ID: "programme-" + string(rune('a'+index)), Path: filepath.ToSlash(path[len(base.root)+1:]),
 			SHA256: hashBytes(raw), DurationMS: 180_000 + int64(index)*10_000,
 			Provenance: TemporalStructureSourceProvenance{
 				Kind: TemporalStructureSourceProgrammeParent, Authority: "test-programme-authority",
-				Reference: "test-programme-" + string(rune('a'+index)), MetadataSHA256: hashBytes([]byte("metadata-" + string(rune('a'+index)))),
+				ItemID: itemID, Reference: "https://example.invalid/items/" + itemID, MetadataSHA256: hashBytes(metadata),
 				RetrievedAt: inventory.GeneratedAt.Add(-time.Hour),
 			},
 		})
+	}
+	for _, item := range record.Cases {
+		record.Captures[0].PredictedMediaBytes += item.Representation.Bytes
+	}
+	record.Captures[0].MaxPredictedMediaBytes = record.Captures[0].PredictedMediaBytes
+	record.Captures[0].MaxWallTimeMS = 1
+	recordPath := writeTemporalHumanJSON(t, base.root, "programme-source-record.json", record)
+	recordRaw, err := os.ReadFile(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range inventory.Sources {
+		inventory.Sources[index].Provenance.SourceRecordPath = filepath.Base(recordPath)
+		inventory.Sources[index].Provenance.SourceRecordSHA256 = hashBytes(recordRaw)
 	}
 	inventoryPath := writeTemporalHumanJSON(t, base.root, "programme-inventory.json", inventory)
 	return temporalStructureHoldoutFixture{
