@@ -9,14 +9,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/loomarr/loomarr/internal/testkit"
+	"github.com/loomarr/loomarr/internal/testkit/recordfixture"
 )
 
 func TestRunProposalNormalizesAndBindsCandidates(t *testing.T) {
 	t.Parallel()
 	plan := proposalTestPlan(t)
 	identity := validProposerIdentityFixture()
-	adapter := &testkit.Recorder[proposalRequest, proposalOutput]{Respond: func(proposalRequest) (proposalOutput, error) {
+	adapter := &recordfixture.Recorder[proposalRequest, proposalOutput]{Respond: func(proposalRequest) (proposalOutput, error) {
 		return proposalOutput{
 			Identity: identity,
 			Complete: true,
@@ -49,7 +49,7 @@ func TestRunProposalAcceptsCompleteNoCandidateOutput(t *testing.T) {
 	t.Parallel()
 	plan := proposalTestPlan(t)
 	identity := validProposerIdentityFixture()
-	adapter := &testkit.Recorder[proposalRequest, proposalOutput]{Respond: func(proposalRequest) (proposalOutput, error) {
+	adapter := &recordfixture.Recorder[proposalRequest, proposalOutput]{Respond: func(proposalRequest) (proposalOutput, error) {
 		return proposalOutput{Identity: identity, Complete: true}, nil
 	}}
 	got := runProposal(context.Background(), func(_ context.Context, request proposalRequest) (proposalOutput, error) { return adapter.Call(request) }, identity, plan)
@@ -83,7 +83,7 @@ func TestRunProposalFailsClosedOnInvalidAdapterOutput(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			adapter := &testkit.Recorder[proposalRequest, proposalOutput]{Respond: func(proposalRequest) (proposalOutput, error) { return test.output, test.err }}
+			adapter := &recordfixture.Recorder[proposalRequest, proposalOutput]{Respond: func(proposalRequest) (proposalOutput, error) { return test.output, test.err }}
 			got := runProposal(context.Background(), func(_ context.Context, request proposalRequest) (proposalOutput, error) { return adapter.Call(request) }, identity, proposalTestPlan(t))
 			if got.ProposalState != ProposalFailed || len(got.Candidates) != 0 || len(got.Audio) != 0 || got.Video != VideoNotRun {
 				t.Fatalf("invalid output escaped: %+v", got)
@@ -115,7 +115,7 @@ func TestRunProposalDoesNotInvokeAdapterWithInvalidInputs(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			adapter := &testkit.Recorder[proposalRequest, proposalOutput]{}
+			adapter := &recordfixture.Recorder[proposalRequest, proposalOutput]{}
 			got := runProposal(test.ctx, func(_ context.Context, request proposalRequest) (proposalOutput, error) { return adapter.Call(request) }, test.identity, test.plan)
 			if got.ProposalState != ProposalFailed || adapter.Calls() != 0 {
 				t.Fatalf("evidence=%+v calls=%d", got, adapter.Calls())

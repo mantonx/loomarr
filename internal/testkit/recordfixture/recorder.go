@@ -1,4 +1,6 @@
-package testkit
+// Package recordfixture provides a shared generic call recorder for isolated
+// tests without depending on application packages.
+package recordfixture
 
 import "sync"
 

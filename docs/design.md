@@ -191,6 +191,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Shared no-network HTTP test seams without importing any application adapter.
 - **`testkit/postgresimage`** · 1 importer
   Owns the single image reference used by Postgres testcontainers and the Make pre-pull that runs before those tests.
+- **`testkit/recordfixture`**
+  A shared generic call recorder for isolated tests without depending on application packages.
 - **`textmatch`** · 3 importers
   Owns deterministic, Unicode-aware whole-word phrase matching.
 - **`web`** · 1 importer
@@ -250,7 +252,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Commercials & filler domain (design §10): the clip catalog model and pod assembly.
 - **`fillerreference`** · 1 importer · → `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `mediatools`, `taxonomy`
   Owns the deterministic pre-screen for the production-ready filler reference cohort.
-- **`fillersafety`** · 1 importer · → `mediatools`, `openroutermedia`
+- **`fillersafety`** · 2 importers · → `mediatools`, `openroutermedia`
   Owns the fail-closed spoken-safety cascade and its shadow evidence.
 
 **Layer 6**
@@ -261,7 +263,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Materializes identity-blind evidence for independent semantic review.
 - **`library`** · 8 importers · → `episodeevidence`, `filler`, `httpx`, `inventory`, `metrics`
   Library port (design §6, §2 boundaries): a shared Emby/Jellyfin adapter.
-- **`store`** · 14 importers · → `contact`, `diagnostics`, `episodeevidence`, `filler`, `filleradmission`, `fillerdecision`, `inventory`, `invitation`, `notifications`, `provision`, `quality`, `recovery`, `schedule`, `secretprotection`, `taxonomy`
+- **`store`** · 14 importers · → `contact`, `diagnostics`, `episodeevidence`, `filler`, `filleradmission`, `fillerdecision`, `fillersafety`, `inventory`, `invitation`, `notifications`, `provision`, `quality`, `recovery`, `schedule`, `secretprotection`, `taxonomy`
   Loomarr's persistence abstraction (design §5): one Store interface, two first-class backends (SQLite via modernc.org/sqlite, Postgres via pgx's database/sql shim).
 
 **Layer 7**
@@ -4897,6 +4899,44 @@ training, scheduling, or production-admission permission. An applied projection 
 spoken-safety evidence into the admission document is a later design and rollout change. Its identity
 must match the exact certification artifact; model, route, prompt/schema, media planner, policy, local
 runtime, weight, or implementation drift returns a hold until recertified.
+
+The spoken-safety ledger is not an admission-decision record. `filler_admission_decisions` stores the
+terminal policy projection described above; a spoken-safety run instead records how one evidence attempt
+executed, including work that crashed or never reached a semantic result. Persistence therefore owns an
+immutable run header and append-only, ordinal events. The header binds the clip, complete-source authority,
+source bytes, certification, policy, implementation, and start time. Events use a closed kind and payload
+schema for source planning, local proposal, hosted-call reservation, hosted-call settlement, and the
+terminal reduced result. Stable run/event identities and exact-payload conflict checks make a repeated
+write idempotent without permitting history to be replaced.
+
+A hosted-call reservation event and its V62 inference-budget reservation commit atomically before the
+HTTP request starts. Settlement is a later append-only event bound to that reservation; it records the
+request and response digests, requested and resolved model/provider identities, upstream route, modality
+coverage, generation id, closed outcome or failure code, exact charged decimal/nanodollars, and reservation
+disposition. A terminal event contains the canonical closed evidence and reducer result and references every
+attempt event in order. The compatibility score may advance only after that terminal event commits. An
+interrupted run remains visibly incomplete: startup/retry appends an operational terminal hold, marks any
+unsettled reservation failed with unknown settlement, and starts a new bounded attempt rather than mutating
+or silently replaying the old history. Old reservations continue to count against budget, so repeated
+crashes cannot create unbounded spend.
+
+The ledger stores only bounded public identities, closed states, interval coordinates, digests, accounting,
+and opaque rule ids. Machine-local paths, source names, restricted variants, transcripts, quotes, private
+policy JSON, prompts, media bytes, raw request bodies, raw provider responses, and free-form provider errors
+are forbidden. Request/response SHA-256 values plus the provider generation id bind those private artifacts
+without copying them into an ordinary application database or operator projection. No ledger read model is
+ordinary-user-facing in this slice.
+
+Ledger-owned run, event, evaluation, candidate, reservation, generation, clip, and implementation
+identifiers are bounded opaque ASCII tokens using letters, digits, underscores, and hyphens. They
+reject filesystem separators, dotted filename forms, URLs, whitespace, and control characters. A clip identity
+remains the existing opaque clip key; this boundary does not invent a different digest format for it.
+Public model/provider identities use a separate bounded representation that preserves legitimate route
+slashes, revision dots, and provider display-name spaces. These values must come from the validated
+route and response identities recorded by the atomic V62 helpers, never from source metadata or free-form
+provider output. Their syntax is not evidence of route authority: the completed runtime integration must
+retain the validated capability and response binding before writing those fields. The generic event
+append operation cannot create reservation or settlement authority.
 
 Restricted spoken language and broad visual suitability remain separate claims. Complete-video
 suitability must ultimately cover every source, including a source for which the acoustic proposer emits
