@@ -9,11 +9,13 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/loomarr/loomarr/internal/fillerairworthiness"
 )
 
 const (
-	SegmentScreeningSchemaVersion   = 3
-	SegmentScreeningContractVersion = "filler-rendered-child-screening-v3"
+	SegmentScreeningSchemaVersion   = 4
+	SegmentScreeningContractVersion = "filler-rendered-child-screening-v4"
 )
 
 var segmentScreeningAxisOrder = []SegmentScreeningAxis{
@@ -71,21 +73,22 @@ type SegmentScreeningResult struct {
 // rendered-child subject. No individual pass, aggregate confidence, or absent result can
 // substitute for all five authority-bound outcomes.
 type SegmentScreeningEvidence struct {
-	SchemaVersion   int                      `json:"schemaVersion"`
-	ContractVersion string                   `json:"contractVersion"`
-	SubjectSHA256   string                   `json:"subjectSha256"`
-	Results         []SegmentScreeningResult `json:"results"`
-	AssessedAt      time.Time                `json:"assessedAt"`
-	SHA256          string                   `json:"sha256"`
+	SchemaVersion   int                          `json:"schemaVersion"`
+	ContractVersion string                       `json:"contractVersion"`
+	SubjectSHA256   string                       `json:"subjectSha256"`
+	Results         []SegmentScreeningResult     `json:"results"`
+	Airworthiness   fillerairworthiness.Decision `json:"airworthiness"`
+	AssessedAt      time.Time                    `json:"assessedAt"`
+	SHA256          string                       `json:"sha256"`
 }
 
-func NewSegmentScreeningEvidence(subject SegmentScreeningSubject, results []SegmentScreeningResult, assessedAt time.Time) (SegmentScreeningEvidence, error) {
+func NewSegmentScreeningEvidence(subject SegmentScreeningSubject, results []SegmentScreeningResult, airworthiness fillerairworthiness.Decision, assessedAt time.Time) (SegmentScreeningEvidence, error) {
 	if err := ValidateSegmentScreeningSubject(subject); err != nil {
 		return SegmentScreeningEvidence{}, err
 	}
 	evidence := SegmentScreeningEvidence{
 		SchemaVersion: SegmentScreeningSchemaVersion, ContractVersion: SegmentScreeningContractVersion,
-		SubjectSHA256: subject.SHA256, Results: slices.Clone(results), AssessedAt: assessedAt.UTC(),
+		SubjectSHA256: subject.SHA256, Results: slices.Clone(results), Airworthiness: cloneAirworthinessDecision(airworthiness), AssessedAt: assessedAt.UTC(),
 	}
 	slices.SortFunc(evidence.Results, func(a, b SegmentScreeningResult) int { return strings.Compare(string(a.Axis), string(b.Axis)) })
 	evidence.SHA256 = SegmentScreeningEvidenceSHA256(evidence)
@@ -95,8 +98,20 @@ func NewSegmentScreeningEvidence(subject SegmentScreeningSubject, results []Segm
 	return evidence, nil
 }
 
+func cloneAirworthinessDecision(decision fillerairworthiness.Decision) fillerairworthiness.Decision {
+	cloned := decision
+	cloned.ReasonCodes = slices.Clone(decision.ReasonCodes)
+	cloned.ObservedFlags = slices.Clone(decision.ObservedFlags)
+	cloned.Triggers = slices.Clone(decision.Triggers)
+	cloned.HeldAxes = slices.Clone(decision.HeldAxes)
+	cloned.EvidenceSHA256s = slices.Clone(decision.EvidenceSHA256s)
+	return cloned
+}
+
 func ValidateSegmentScreeningEvidence(evidence SegmentScreeningEvidence) error {
-	if evidence.SchemaVersion != SegmentScreeningSchemaVersion || evidence.ContractVersion != SegmentScreeningContractVersion || !isContentHash(evidence.SubjectSHA256) || evidence.AssessedAt.IsZero() {
+	if evidence.SchemaVersion != SegmentScreeningSchemaVersion || evidence.ContractVersion != SegmentScreeningContractVersion ||
+		!isContentHash(evidence.SubjectSHA256) || evidence.AssessedAt.IsZero() ||
+		fillerairworthiness.ValidateDecision(evidence.Airworthiness) != nil || evidence.Airworthiness.SubjectSHA256 != evidence.SubjectSHA256 {
 		return fmt.Errorf("segment screening identity or interval is invalid")
 	}
 	want := map[SegmentScreeningAxis]struct{}{ScreenVisualSafety: {}, ScreenSpokenSafety: {}, ScreenWrittenSafety: {}, ScreenRights: {}, ScreenPlayback: {}}
@@ -137,7 +152,7 @@ func (e SegmentScreeningEvidence) Passes() bool {
 			return false
 		}
 	}
-	return true
+	return e.Airworthiness.Verdict == fillerairworthiness.VerdictPass
 }
 
 func SegmentScreeningEvidenceSHA256(evidence SegmentScreeningEvidence) string {

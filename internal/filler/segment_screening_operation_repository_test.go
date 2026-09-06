@@ -27,8 +27,10 @@ func TestFileSegmentScreeningEvidenceRepositoryReplaysOneSettledAxisOperation(t 
 		t.Fatalf("operation pointer info=%v error=%v", info, err)
 	}
 
+	raw := []byte("different-observation")
 	conflicting, err := NewSegmentScreeningAxisEvidence(
-		subject, recorded.Evidence.Profile, ScreenHold, "manual_review_required", []byte("different-observation"),
+		subject, recorded.Evidence.Profile, ScreenHold, "manual_review_required",
+		screeningSuitabilityForOutcome(subject, recorded.Evidence.Profile, ScreenHold, raw), raw,
 		time.Date(2026, time.September, 13, 2, 0, 0, 0, time.UTC),
 	)
 	if err != nil {

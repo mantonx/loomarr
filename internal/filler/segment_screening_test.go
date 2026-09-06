@@ -1,20 +1,19 @@
 package filler
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
 
 func segmentScreeningFixture(t *testing.T) SegmentScreeningEvidence {
 	t.Helper()
-	evidence, err := NewSegmentScreeningEvidence(screeningSubjectFixture(t), []SegmentScreeningResult{
-		{Axis: ScreenVisualSafety, Outcome: ScreenPass, AuthoritySHA256: strings.Repeat("1", 64), ReasonCode: "policy_clear"},
-		{Axis: ScreenSpokenSafety, Outcome: ScreenPass, AuthoritySHA256: strings.Repeat("2", 64), ReasonCode: "policy_clear"},
-		{Axis: ScreenWrittenSafety, Outcome: ScreenPass, AuthoritySHA256: strings.Repeat("3", 64), ReasonCode: "policy_clear"},
-		{Axis: ScreenRights, Outcome: ScreenPass, AuthoritySHA256: strings.Repeat("4", 64), ReasonCode: "rights_verified"},
-		{Axis: ScreenPlayback, Outcome: ScreenPass, AuthoritySHA256: strings.Repeat("5", 64), ReasonCode: "playback_verified"},
-	}, time.Date(2026, time.September, 5, 14, 0, 0, 0, time.UTC))
+	subject := screeningSubjectFixture(t)
+	records := passingAxisEvidence(t, subject)
+	results := make([]SegmentScreeningResult, 0, len(records))
+	for _, record := range records {
+		results = append(results, record.Evidence.Result())
+	}
+	evidence, err := NewSegmentScreeningEvidence(subject, results, screeningAirworthinessDecision(t, subject, records), time.Date(2026, time.September, 5, 14, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}

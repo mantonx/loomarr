@@ -27,8 +27,10 @@ func (e *capturedSegmentScreeningEvaluator) Evaluate(_ context.Context, media Se
 	if e.err != nil {
 		return RecordedSegmentScreeningAxisEvidence{}, e.err
 	}
+	raw := []byte("raw-" + string(e.axis))
 	recorded, err := NewSegmentScreeningAxisEvidence(
-		media.Subject, e.profile, e.outcome, "authority_clear", []byte("raw-"+string(e.axis)),
+		media.Subject, e.profile, e.outcome, "authority_clear",
+		screeningSuitabilityForOutcome(media.Subject, e.profile, e.outcome, raw), raw,
 		e.assessedAt,
 	)
 	if err == nil && e.mutate != nil {
@@ -81,7 +83,7 @@ func TestSegmentScreeningRuntimePersistsSubjectThenCallsFiveAxesSerially(t *test
 	repository := &capturedSegmentScreeningRepository{order: &order}
 	runtime, err := NewSegmentScreeningRuntime([]SegmentScreeningEvaluator{
 		evaluators[ScreenRights], evaluators[ScreenPlayback], evaluators[ScreenWrittenSafety], evaluators[ScreenVisualSafety], evaluators[ScreenSpokenSafety],
-	}, repository)
+	}, repository, screeningAirworthinessEvaluator(t, screeningProfilesFromEvaluators(evaluators)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +172,7 @@ func TestSegmentScreeningRuntimeRejectsIncompleteOrDuplicateAxesBeforeCalls(t *t
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := NewSegmentScreeningRuntime(test.items, repository); err == nil {
+			if _, err := NewSegmentScreeningRuntime(test.items, repository, screeningAirworthinessEvaluator(t, screeningProfilesFromEvaluators(evaluators))); err == nil {
 				t.Fatal("invalid evaluator set was accepted")
 			}
 		})
@@ -274,11 +276,19 @@ func mustSegmentScreeningRuntime(t *testing.T, items map[SegmentScreeningAxis]*c
 	t.Helper()
 	runtime, err := NewSegmentScreeningRuntime([]SegmentScreeningEvaluator{
 		items[ScreenVisualSafety], items[ScreenSpokenSafety], items[ScreenWrittenSafety], items[ScreenRights], items[ScreenPlayback],
-	}, repository)
+	}, repository, screeningAirworthinessEvaluator(t, screeningProfilesFromEvaluators(items)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return runtime
+}
+
+func screeningProfilesFromEvaluators(items map[SegmentScreeningAxis]*capturedSegmentScreeningEvaluator) []SegmentScreeningAxisProfile {
+	profiles := make([]SegmentScreeningAxisProfile, 0, len(items))
+	for _, axis := range segmentScreeningAxisOrder {
+		profiles = append(profiles, items[axis].profile)
+	}
+	return profiles
 }
 
 func segmentScreeningEvaluatorFixtures(order *[]string) map[SegmentScreeningAxis]*capturedSegmentScreeningEvaluator {

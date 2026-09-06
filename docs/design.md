@@ -165,6 +165,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   In-memory event bus behind SSE (§7 /v1/events, §8).
 - **`filleradmission`** · 8 importers
   Owns the deterministic semantic boundary between versioned filler evidence and a catalog-admission decision.
+- **`fillerairworthiness`** · 1 importer
+  Owns deterministic audience-policy evaluation over closed, authority-bound filler suitability evidence.
 - **`fillercorpus`** · 4 importers
   Owns the source-neutral, non-authorizing inventory contract used to qualify certification corpus lanes.
 - **`fillereval`** · 6 importers
@@ -286,7 +288,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 7**
 
-- **`filler`** · 10 importers · → `diagnostics`, `filleradmission`, `fillerdecision`, `fillerstructure`, `fillerstructuremedia`, `fillerstructurewindow`, `llm`, `mediatools`, `taxonomy`
+- **`filler`** · 10 importers · → `diagnostics`, `filleradmission`, `fillerairworthiness`, `fillerdecision`, `fillerstructure`, `fillerstructuremedia`, `fillerstructurewindow`, `llm`, `mediatools`, `taxonomy`
   Commercials & filler domain (design §10): the clip catalog model and pod assembly.
 - **`fillersafetycorpus`** · 1 importer · → `fillercorpus`, `fillersafety`, `fillersafetycert`
   Prepares private real-speech cohorts for later spoken-safety authority assembly without assigning certification truth.
@@ -3783,6 +3785,40 @@ unsupported severity/context, missing modality coverage, or conflicting evidence
 only stable flag and reason identifiers; private raw evidence retains the restricted text or imagery needed for
 audit. Certification is policy- and category-specific: evidence that certifies adult-nudity detection cannot
 silently authorize violence, hateful-language, substance, or other audience-policy decisions.
+
+The version-one audience policy uses three internal actions: `allow` means the observation does not restrict
+that profile, `review` makes Airworthiness `hold`, and `reject` makes Airworthiness `reject`. An observed
+`reject` always wins over missing coverage, conflicting evidence elsewhere, or an observed `review`; a valid
+positive is never erased by a negative vote or another axis's absence. With no rejecting observation, every
+policy-relevant flag must be covered by a complete axis record whose exact evidence-contract, policy,
+certification, and implementation profile matches the configured release authority. Missing axis coverage,
+an uncertified required flag, profile drift, malformed or unknown evidence, or an upstream conflict holds.
+Only complete certified coverage with no `review` or `reject` observation passes.
+
+| Suitability flag or family | `all_ages` | `general_audience` |
+| --- | --- | --- |
+| adult nudity; minor or age-ambiguous sexual risk | reject | reject |
+| sexual activity or sexualized presentation | reject | low severity reviews; moderate/high rejects |
+| weapon depiction | promotion/instruction or moderate/high rejects; low reviews | promotion/instruction rejects; high reviews; low/moderate depiction allows |
+| threat; non-graphic violence | moderate/high rejects; low reviews | high rejects; moderate reviews; low allows |
+| graphic violence or gore | reject | reject |
+| human death or corpse | moderate/high rejects; low reviews | high rejects; low/moderate reviews |
+| animal harm or death | moderate/high rejects; low reviews | high rejects; moderate reviews; low allows |
+| self-harm or suicide | reject | promotion/instruction or high rejects; low/moderate reviews |
+| tobacco, alcohol, drugs, or gambling | promotion/instruction or moderate/high rejects; low depiction reviews | promotion/instruction rejects; high depiction reviews; low/moderate depiction allows |
+| regulated-product promotion | reject | reject |
+| hateful or extremist symbol | promotion/instruction or high rejects; low/moderate depiction reviews | promotion/instruction rejects; high depiction reviews; low/moderate depiction allows |
+| hateful targeting; slur or degrading language | reject | reject |
+| profanity | moderate/high rejects; low reviews | high rejects; moderate reviews; low allows |
+| explicit sexual language | reject | moderate/high rejects; low reviews |
+| frightening/disturbing or severe injury/medical imagery | high rejects; low/moderate reviews | high rejects; moderate reviews; low allows |
+| ordinary minor presence; age ambiguity alone; religious suffering; war/military; ordinary commercial/brand presence | allow | allow |
+
+`restricted_archive` validates and retains the same factual observations but always returns `hold` for
+unattended playout. It is a retention profile, not a permissive audience profile. Each observation carries one
+closed modality, severity, context, source-relative half-open interval, and opaque id. The public policy result
+may expose those closed values and evidence digests, but never raw restricted language, imagery descriptions,
+model prose, or chain-of-thought.
 
 Each axis record binds the complete child subject described above, its outcome, and the evaluator's policy,
 certification, implementation, and evidence-contract profile, plus the SHA-256 of its private bounded raw
