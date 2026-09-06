@@ -32,6 +32,37 @@ they do not self-assign follow-up work. Record model and reasoning choices when 
 them. Change those choices only at assignment boundaries, and never let them expand the worker's
 authority, scope, claims, tools, or acceptance criteria.
 
+### Task-based model routing
+
+Choose the least expensive model clearly capable of meeting the assignment's acceptance criteria.
+Use Luna at Low reasoning by default for straightforward evidence collection: exact SHA/status and
+PR/issue collection, bounded inventories, artifact existence/hash/size checks, documented-command
+reproduction, and mechanical comparison against explicit acceptance criteria. Use Terra at Medium
+for ordinary implementation, multi-file behaviour analysis, and investigations requiring synthesis.
+Use Sol only for complex integration or high-risk or ambiguous contract reasoning, with a written
+reason. Use Astra for the hardest cross-system architectural decisions, difficult competing evidence,
+or a specific capability gap beyond Sol; record the expected benefit and risk justification. A
+supervisor role, review label, or available pane does not justify Astra. A clearly demanding task may
+start at the justified model without wasteful trial runs through every smaller model.
+
+Select reasoning independently of model capability: Low for mechanical checklists, Medium for
+ordinary implementation or analysis, and High for difficult ambiguity or demanding integration with
+a written quality need. Use xhigh or max only for exceptional bounded problems with an explicit
+expected benefit and budget justification. Use only levels supported by the selected model and
+actual harness; verify effective settings and record `uncontrolled` when they cannot be verified.
+
+A read-only assignment is not automatically a Terra assignment: first determine whether an
+explicit evidence checklist makes Luna sufficient. Every brief records the selected model/reasoning,
+rationale, authority, output, native budget, cutoff, and report reserve; verify the launched settings.
+Higher-tier evidence collection needs a concrete synthesis, ambiguity, or risk justification.
+Repair inadequate briefs, missing evidence, and sandbox or permission failures as workflow problems,
+not automatic model or reasoning upgrades. Escalate only a specific unresolved quality or capability
+gap, rather than using higher effort to compensate for missing authority or inputs.
+Escalation checkpoints the specific unresolved question or failed acceptance, preserves useful
+evidence, and starts a fresh bounded assignment; never silently switches an active worker or repeats
+the whole scan. Budget ceilings are limits, not targets, and higher capability never broadens
+authority; preserve one-writer ownership, visible panes, gates, and safety controls.
+
 For genuinely independent bounded work, use visible worker panes freely when the maintainer asks
 for supervised coordination. After accepting a worker report, immediately reassign that pane to a
 ready independent task or close it; retain it only through report capture and acknowledgement.
@@ -55,8 +86,7 @@ prove acknowledgement. Keep initialization and authorization waits out of active
 loops. Verify cessation and the final meter before accepting a report; preserve incomplete work
 without falsely marking the goal complete. Follow the supervisor workflow's launch and stop checks.
 
-Low or Medium reasoning is the default. Use High reasoning or a frontier capability only for a
-written, measured quality need. Hitting a budget stops the checkpoint; it never authorizes weaker
+Apply the task-based model and reasoning policy above. Hitting a budget stops the checkpoint; it never authorizes weaker
 gates, reduced grounding, narrower acceptance, or skipped safety checks. Preserve the worktree and
 claims and report usage, remaining work, the stop reason, frozen tree identity, and gates run or not
 run as defined in [the supervisor workflow](.agents/workflows/supervise.md).

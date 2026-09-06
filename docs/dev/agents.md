@@ -53,18 +53,19 @@ worker report. A worker waits for the supervisor to stop it or issue another bri
 its own backlog. This keeps ownership with the delivery agent while still providing fresh context.
 
 When the harness supports model and reasoning controls, select them by task shape and record the
-choice in the worker brief. The durable supervisor workflow uses capability classes so it remains
-provider-neutral; adapter-specific live model mappings belong outside this contract.
+choice in the worker brief. `AGENTS.md` owns the task-based model routing policy; the supervisor
+workflow applies it at each assignment boundary. Record external sessions as `uncontrolled` when
+their actual selection cannot be verified rather than assuming an equivalent model.
 
-| Task shape | Default execution |
-| --- | --- |
-| Small task, sequential reasoning, or shared mutable seam | One owning agent; no delegation |
-| Ordinary bounded worker assignment | Balanced capability at Medium reasoning |
-| Bounded search, triage, or repetitive mechanical work | Lower-cost capability when acceptance is objective |
-| Measured ambiguity, security, authorization, migration, integration, or final acceptance | Frontier capability or High reasoning only when the measured need justifies it |
-| External session without trustworthy controls | Record `uncontrolled`; verify through artifacts and evidence |
+Follow [the canonical routing policy](../../AGENTS.md#task-based-model-routing): Luna-first mechanical
+evidence, Terra for ordinary implementation or synthesis, and justified Sol or Astra for increasingly
+demanding reasoning. Model and reasoning are independent choices, not a mandatory escalation ladder.
+Verify actual supported settings. Repair brief, evidence, and permission problems as workflow issues;
+an escalation preserves useful evidence and addresses a specific unresolved quality or capability gap
+at a fresh bounded checkpoint. Record authority, expected output, budget, cutoff, and report reserve
+alongside the selection; routing never broadens authority or changes ownership, gates, or safety.
 
-Use Medium as the balanced default. Record the selected model/capability, reasoning, and rationale;
+Record the selected model/capability, reasoning, and rationale;
 do not switch model or reasoning during an active checkpoint. Change it only with the next bounded
 assignment after the worker returns. Record worker-scoped usage as `source`, `start`, `end`, and
 `delta` only when observable; use `unavailable` or `uncontrolled` otherwise, and never attribute an
