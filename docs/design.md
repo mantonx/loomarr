@@ -123,14 +123,14 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 | `catalog` | 6 | `library`, `provision` |
 | `contact` | 5 | — |
 | `diagnostics` | 8 | — |
-| `filler` | 10 | `diagnostics`, `filleradmission`, `fillerstructure`, `fillerstructurewindow`, `llm`, `mediatools`, `taxonomy` |
+| `filler` | 10 | `diagnostics`, `filleradmission`, `fillersafety`, `fillerstructure`, `fillerstructurewindow`, `fillervisualsafety`, `llm`, `mediatools`, `taxonomy` |
 | `filleradmission` | 8 | — |
 | `fillerbakeoff` | 7 | `filleradmission`, `fillereval`, `httpx`, `openroutermedia` |
 | `fillereval` | 6 | — |
-| `fillersafety` | 6 | `mediatools`, `openroutermedia` |
+| `fillersafety` | 7 | `mediatools`, `openroutermedia` |
 | `fillerstructure` | 8 | — |
 | `fillerstructurewindow` | 6 | `fillerstructure` |
-| `fillervisualsafety` | 5 | `fillerbakeoff`, `fillereval`, `httpx`, `mediatools`, `openroutermedia` |
+| `fillervisualsafety` | 6 | `fillerbakeoff`, `fillereval`, `httpx`, `mediatools`, `openroutermedia` |
 | `httpx` | 12 | `metrics` |
 | `invitation` | 6 | `contact` |
 | `library` | 8 | `filler`, `httpx`, `metrics` |
@@ -265,16 +265,16 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 - **`fillerreference`** · 1 importer · → `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `mediatools`, `taxonomy`
   Owns the deterministic pre-screen for the production-ready filler reference cohort.
-- **`fillersafety`** · 6 importers · → `mediatools`, `openroutermedia`, `proctree`
+- **`fillersafety`** · 7 importers · → `mediatools`, `openroutermedia`, `proctree`
   Owns the fail-closed spoken-safety cascade and its shadow evidence.
 - **`fillerstructuremedia`** · 4 importers · → `fillerstructure`, `mediatools`
   Owns the exact media contract shared by complete-timeline structure qualification and production assessment.
-- **`fillervisualsafety`** · 5 importers · → `fillerbakeoff`, `fillercorpus`, `fillereval`, `httpx`, `mediatools`, `openroutermedia`
+- **`fillervisualsafety`** · 6 importers · → `fillerbakeoff`, `fillercorpus`, `fillereval`, `httpx`, `mediatools`, `openroutermedia`
   Owns complete-source visual-sensitive-content evidence.
 
 **Layer 6**
 
-- **`fillerairworthinessprojection`** · → `fillerairworthiness`, `fillersafety`, `fillervisualsafety`
+- **`fillerairworthinessprojection`** · 1 importer · → `fillerairworthiness`, `fillersafety`, `fillervisualsafety`
   Authenticates safety-producer output and translates opaque certified matches into closed Airworthiness evidence.
 - **`fillersafetycert`** · 2 importers · → `fillersafety`
   Owns deterministic, non-authorizing certification of the durable spoken-safety cascade.
@@ -291,7 +291,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 7**
 
-- **`filler`** · 10 importers · → `diagnostics`, `filleradmission`, `fillerairworthiness`, `fillerdecision`, `fillerstructure`, `fillerstructuremedia`, `fillerstructurewindow`, `llm`, `mediatools`, `taxonomy`
+- **`filler`** · 10 importers · → `diagnostics`, `filleradmission`, `fillerairworthiness`, `fillerairworthinessprojection`, `fillerdecision`, `fillersafety`, `fillerstructure`, `fillerstructuremedia`, `fillerstructurewindow`, `fillervisualsafety`, `llm`, `mediatools`, `taxonomy`
   Commercials & filler domain (design §10): the clip catalog model and pod assembly.
 - **`fillersafetycorpus`** · 1 importer · → `fillercorpus`, `fillersafety`, `fillersafetycert`
   Prepares private real-speech cohorts for later spoken-safety authority assembly without assigning certification truth.
@@ -3840,6 +3840,26 @@ and leave coverage incomplete. Independently bound positives from other observat
 still reject; ambiguity never erases them. A single match id may cover multiple supplied intervals, and
 multiple match ids may share one supplied interval. Apple source-level positives retain their documented
 whole-source interval because that producer supplies no timestamps.
+
+The rendered-child spoken and visual adapters own the complete bridge from those producer reports into the
+five-axis screening operation. Before replay or inference, an adapter reopens the evidence derivative and
+reproduces the child's full byte digest, byte count, and sparse catalog identity; missing, unsafe, or drifted
+bytes produce no semantic axis authority and therefore remain an operational hold. Once the current bytes are
+proved, the adapter replays an already settled subject/profile operation before invoking its producer, so a
+retry cannot buy or obtain a second answer. The adapter supplies that same deterministic operation identity to
+the producer, whose own durable execution ledger must also replay it when the producer finished but downstream
+axis persistence did not. A new producer answer is projected locally through the immutable authority, and the
+exact path-free producer report becomes the private raw evidence persisted by the screening repository.
+Producer, source bytes, duration, policy, certification, implementation, result, or rule-map drift is an invalid
+operation, never a permissive fallback.
+
+For a safety axis, screening `pass` means that authenticated category evidence is complete; it does **not**
+mean the observed content is appropriate for every audience. Complete positive evidence therefore remains an
+axis `pass` while its closed observations drive the audience-specific Airworthiness `reject` or `hold`.
+Incomplete or unprojectable coverage is an axis `hold`. This separation is load-bearing: mapping every positive
+fact to an axis `reject` would bypass the audience policy and incorrectly prohibit facts that one profile may
+allow or review. The final aggregate still requires all five axis operations to complete and Airworthiness to
+pass before a child can advance.
 
 Each axis record binds the complete child subject described above, its outcome, and the evaluator's policy,
 certification, implementation, and evidence-contract profile, plus the SHA-256 of its private bounded raw

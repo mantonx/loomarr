@@ -105,10 +105,10 @@ func visualProfile(authority VisualAuthority, flags map[fillerairworthiness.Flag
 // the complete source interval because that API supplies no timestamp.
 func ProjectVisual(subject Subject, source fillervisualsafety.SourceAuthority, plan fillervisualsafety.CoveragePlan, coverage fillervisualsafety.CoverageEvidence, observations []fillervisualsafety.Observation, result fillervisualsafety.Result, authority VisualAuthority) (VisualProjection, error) {
 	profile, err := VisualProfile(authority)
-	if err != nil || !validSHA256(subject.SHA256) || !validSHA256(subject.EvidenceSHA256) || subject.DurationMS <= 0 ||
+	if err != nil || !validSHA256(subject.SHA256) || !validSHA256(subject.EvidenceSHA256) || subject.EvidenceBytes <= 0 || subject.DurationMS <= 0 ||
 		fillervisualsafety.ValidateSourceAuthority(source) != nil || fillervisualsafety.ValidateCoveragePlan(plan) != nil ||
 		fillervisualsafety.ValidateCoverageEvidence(plan, coverage) != nil || fillervisualsafety.ValidateResult(result) != nil ||
-		source.SourceSHA256 != subject.EvidenceSHA256 || source.DurationMS != subject.DurationMS ||
+		source.SourceSHA256 != subject.EvidenceSHA256 || source.SourceBytes != subject.EvidenceBytes || source.DurationMS != subject.DurationMS ||
 		source.PolicySHA256 != authority.PolicySHA256 || plan.Profile.SHA256 != authority.CoverageProfileSHA256 ||
 		!reflect.DeepEqual(fillervisualsafety.Reduce(source, coverage, plan, observations), result) {
 		return VisualProjection{}, fmt.Errorf("visual Airworthiness projection input is invalid or drifted")

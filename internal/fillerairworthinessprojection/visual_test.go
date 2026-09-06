@@ -225,7 +225,7 @@ func newVisualFixture(t *testing.T) visualFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return visualFixture{Subject{strings.Repeat("a", 64), source.SourceSHA256, duration}, source, plan, coverage, portable, apple, authority}
+	return visualFixture{Subject{strings.Repeat("a", 64), source.SourceSHA256, source.SourceBytes, duration}, source, plan, coverage, portable, apple, authority}
 }
 
 func (fixture visualFixture) observation(t *testing.T, profile fillervisualsafety.ProducerProfile, state fillervisualsafety.ObservationState, match string) fillervisualsafety.Observation {

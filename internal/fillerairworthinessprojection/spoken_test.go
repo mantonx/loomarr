@@ -89,7 +89,7 @@ func spokenAuthority(t *testing.T) SpokenAuthority {
 }
 
 func spokenSubject(report fillersafety.EvaluationReport) Subject {
-	return Subject{SHA256: strings.Repeat("a", 64), EvidenceSHA256: report.Run.SourceSHA256, DurationMS: report.Run.DurationMS}
+	return Subject{SHA256: strings.Repeat("a", 64), EvidenceSHA256: report.Run.SourceSHA256, EvidenceBytes: report.Run.SourceBytes, DurationMS: report.Run.DurationMS}
 }
 
 func spokenReport(t *testing.T, state fillersafety.AudioState, ruleIDs []string) fillersafety.EvaluationReport {
