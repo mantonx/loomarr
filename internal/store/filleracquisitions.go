@@ -152,5 +152,25 @@ func (s *sqlStore) attachAcquisitionOutcomes(ctx context.Context, runs []filler.
 	for i := range runs {
 		runs[i].Outcome = filler.AcquisitionOutcomeFrom(byID[runs[i].ID], at)
 	}
+	artifactRows, err := s.db.QueryContext(ctx, s.ph(acquisitionArtifactSelect+` WHERE acquisition_id IN (`+
+		strings.Join(placeholders, ",")+`) ORDER BY acquisition_id, updated_at DESC, id DESC`), args...)
+	if err != nil {
+		return fmt.Errorf("list acquisition artifacts: %w", err)
+	}
+	defer func() { _ = artifactRows.Close() }()
+	artifactsByID := make(map[string][]filler.AcquisitionArtifact, len(runs))
+	for artifactRows.Next() {
+		artifact, err := scanAcquisitionArtifact(artifactRows)
+		if err != nil {
+			return fmt.Errorf("scan acquisition artifact: %w", err)
+		}
+		artifactsByID[artifact.AcquisitionID] = append(artifactsByID[artifact.AcquisitionID], artifact)
+	}
+	if err := artifactRows.Err(); err != nil {
+		return fmt.Errorf("list acquisition artifacts: %w", err)
+	}
+	for i := range runs {
+		runs[i].Artifacts = filler.AcquisitionArtifactOutcomeFrom(artifactsByID[runs[i].ID])
+	}
 	return nil
 }

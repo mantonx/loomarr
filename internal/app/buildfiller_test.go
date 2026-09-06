@@ -91,7 +91,7 @@ func TestBuildFetcher_DownloadsIntoTheAppliedWatchFolder(t *testing.T) {
 		"ingest.ytdlp_path":  ytdlp,
 		"ingest.ffmpeg_path": ffmpeg,
 	})
-	fetcher := buildFetcher(set, layout, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	fetcher := buildFetcher(set, layout, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if fetcher == nil {
 		t.Fatal("buildFetcher returned nil with both tools configured")
 	}

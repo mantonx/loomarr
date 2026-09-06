@@ -190,6 +190,7 @@ const appHandlers = (): RequestHandler[] => [
   getFillerReadinessMockHandler({
     ready: true,
     nextAction: "none",
+    repairs: { count: 0 },
     fetch: { enabled: true, catalogClips: 0 },
     pipeline: {
       runnable: 0,

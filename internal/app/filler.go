@@ -716,6 +716,7 @@ type interactiveOperationWriter interface {
 type fillerReadinessStore interface {
 	PipelineOverview(context.Context, time.Time) (filler.PipelineOverview, error)
 	ListAcquisitionRuns(context.Context, int, time.Time) ([]filler.AcquisitionRun, error)
+	AcquisitionRepairSummary(context.Context) (filler.AcquisitionRepairSummary, error)
 }
 
 // Readiness composes existing authoritative projections and delegates prioritisation to the
@@ -745,8 +746,12 @@ func (a fillerServiceAdapter) Readiness(ctx context.Context) (filler.Readiness, 
 	if err != nil {
 		return filler.Readiness{}, err
 	}
+	repairs, err := a.readiness.AcquisitionRepairSummary(ctx)
+	if err != nil {
+		return filler.Readiness{}, err
+	}
 	return filler.ProjectReadiness(filler.ReadinessInput{
-		Fetch: fetch, Pipeline: pipeline, Pool: pool, Runs: runs,
+		Fetch: fetch, Pipeline: pipeline, Pool: pool, Runs: runs, Repairs: repairs,
 	}), nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -79,23 +80,34 @@ func NewYtDlpDownloader(ytDlpPath, ffmpegPath string) *YtDlpDownloader {
 // reaches the exact sidecars created by this invocation; the media server still
 // scans the folder and the core syncs from there. It returns (0,0,nil) on success,
 // surfacing only exec failure.
-func (d *YtDlpDownloader) Download(ctx context.Context, src Source, dropDir string) (int, int, error) {
+func (d *YtDlpDownloader) Download(ctx context.Context, src Source, dropDir string) (DownloadResult, error) {
 	absDropDir, err := filepath.Abs(dropDir)
 	if err != nil {
-		return 0, 0, fmt.Errorf("resolve yt-dlp drop directory: %w", err)
+		return DownloadResult{}, fmt.Errorf("resolve yt-dlp drop directory: %w", err)
 	}
 	if err := os.MkdirAll(absDropDir, 0o750); err != nil {
-		return 0, 0, fmt.Errorf("create yt-dlp drop directory: %w", err)
+		return DownloadResult{}, fmt.Errorf("create yt-dlp drop directory: %w", err)
 	}
 	archiveFile := filepath.Join(absDropDir, ".yt-dlp-archive.txt")
+	if src.archiveAttempt {
+		// Each staged attempt starts from the durable shared archive, but never advances it
+		// until Ingestor has persisted ownership. Resetting this private file is deliberate:
+		// a previous failed manifest write must not poison a retry in the same staging path.
+		if err := seedAttemptArchive(src.PublicationDir, archiveFile); err != nil {
+			return DownloadResult{}, err
+		}
+	} else if src.PublicationDir != "" {
+		// Direct downloader users retain their historic shared-archive contract.
+		archiveFile = filepath.Join(src.PublicationDir, ".yt-dlp-archive.txt")
+	}
 	resultFile, err := os.CreateTemp(absDropDir, ".loomarr-ytdlp-results-*")
 	if err != nil {
-		return 0, 0, fmt.Errorf("create yt-dlp result file: %w", err)
+		return DownloadResult{}, fmt.Errorf("create yt-dlp result file: %w", err)
 	}
 	resultPath := resultFile.Name()
 	if err := resultFile.Close(); err != nil {
 		_ = os.Remove(resultPath)
-		return 0, 0, fmt.Errorf("close yt-dlp result file: %w", err)
+		return DownloadResult{}, fmt.Errorf("close yt-dlp result file: %w", err)
 	}
 	defer func() { _ = os.Remove(resultPath) }()
 	// -o with a sanitized template into the drop folder; --write-info-json so the
@@ -107,7 +119,7 @@ func (d *YtDlpDownloader) Download(ctx context.Context, src Source, dropDir stri
 		"--download-archive", archiveFile,
 		"--ffmpeg-location", d.ffmpegPath,
 		"-o", filepath.Join(absDropDir, "%(title)s [%(id)s].%(ext)s"),
-		"--print-to-file", "after_move:%(filepath)j", resultPath,
+		"--print-to-file", "after_move:%(id)s\t%(filepath)j", resultPath,
 		src.URL,
 	}
 	cmd := exec.Command(d.ytDlpPath, args...)
@@ -116,16 +128,16 @@ func (d *YtDlpDownloader) Download(ctx context.Context, src Source, dropDir stri
 	cmd.Stderr = &out
 	supervisor, err := proctree.Start(ctx, cmd)
 	if err != nil {
-		return 0, 0, fmt.Errorf("yt-dlp %s: %w: %s", src.URL, err, out.String())
+		return DownloadResult{}, fmt.Errorf("yt-dlp %s: %w: %s", src.URL, err, out.String())
 	}
 	err = supervisor.Wait()
 	if supervisor.Stopped() {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return 0, 0, fmt.Errorf("yt-dlp %s: %w: %s", src.URL, ctxErr, out.String())
+			return DownloadResult{}, fmt.Errorf("yt-dlp %s: %w: %s", src.URL, ctxErr, out.String())
 		}
 	}
 	if err != nil {
-		return 0, 0, fmt.Errorf("yt-dlp %s: %w: %s", src.URL, err, out.String())
+		return DownloadResult{}, fmt.Errorf("yt-dlp %s: %w: %s", src.URL, err, out.String())
 	}
 	// ⚠ **Mark what we just downloaded as OURS** — the held/filed fork's only signal (§10 V38c).
 	// A clip Loomarr fetched waits in Incoming for a human; one an operator dropped in is filed on
@@ -135,55 +147,229 @@ func (d *YtDlpDownloader) Download(ctx context.Context, src Source, dropDir stri
 	// (`--write-info-json`) and re-creating it would throw away the title and description that
 	// are the tagger's real text signals. `stampFetched` merges into what yt-dlp wrote.
 	//
-	// ⚠ Best-effort: a stamp that fails must not fail the download. The clip is on disk and
-	// catalogueable; the cost is that it files without review rather than being lost.
+	// A stamp failure is returned with the exact output as a held repair. Durable acquisition
+	// ownership prevents missing portable provenance from making the media intake-visible.
 	root, err := os.OpenRoot(absDropDir)
-	if err == nil {
-		defer func() { _ = root.Close() }()
-		stampFetched(root, ytDlpSidecars(root, resultPath), src.ID, src.AcquisitionID)
+	if err != nil {
+		return DownloadResult{}, fmt.Errorf("open yt-dlp output root: %w", err)
 	}
-	return 0, 0, nil
+	defer func() { _ = root.Close() }()
+	mediaPaths, err := ytDlpMediaPaths(root, resultPath)
+	if err != nil {
+		return DownloadResult{}, err
+	}
+	result := DownloadResult{Fetched: len(mediaPaths), Outputs: make([]Output, 0, len(mediaPaths))}
+	var provenanceErr error
+	var attemptArchive []string
+	if src.archiveAttempt {
+		attemptArchive, err = archiveLines(archiveFile)
+		if err != nil {
+			return DownloadResult{}, fmt.Errorf("read yt-dlp attempt archive: %w", err)
+		}
+	}
+	for _, reported := range mediaPaths {
+		relativeMedia := reported.path
+		mediaPath := filepath.Join(absDropDir, relativeMedia)
+		digest, size, clipHash, inspectErr := inspectOutput(mediaPath)
+		if inspectErr != nil {
+			provenanceErr = errors.Join(provenanceErr, inspectErr)
+			continue
+		}
+		relativeSidecar := strings.TrimSuffix(relativeMedia, filepath.Ext(relativeMedia)) + ".info.json"
+		sidecarFile, sidecarErr := root.OpenFile(relativeSidecar, os.O_RDWR, 0)
+		output := Output{
+			MediaPath: mediaPath, SidecarPath: filepath.Join(absDropDir, relativeSidecar),
+			SHA256: digest, Bytes: size, ClipHash: clipHash,
+		}
+		if sidecarErr != nil {
+			output.SidecarPath = ""
+			output.Repair = "missing or unreadable yt-dlp sidecar: " + sidecarErr.Error()
+			provenanceErr = errors.Join(provenanceErr, errors.New(output.Repair))
+		} else if stampErr := stampFetched(root, fetchedSidecar{path: relativeSidecar, file: sidecarFile}, src.ID, src.AcquisitionID); stampErr != nil {
+			output.Repair = stampErr.Error()
+			provenanceErr = errors.Join(provenanceErr, stampErr)
+		}
+		output.ArchiveID = reported.archiveID
+		if src.archiveAttempt {
+			entry, entryErr := exactArchiveEntry(attemptArchive, output.ArchiveID)
+			if entryErr != nil {
+				if output.Repair == "" {
+					output.Repair = entryErr.Error()
+				}
+				provenanceErr = errors.Join(provenanceErr, entryErr)
+			} else {
+				output.ArchiveEntry = entry
+			}
+		}
+		result.Outputs = append(result.Outputs, output)
+	}
+	return result, provenanceErr
 }
 
-// ytDlpSidecars reads yt-dlp's JSON-encoded after-move paths from the private result file for this
-// invocation. Ordinary stdout/stderr diagnostics are deliberately never considered provenance.
+// CommitArchive merges this attempt's yt-dlp archive into the shared publication archive. The
+// caller invokes it only after staged ownership is durable; a failed manifest write therefore
+// leaves the shared retry authority untouched while retaining the hidden bytes for repair.
+func (d *YtDlpDownloader) CommitArchive(dropDir, publicationDir string, outputs []Output) error {
+	_ = dropDir
+	if publicationDir == "" {
+		return nil
+	}
+	entries := make([]string, 0, len(outputs))
+	for _, output := range outputs {
+		if output.ArchiveEntry != "" {
+			entries = append(entries, output.ArchiveEntry)
+		}
+	}
+	return commitProviderArchive(publicationDir, entries)
+}
+
+func commitProviderArchive(publicationDir string, entries []string) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(publicationDir, 0o750); err != nil {
+		return fmt.Errorf("create yt-dlp publication archive directory: %w", err)
+	}
+	shared := filepath.Join(publicationDir, ".yt-dlp-archive.txt")
+	existing, err := archiveLines(shared)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read yt-dlp publication archive: %w", err)
+	}
+	known := make(map[string]struct{}, len(existing))
+	for _, line := range existing {
+		known[line] = struct{}{}
+	}
+	var additions []string
+	for _, line := range entries {
+		if err := filler.ValidateProviderArchiveEntry(line); err != nil {
+			return fmt.Errorf("validate yt-dlp archive entry: %w", err)
+		}
+		if _, already := known[line]; already {
+			continue
+		}
+		known[line] = struct{}{}
+		additions = append(additions, line)
+	}
+	if len(additions) == 0 {
+		return nil
+	}
+	file, err := os.OpenFile(shared, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
+	if err != nil {
+		return fmt.Errorf("open yt-dlp publication archive: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	for _, line := range additions {
+		if _, err := file.WriteString(line + "\n"); err != nil {
+			return fmt.Errorf("append yt-dlp publication archive: %w", err)
+		}
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync yt-dlp publication archive: %w", err)
+	}
+	return nil
+}
+
+func seedAttemptArchive(publicationDir, attempt string) error {
+	shared, err := os.ReadFile(filepath.Join(publicationDir, ".yt-dlp-archive.txt"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read yt-dlp publication archive: %w", err)
+	}
+	if err := os.WriteFile(attempt, shared, 0o640); err != nil {
+		return fmt.Errorf("seed yt-dlp attempt archive: %w", err)
+	}
+	return nil
+}
+
+func archiveLines(path string) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 4*1024), 1024*1024)
+	for scanner.Scan() {
+		if line := strings.TrimSpace(scanner.Text()); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines, scanner.Err()
+}
+
+func exactArchiveEntry(lines []string, archiveID string) (string, error) {
+	if strings.TrimSpace(archiveID) == "" || strings.ContainsAny(archiveID, " \t\r\n") {
+		return "", errors.New("yt-dlp output has no exact provider archive identity")
+	}
+	var match string
+	for _, line := range lines {
+		if filler.ValidateProviderArchiveEntry(line) != nil {
+			continue
+		}
+		fields := strings.Fields(line)
+		if fields[1] != archiveID {
+			continue
+		}
+		if match != "" && match != line {
+			return "", errors.New("yt-dlp output has ambiguous provider archive identity")
+		}
+		match = line
+	}
+	if match == "" {
+		return "", errors.New("yt-dlp output has no matching provider archive entry")
+	}
+	return match, nil
+}
+
+// ytDlpMediaPaths reads yt-dlp's output ID plus JSON-encoded after-move path from the private
+// result file for this invocation. Every record is the exact id<TAB>JSON-encoded absolute path
+// emitted by --print-to-file; ordinary diagnostics are never provenance.
 // A skipped retry writes no records. Candidates are opened through root, so their descriptor stays
 // bound to the file yt-dlp named even if its path changes before stamping.
-func ytDlpSidecars(root *os.Root, resultPath string) []fetchedSidecar {
+type ytDlpReportedMedia struct {
+	path      string
+	archiveID string
+}
+
+func ytDlpMediaPaths(root *os.Root, resultPath string) ([]ytDlpReportedMedia, error) {
 	file, err := os.Open(resultPath)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("open yt-dlp result file: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 
-	var sidecars []fetchedSidecar
+	var paths []ytDlpReportedMedia
 	seen := make(map[string]struct{})
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 4*1024), 1024*1024)
 	for scanner.Scan() {
+		line := scanner.Text()
+		archiveID, encodedMedia, ok := strings.Cut(line, "\t")
+		if !ok || strings.TrimSpace(archiveID) == "" || strings.ContainsAny(archiveID, " \t\r\n") {
+			return nil, errors.New("malformed yt-dlp result record")
+		}
 		var media string
-		if err := json.Unmarshal(scanner.Bytes(), &media); err != nil || media == "" {
+		if err := json.Unmarshal([]byte(encodedMedia), &media); err != nil || media == "" || !filepath.IsAbs(media) {
+			return nil, errors.New("malformed yt-dlp result record")
+		}
+		relativeMedia, err := filepath.Rel(root.Name(), media)
+		if err != nil || !withinDir(relativeMedia) {
 			continue
 		}
-		if !filepath.IsAbs(media) {
-			media = filepath.Join(root.Name(), media)
-		}
-		sidecar := strings.TrimSuffix(media, filepath.Ext(media)) + ".info.json"
-		relativeSidecar, err := filepath.Rel(root.Name(), sidecar)
-		if err != nil || !withinDir(relativeSidecar) {
+		if _, ok := seen[relativeMedia]; ok {
 			continue
 		}
-		if _, ok := seen[relativeSidecar]; ok {
+		info, err := root.Lstat(relativeMedia)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			continue
 		}
-		sidecarFile, err := root.OpenFile(relativeSidecar, os.O_RDWR, 0)
-		if err != nil {
-			continue
-		}
-		seen[relativeSidecar] = struct{}{}
-		sidecars = append(sidecars, fetchedSidecar{path: relativeSidecar, file: sidecarFile})
+		seen[relativeMedia] = struct{}{}
+		paths = append(paths, ytDlpReportedMedia{path: relativeMedia, archiveID: archiveID})
 	}
-	return sidecars
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read yt-dlp result file: %w", err)
+	}
+	return paths, nil
 }
 
 func withinDir(path string) bool {
@@ -200,52 +386,64 @@ type fetchedSidecar struct {
 // unrelated operator drop or a previous download as its own acquisition.
 //
 // Anything already stamped is left alone, so a re-run is cheap and idempotent.
-func stampFetched(root *os.Root, sidecars []fetchedSidecar, sourceID, acquisitionID string) {
-	for _, sidecar := range sidecars {
-		func() {
-			defer func() { _ = sidecar.file.Close() }()
-
-			fileInfo, err := sidecar.file.Stat()
-			if err != nil {
-				return
-			}
-			pathInfo, err := root.Lstat(sidecar.path)
-			if err != nil || pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() || !os.SameFile(fileInfo, pathInfo) {
-				return
-			}
-			if _, err := sidecar.file.Seek(0, io.SeekStart); err != nil {
-				return
-			}
-			raw, err := io.ReadAll(sidecar.file)
-			if err != nil {
-				return
-			}
-			var doc map[string]any
-			if err := json.Unmarshal(raw, &doc); err != nil {
-				// A sidecar we cannot read is left ALONE rather than replaced — it is yt-dlp's file,
-				// and overwriting something unparseable is the one move guaranteed to lose data.
-				return
-			}
-			if _, done := doc[filler.SidecarLoomarrKey()]; done {
-				return
-			}
-			doc[filler.SidecarLoomarrKey()] = filler.SidecarFetchedMarkForAcquisition(sourceID, acquisitionID)
-			out, err := json.MarshalIndent(doc, "", "  ")
-			if err != nil {
-				return
-			}
-			// ⚠ A failed write is swallowed rather than logged: this type carries no logger, and the
-			// consequence is bounded — the clip files without review instead of being lost. The
-			// Ingestor above it reports the download itself.
-			if err := sidecar.file.Truncate(0); err != nil {
-				return
-			}
-			if _, err := sidecar.file.Seek(0, io.SeekStart); err != nil {
-				return
-			}
-			_, _ = sidecar.file.Write(out) //nolint:gosec // metadata beside media the operator owns
-		}()
+func stampFetched(root *os.Root, sidecar fetchedSidecar, sourceID, acquisitionID string) error {
+	defer func() { _ = sidecar.file.Close() }()
+	fileInfo, err := sidecar.file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat yt-dlp sidecar: %w", err)
 	}
+	pathInfo, err := root.Lstat(sidecar.path)
+	if err != nil || pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() || !os.SameFile(fileInfo, pathInfo) {
+		return errors.New("yt-dlp sidecar was replaced or is not a regular file")
+	}
+	if _, err := sidecar.file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek yt-dlp sidecar: %w", err)
+	}
+	raw, err := io.ReadAll(sidecar.file)
+	if err != nil {
+		return fmt.Errorf("read yt-dlp sidecar: %w", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return fmt.Errorf("yt-dlp sidecar is not readable JSON: %w", err)
+	}
+	if _, done := doc[filler.SidecarLoomarrKey()]; done {
+		return nil
+	}
+	doc[filler.SidecarLoomarrKey()] = filler.SidecarFetchedMarkForAcquisition(sourceID, acquisitionID)
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode yt-dlp provenance: %w", err)
+	}
+	if err := sidecar.file.Truncate(0); err != nil {
+		return fmt.Errorf("truncate yt-dlp sidecar: %w", err)
+	}
+	if _, err := sidecar.file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek yt-dlp sidecar for write: %w", err)
+	}
+	if _, err := sidecar.file.Write(out); err != nil { //nolint:gosec // metadata beside media the operator owns
+		return fmt.Errorf("write yt-dlp provenance: %w", err)
+	}
+	if err := sidecar.file.Sync(); err != nil {
+		return fmt.Errorf("sync yt-dlp provenance: %w", err)
+	}
+	return nil
+}
+
+func inspectOutput(path string) (digest string, size int64, clipHash string, err error) {
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", 0, "", fmt.Errorf("downloaded output %s is not a regular file", path)
+	}
+	digest, size, err = filler.FileSHA256(path)
+	if err != nil {
+		return "", 0, "", err
+	}
+	clipHash, err = filler.ClipID(path)
+	if err != nil {
+		return "", 0, "", err
+	}
+	return digest, size, clipHash, nil
 }
 
 // ArchiveDownloader fetches an Archive.org item/collection via plain net/http
@@ -267,8 +465,9 @@ func NewArchiveDownloader(preferOriginal bool) *ArchiveDownloader {
 }
 
 // Download fetches an Archive.org source into dropDir (§10).
-func (d *ArchiveDownloader) Download(ctx context.Context, src Source, dropDir string) (int, int, error) {
-	return d.client.walk(withAcquisition(ctx, src.ID, src.AcquisitionID), src.URL, dropDir)
+func (d *ArchiveDownloader) Download(ctx context.Context, src Source, dropDir string) (DownloadResult, error) {
+	fetched, skipped, outputs, err := d.client.walk(withAcquisition(ctx, src.ID, src.AcquisitionID, src.PublicationDir), src.URL, dropDir)
+	return DownloadResult{Fetched: fetched, Skipped: skipped, Outputs: outputs}, err
 }
 
 var (

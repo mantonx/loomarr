@@ -61,3 +61,20 @@ func TestProjectReadinessPrioritisesTheNextOperatorAction(t *testing.T) {
 		})
 	}
 }
+
+func TestProjectReadinessOutstandingRepairsOutrankRecentSuccessfulHistory(t *testing.T) {
+	got := filler.ProjectReadiness(filler.ReadinessInput{
+		Fetch: filler.FetchStatus{Enabled: true},
+		Pool:  filler.PoolReport{Eligible: 1},
+		Runs:  []filler.AcquisitionRun{{Status: filler.AcquisitionSuccess}},
+		Repairs: filler.AcquisitionRepairSummary{
+			Count: 2, LatestReason: "latest retained repair",
+		},
+	})
+	if got.Next != filler.ReadinessRetryAcquisition || got.Count != 2 {
+		t.Fatalf("readiness = %+v, want retained repairs to be actionable", got)
+	}
+	if got.Repairs.Count != 2 || got.Repairs.LatestReason != "latest retained repair" {
+		t.Fatalf("repair summary = %+v", got.Repairs)
+	}
+}

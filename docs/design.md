@@ -6109,15 +6109,57 @@ must not break is narrower than "never write".** §10's existing rule is that Lo
 one the operator authored. **Loomarr may only ever create or update `*.info.json`**; the media
 files themselves stay byte-for-byte untouched.
 
-⚠ **The held/filed fork moves from the file's EXISTENCE to a FIELD inside it.** V38b decided
-"downloaded vs hand-dropped" by asking whether a sidecar existed — which stops working the moment
-Loomarr writes sidecars for hand-dropped clips too, because then everything has one. The download
-path now stamps **`"fetchedBy": "loomarr"`** and the fork reads that.
+⚠ **The sidecar's `"fetchedBy": "loomarr"` field is portable provenance, not admission
+authority (V65).** V38b decided "downloaded vs hand-dropped" from sidecar existence; V38c moved
+that inference to an explicit field. Both still fail open when a completed download loses, cannot
+write, or cannot parse its sidecar: the catalog can mistake Loomarr's bytes for an operator's
+decision and file them immediately. V65 therefore moves the held/filed authority to the durable
+acquisition manifest below. The sidecar continues to carry source and run identity when files move
+between installations, but its absence or corruption can never authorize playback.
 
-That is a better signal than the one it replaces, not merely a repair: **existence was inferred,
-a field is explicit**. An operator who copies a clip together with its sidecar gets the honest
-answer either way, and one who tidies sidecars away no longer flips a clip's lifecycle by
-accident.
+### Download manifests are the quarantine authority (V65)
+
+Every Loomarr acquisition publishes through one deep manifest boundary shared by the Archive and
+yt-dlp adapters. A downloader returns an exact bounded set of completed media outputs; it does not
+decide catalog ownership. For each output the manifest records the acquisition and registered-source
+identities, provider, source URL, media and sidecar paths, byte length, full SHA-256 digest,
+completion time, and lifecycle state. The application persists that set before making the files
+eligible for ordinary intake. Counts are a projection of these records, never a substitute for
+them.
+
+Downloaded bytes remain under a run-owned hidden staging directory until their manifest is durable.
+Publication records the intended watch-folder path before the rename, so recovery can distinguish
+"not published", "published but not acknowledged", and "consumed by intake" without sweeping or
+guessing. A manifest row is resolved by its exact path and digest; a symlink, path escape, size or
+digest substitution is a held repair condition, never a match. The row is retained after intake and
+binds the resulting clip hash, so a crash between moving the media, writing portable provenance,
+catalog sync, and pipeline enrolment cannot turn the next scan into an operator drop.
+
+The catalog's ownership question is therefore: **does durable acquisition state claim these exact
+bytes?** If yes, the clip is held until the normal semantic admission gate or an explicit operator
+decision releases it. Missing, malformed, replaced, truncated, symlinked, or unwritable sidecar
+state cannot weaken that answer. If durable state cannot yet prove the bytes, the run reports a
+bounded repair reason and the media remains quarantined; Loomarr never deletes it merely because
+publication or recovery failed.
+
+Operator drops preserve their existing deliberate policy. Intake never claims unmanifested files
+by scanning a directory, and a copied third-party sidecar cannot create a durable acquisition row.
+Pre-V65 downloads with only the old portable marker remain held as before; pre-V65 and manual files
+with neither signal remain honest legacy/operator content rather than being retroactively claimed.
+Startup recovery is idempotent: it validates each nonterminal manifest, completes a safe pending
+publication or reports the exact repair reason, and leaves terminal rows alone. Archive and yt-dlp
+use this same contract; provider-specific code ends at producing the bounded output set.
+
+Provider deduplication advances only after the exact output manifests are durable. A manifest
+retains the provider archive entry needed to replay that commit; startup recovery must make that
+entry durable before publishing the corresponding staged media. An archive failure retains the
+owned staged bytes and a bounded error. Recovery never treats a failed or missing archive commit
+as permission to publish, and a successful restart leaves later acquisition attempts deduplicated.
+Only entries bound to reported, persisted outputs may advance the shared provider archive.
+
+Recovery counts each manifest at most once per scan even when processing changes its update time.
+Outstanding repair counts and a bounded most-recent reason remain available to readiness
+independently of the recent-run history limit; newer successful runs do not hide unresolved repairs.
 
 ### Many folders, many libraries (V38c — reverses V37's singleton rule)
 

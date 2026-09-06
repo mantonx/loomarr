@@ -67,6 +67,15 @@ func ClipID(path string) (string, error) {
 		return "", fmt.Errorf("hash clip %s: empty file", path)
 	}
 
+	return ClipIDFromReaderAt(f, size)
+}
+
+// ClipIDFromReaderAt computes the same sparse identity for bytes that are not represented by an
+// OS path. Download adapters use it while media is still behind their injected storage boundary.
+func ClipIDFromReaderAt(r io.ReaderAt, size int64) (string, error) {
+	if size <= 0 {
+		return "", errors.New("hash clip: empty file")
+	}
 	h := sha256.New()
 	// Size FIRST and fixed-width, so it cannot be confused with content bytes. A decimal string
 	// would let a file whose head begins with digits shift the boundary between the two.
@@ -75,18 +84,37 @@ func ClipID(path string) (string, error) {
 	h.Write(sizeBuf[:])
 
 	// Head.
-	if err := hashSection(h, f, 0, hashWindow, size); err != nil {
-		return "", fmt.Errorf("hash clip %s: %w", path, err)
+	if err := hashSection(h, r, 0, hashWindow, size); err != nil {
+		return "", fmt.Errorf("hash clip head: %w", err)
 	}
 	// Tail. ⚠ Skipped when the file is smaller than one window: the head has already covered
 	// every byte, and re-hashing an overlapping region would make a small file's identity depend
 	// on how much of it happened to be read twice.
 	if size > hashWindow {
-		if err := hashSection(h, f, size-hashWindow, hashWindow, size); err != nil {
-			return "", fmt.Errorf("hash clip %s: %w", path, err)
+		if err := hashSection(h, r, size-hashWindow, hashWindow, size); err != nil {
+			return "", fmt.Errorf("hash clip tail: %w", err)
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// FileSHA256 returns the full-file identity used by acquisition manifests. Catalog scans keep
+// using ClipID's sparse identity; this stronger digest is paid only at acquisition boundaries.
+func FileSHA256(path string) (string, int64, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", 0, fmt.Errorf("open file for full digest %s: %w", path, err)
+	}
+	defer func() { _ = file.Close() }()
+	hash := sha256.New()
+	size, err := io.Copy(hash, file)
+	if err != nil {
+		return "", 0, fmt.Errorf("hash full file %s: %w", path, err)
+	}
+	if size <= 0 {
+		return "", 0, fmt.Errorf("hash full file %s: empty file", path)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), size, nil
 }
 
 // hashSection reads at most n bytes from offset into the hash.

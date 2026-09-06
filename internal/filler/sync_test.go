@@ -48,6 +48,23 @@ func (m *memStore) UpsertClip(_ context.Context, c filler.StoreClip) error {
 	m.clips[c.ID()] = c
 	return nil
 }
+
+type manifestAuthority struct {
+	artifact filler.AcquisitionArtifact
+	found    bool
+}
+
+func (m *manifestAuthority) AcquisitionArtifactForClip(_ context.Context, _, clipHash string) (filler.AcquisitionArtifact, bool, error) {
+	return m.artifact, m.found && clipHash == m.artifact.ClipHash, nil
+}
+
+func (m *manifestAuthority) UpsertAcquisitionArtifacts(_ context.Context, artifacts []filler.AcquisitionArtifact) error {
+	if len(artifacts) == 1 {
+		m.artifact = artifacts[0]
+		m.found = true
+	}
+	return nil
+}
 func (m *memStore) GetClip(_ context.Context, id string) (filler.StoreClip, bool, error) {
 	c, ok := m.clips[id]
 	return c, ok, nil
@@ -318,6 +335,104 @@ func TestSync_HoldsDownloadedClipsAndFilesHandCopiedOnes(t *testing.T) {
 	if copied.Held {
 		t.Error("a HAND-COPIED clip (no sidecar) was held — a file the operator placed themselves " +
 			"would sit invisible until approved")
+	}
+}
+
+func TestSync_DurableManifestHoldsAndRepairsDownloadedClipWithoutSidecar(t *testing.T) {
+	dir := t.TempDir()
+	temporary := filepath.Join(t.TempDir(), "download.mp4")
+	if err := os.WriteFile(temporary, []byte("downloaded video bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clipHash, err := filler.ClipID(temporary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, err := filler.ClipPath(dir, clipHash, ".mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(media), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(temporary, media); err != nil {
+		t.Fatal(err)
+	}
+	digest, size, err := filler.FileSHA256(media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(dir, media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0).UTC()
+	authority := &manifestAuthority{found: true, artifact: filler.AcquisitionArtifact{
+		ID: "artifact-1", AcquisitionID: "acq-1", SourceID: "youtube:classic",
+		Provider: "youtube", SourceURL: "https://youtube.com/watch?v=one",
+		StagingPath: ".loomarr-acquisitions/acq-1/download.mp4", MediaPath: "download.mp4",
+		SidecarPath: "download.info.json", MediaSHA256: digest, MediaBytes: size,
+		ClipHash: clipHash, State: filler.ArtifactPublished, CompletedAt: now, UpdatedAt: now,
+	}}
+	source := &fakeSource{clips: []filler.RawClip{
+		raw(clipHash, "Downloaded ad", filler.Commercial, 30_000, 0),
+	}}
+	source.clips[0].Path = filepath.ToSlash(relative)
+	st := newMemStore()
+	syncer := filler.NewSyncer(source, st, testLayout(dir), func() time.Time { return now }, discardLog()).
+		WithAcquisitionAuthority(authority)
+
+	if _, err := syncer.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	clip, ok := st.clips[clipHash]
+	if !ok || !clip.Held || clip.Source != "youtube:classic" {
+		t.Fatalf("manifested clip = %+v, %v; want held and source-attributed", clip, ok)
+	}
+	tags, ok := filler.ReadSidecarTags(media)
+	if !ok || tags.AcquisitionID != "acq-1" || tags.SourceID != "youtube:classic" || !filler.SidecarFetchedByUs(media) {
+		t.Fatalf("repaired portable provenance = %+v, %v", tags, ok)
+	}
+	if authority.artifact.State != filler.ArtifactConsumed || authority.artifact.MediaPath != filepath.ToSlash(relative) {
+		t.Fatalf("consumed manifest = %+v", authority.artifact)
+	}
+}
+
+func TestSync_RefusesManifestDigestSubstitution(t *testing.T) {
+	dir := t.TempDir()
+	media := filepath.Join(dir, strings.Repeat("a", 64)+".mp4")
+	if err := os.WriteFile(media, []byte("substituted bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clipHash, err := filler.ClipID(media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, size, err := filler.FileSHA256(media)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0).UTC()
+	authority := &manifestAuthority{found: true, artifact: filler.AcquisitionArtifact{
+		ID: "artifact-1", AcquisitionID: "acq-1", Provider: "youtube",
+		SourceURL: "https://youtube.com/watch?v=one", MediaPath: filepath.Base(media),
+		MediaSHA256: strings.Repeat("f", 64), MediaBytes: size, ClipHash: clipHash,
+		State: filler.ArtifactPublished, CompletedAt: now, UpdatedAt: now,
+	}}
+	source := &fakeSource{clips: []filler.RawClip{raw(clipHash, "Substituted", filler.Commercial, 30_000, 0)}}
+	source.clips[0].Path = filepath.Base(media)
+	st := newMemStore()
+	syncer := filler.NewSyncer(source, st, testLayout(dir), func() time.Time { return now }, discardLog()).
+		WithAcquisitionAuthority(authority)
+
+	if _, err := syncer.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.clips[clipHash]; ok {
+		t.Fatal("digest-substituted acquisition became catalog content")
+	}
+	if authority.artifact.State != filler.ArtifactRepair || authority.artifact.RepairReason == "" {
+		t.Fatalf("artifact = %+v, want durable repair reason", authority.artifact)
 	}
 }
 

@@ -548,11 +548,23 @@ type FillerPullStore interface {
 // source definition or approval decision.
 type FillerAcquisitionStore interface {
 	UpsertAcquisitionRun(ctx context.Context, run filler.AcquisitionRun) error
+	// UpsertAcquisitionArtifacts atomically records the exact downloaded-byte manifest before
+	// publication makes any artifact eligible for intake.
+	UpsertAcquisitionArtifacts(ctx context.Context, artifacts []filler.AcquisitionArtifact) error
+	// AcquisitionArtifactForClip is the held/filed authority for a newly discovered clip.
+	AcquisitionArtifactForClip(ctx context.Context, mediaPath, clipHash string) (filler.AcquisitionArtifact, bool, error)
+	// ListRecoverableAcquisitionArtifacts exposes bounded staged/published/repair work.
+	ListRecoverableAcquisitionArtifacts(ctx context.Context, limit int) ([]filler.AcquisitionArtifact, error)
+	// ListRecoverableAcquisitionArtifactsAfter continues a stable bounded recovery scan.
+	ListRecoverableAcquisitionArtifactsAfter(ctx context.Context, after filler.AcquisitionArtifactCursor, limit int) ([]filler.AcquisitionArtifact, error)
 	// RecoverInterruptedAcquisitionRuns marks work orphaned by the previous process as failed.
 	// The beta is single-replica; startup is therefore the exact ownership boundary.
 	RecoverInterruptedAcquisitionRuns(ctx context.Context, at time.Time) (int, error)
 	GetAcquisitionRun(ctx context.Context, id string, at time.Time) (filler.AcquisitionRun, error)
 	ListAcquisitionRuns(ctx context.Context, limit int, at time.Time) ([]filler.AcquisitionRun, error)
+	// AcquisitionRepairSummary reports all currently unresolved artifact repairs without loading
+	// the bounded acquisition history page.
+	AcquisitionRepairSummary(ctx context.Context) (filler.AcquisitionRepairSummary, error)
 }
 
 // InteractiveOperationStore is the reconnect truth for request-launched asynchronous work. It
