@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -17,25 +16,8 @@ func TestCallReservesExactRequestBeforeHTTP(t *testing.T) {
 	t.Parallel()
 	var reservedHash string
 	var requestWire structuredRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-		body, err := io.ReadAll(request.Body)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		if reservedHash == "" || reservedHash != hashBytes(body) {
-			t.Errorf("request was not durably reserved before HTTP: reserved=%q actual=%q", reservedHash, hashBytes(body))
-		}
-		if err := json.Unmarshal(body, &requestWire); err != nil {
-			t.Error(err)
-			return
-		}
-		if request.Header.Get("Authorization") != "Bearer secret" || request.Header.Get("X-OpenRouter-Metadata") != "enabled" || request.Header.Get("X-OpenRouter-Title") != "contract test" {
-			t.Errorf("request headers=%v", request.Header)
-		}
-		_, _ = w.Write(validResponse())
-	}))
-	defer server.Close()
+	transport := httpfixture.NewScriptedTransport(httpfixture.Step{Response: response(http.StatusOK, validResponse())})
+	client := &http.Client{Transport: transport}
 
 	config := validConfig(func(requestSHA256 string) error {
 		reservedHash = requestSHA256
@@ -45,9 +27,23 @@ func TestCallReservesExactRequestBeforeHTTP(t *testing.T) {
 	config.Audios = []Audio{{Format: "wav", Base64: "YXVkaW8="}}
 	config.Videos = []Video{{MIMEType: "video/mp4", Base64: "dmlkZW8="}}
 	config.DisableReasoning = true
-	result, err := Call(t.Context(), server.Client(), server.URL, config)
+	result, err := Call(t.Context(), client, "https://openrouter.test/api/v1", config)
 	if err != nil {
 		t.Fatal(err)
+	}
+	requests := transport.Requests()
+	if len(requests) != 1 || requests[0].Method != http.MethodPost || requests[0].URL != "https://openrouter.test/api/v1/chat/completions" {
+		t.Fatalf("requests=%+v", requests)
+	}
+	request := requests[0]
+	if reservedHash == "" || reservedHash != hashBytes(request.Body) {
+		t.Errorf("request was not durably reserved before HTTP: reserved=%q actual=%q", reservedHash, hashBytes(request.Body))
+	}
+	if err := json.Unmarshal(request.Body, &requestWire); err != nil {
+		t.Fatal(err)
+	}
+	if request.Header.Get("Authorization") != "Bearer secret" || request.Header.Get("X-OpenRouter-Metadata") != "enabled" || request.Header.Get("X-OpenRouter-Title") != "contract test" {
+		t.Errorf("request headers=%v", request.Header)
 	}
 	parts := requestWire.Messages[1].Content
 	if result.RequestSHA256 != reservedHash || result.ResponseSHA256 != hashBytes(result.RawResponse) || !result.ChargeKnown || result.ChargedNanoUSD != 1_000_000 || result.ChargedAmountUSD != "0.001" || result.StructuredOutput != `{"ok":true}` || result.GenerationID != "generation" || result.PromptTokens != 10 || result.CompletionTokens != 2 {
@@ -98,13 +94,8 @@ func TestCallRejectsInvalidVideoBeforeReservation(t *testing.T) {
 func TestCallRetainsNonOKResponseAuthority(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{"error":"temporarily unavailable"}`)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write(raw)
-	}))
-	defer server.Close()
-
-	result, err := Call(t.Context(), server.Client(), server.URL, validConfig(func(string) error { return nil }))
+	client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: response(http.StatusServiceUnavailable, raw)})}
+	result, err := Call(t.Context(), client, "https://openrouter.test/api/v1", validConfig(func(string) error { return nil }))
 	var statusErr *StatusError
 	if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusServiceUnavailable || result.ResponseSHA256 != hashBytes(raw) || !bytes.Equal(result.RawResponse, raw) || result.ChargeKnown {
 		t.Fatalf("result=%+v err=%v", result, err)
@@ -141,11 +132,8 @@ func TestCallFailsClosedAfterSettlement(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = io.WriteString(w, test.body)
-			}))
-			defer server.Close()
-			result, err := Call(t.Context(), server.Client(), server.URL, validConfig(func(string) error { return nil }))
+			client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: response(http.StatusOK, []byte(test.body))})}
+			result, err := Call(t.Context(), client, "https://openrouter.test/api/v1", validConfig(func(string) error { return nil }))
 			if err == nil || !strings.Contains(err.Error(), test.want) || result.ResponseSHA256 == "" {
 				t.Fatalf("result=%+v err=%v", result, err)
 			}
@@ -156,16 +144,58 @@ func TestCallFailsClosedAfterSettlement(t *testing.T) {
 func TestCallRejectsOversizedResponseAfterReservation(t *testing.T) {
 	t.Parallel()
 	reserved := false
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(bytes.Repeat([]byte("x"), maxResponseBytes+1))
-	}))
-	defer server.Close()
-	result, err := Call(t.Context(), server.Client(), server.URL, validConfig(func(string) error {
+	client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: response(http.StatusOK, bytes.Repeat([]byte("x"), maxResponseBytes+1))})}
+	result, err := Call(t.Context(), client, "https://openrouter.test/api/v1", validConfig(func(string) error {
 		reserved = true
 		return nil
 	}))
 	if err == nil || !strings.Contains(err.Error(), "byte ceiling") || !reserved || result.RequestSHA256 == "" || result.ResponseSHA256 != "" || len(result.RawResponse) != 0 {
 		t.Fatalf("result=%+v err=%v reserved=%t", result, err, reserved)
+	}
+}
+
+func TestCallDoesNotExposeProviderControlledErrorDetail(t *testing.T) {
+	t.Parallel()
+	const bodySecret = "provider-body-private-input"
+	const choiceSecret = "choice-message-private-input"
+	const modelSecret = "provider-model-private-route"
+	const metadataSecret = "metadata-private-route"
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantStatus int
+		rawSecrets []string
+	}{
+		{name: "non-ok body", statusCode: http.StatusServiceUnavailable, body: `{"error":"` + bodySecret + `"}`, wantStatus: http.StatusServiceUnavailable, rawSecrets: []string{bodySecret}},
+		{name: "top-level error", statusCode: http.StatusOK, body: `{"error":{"message":"` + bodySecret + `"}}`, rawSecrets: []string{bodySecret}},
+		{name: "nested choice and metadata", statusCode: http.StatusOK, body: `{"id":"generation","model":"vendor/model","choices":[{"error":{"code":429,"message":"` + choiceSecret + `"},"message":{"content":"","reasoning":""}}],"usage":{"cost":0},"openrouter_metadata":{"attempt":1,"attempts":[{"provider":"` + metadataSecret + `","model":"vendor/model-2026","status":200}],"endpoints":{"available":[{"provider":"` + metadataSecret + `","model":"vendor/model-2026","selected":true}]}}}`, wantStatus: http.StatusTooManyRequests, rawSecrets: []string{choiceSecret, metadataSecret}},
+		{name: "model and metadata binding mismatch", statusCode: http.StatusOK, body: `{"id":"generation","model":"` + modelSecret + `","choices":[{"message":{"content":"{}","reasoning":""}}],"usage":{"cost":0},"openrouter_metadata":{"attempt":1,"attempts":[{"provider":"` + metadataSecret + `","model":"` + modelSecret + `","status":200}],"endpoints":{"available":[{"provider":"` + metadataSecret + `","model":"` + modelSecret + `","selected":true}]}}}`, rawSecrets: []string{modelSecret, metadataSecret}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &http.Client{Transport: httpfixture.NewScriptedTransport(httpfixture.Step{Response: response(test.statusCode, []byte(test.body))})}
+			result, err := Call(t.Context(), client, "https://openrouter.test/api/v1", validConfig(func(string) error { return nil }))
+			if err == nil {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+			for _, secret := range test.rawSecrets {
+				if !bytes.Contains(result.RawResponse, []byte(secret)) {
+					t.Fatalf("private evidence did not retain %q: result=%+v", secret, result)
+				}
+			}
+			for _, secret := range []string{bodySecret, choiceSecret, modelSecret, metadataSecret} {
+				if strings.Contains(err.Error(), secret) {
+					t.Fatalf("error leaked %q: %v", secret, err)
+				}
+			}
+			if test.wantStatus != 0 {
+				var statusErr *StatusError
+				if !errors.As(err, &statusErr) || statusErr.StatusCode != test.wantStatus || statusErr.Detail != "provider request failed" {
+					t.Fatalf("status error=%+v err=%v", statusErr, err)
+				}
+			}
+		})
 	}
 }
 
@@ -202,6 +232,10 @@ func validConfig(reserve func(string) error) Config {
 
 func validResponse() []byte {
 	return []byte(`{"id":"generation","model":"vendor/model","choices":[{"message":{"content":"{\"ok\":true}","reasoning":""}}],"usage":{"prompt_tokens":10,"completion_tokens":2,"cost":0.001},"openrouter_metadata":{"attempt":1,"attempts":[{"provider":"Pinned Provider","model":"vendor/model-2026","status":200}],"endpoints":{"available":[{"provider":"Pinned Provider","model":"vendor/model-2026","selected":true}]}}}`)
+}
+
+func response(statusCode int, body []byte) *http.Response {
+	return &http.Response{StatusCode: statusCode, Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header)}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

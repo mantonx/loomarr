@@ -4,20 +4,19 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/loomarr/loomarr/internal/testkit/httpfixture"
 )
 
 func TestOpenRouterAudioAdjudicatorSendsPrivatePolicyAndReturnsOpaquePresence(t *testing.T) {
 	t.Parallel()
 	secret := "private restricted phrase"
 	policy := audioPolicyFixture(secret)
-	var requestBody []byte
-	server := audioResponseServer(t, `{"decision":"detected","audibility":"clear","matchedRuleIds":["rule-0123456789abcdef01234567"]}`, &requestBody)
-	defer server.Close()
+	transport := httpfixture.NewScriptedTransport(httpfixture.Step{Response: openRouterResponse(t, `{"decision":"detected","audibility":"clear","matchedRuleIds":["rule-0123456789abcdef01234567"]}`)})
 	reservedCandidate, reservedRequest := "", ""
-	config := validOpenRouterAudioConfig(server, policy)
+	config := validOpenRouterAudioConfig(&http.Client{Transport: transport}, policy)
 	config.Reserve = func(candidateID, requestSHA256 string) error {
 		reservedCandidate, reservedRequest = candidateID, requestSHA256
 		return nil
@@ -31,7 +30,11 @@ func TestOpenRouterAudioAdjudicatorSendsPrivatePolicyAndReturnsOpaquePresence(t 
 	if attempt.Assessment.State != AudioDetected || attempt.Assessment.CandidateID != "candidate-one" || len(attempt.MatchedRuleIDs) != 1 || attempt.MatchedRuleIDs[0] != policy.Rules[0].ID || reservedCandidate != "candidate-one" || reservedRequest == "" || reservedRequest != attempt.Transport.RequestSHA256 || !attempt.Transport.ChargeKnown {
 		t.Fatalf("attempt=%+v reservation=%q/%q", attempt, reservedCandidate, reservedRequest)
 	}
-	if !strings.Contains(string(requestBody), secret) || !strings.Contains(string(requestBody), `"type":"input_audio"`) || !strings.Contains(string(requestBody), `"format":"wav"`) {
+	requests := transport.Requests()
+	if len(requests) != 1 {
+		t.Fatalf("requests=%+v", requests)
+	}
+	if !strings.Contains(string(requests[0].Body), secret) || !strings.Contains(string(requests[0].Body), `"type":"input_audio"`) || !strings.Contains(string(requests[0].Body), `"format":"wav"`) {
 		t.Fatal("request omitted the private policy or native WAV input")
 	}
 	public, err := json.Marshal(attempt.Assessment)
@@ -76,9 +79,8 @@ func TestValidateAudioModelOutputUsesAsymmetricPolicySemantics(t *testing.T) {
 func TestOpenRouterAudioAdjudicatorRejectsMalformedOutputAndAuthorityBeforeUse(t *testing.T) {
 	t.Parallel()
 	policy := audioPolicyFixture("private restricted phrase")
-	server := audioResponseServer(t, `{"decision":"absent","audibility":"clear","matchedRuleIds":[],"extra":true}`, nil)
-	defer server.Close()
-	config := validOpenRouterAudioConfig(server, policy)
+	transport := httpfixture.NewScriptedTransport(httpfixture.Step{Response: openRouterResponse(t, `{"decision":"absent","audibility":"clear","matchedRuleIds":[],"extra":true}`)})
+	config := validOpenRouterAudioConfig(&http.Client{Transport: transport}, policy)
 	adjudicator := &openRouterAudioAdjudicator{config: config}
 	attempt, err := adjudicator.adjudicate(t.Context(), Candidate{ID: "candidate-one", StartMS: 100, EndMS: 800}, validCandidateWAV())
 	if err == nil || attempt.Assessment.State != AudioInvalidResponse || attempt.Transport.ResponseSHA256 == "" {
@@ -104,9 +106,9 @@ func audioPolicyFixture(secret string) Policy {
 	return policy
 }
 
-func validOpenRouterAudioConfig(server *httptest.Server, policy Policy) openRouterAudioConfig {
+func validOpenRouterAudioConfig(client *http.Client, policy Policy) openRouterAudioConfig {
 	return openRouterAudioConfig{
-		Client: server.Client(), BaseURL: server.URL, APIKey: "secret-key",
+		Client: client, BaseURL: "https://openrouter.test/api/v1", APIKey: "secret-key",
 		Model: "vendor/model", ResolvedModel: "vendor/model-2026",
 		UpstreamProvider: "Pinned Provider", ProviderSlug: "pinned/provider",
 		CapabilitySHA256: strings.Repeat("a", 64), Policy: policy,
@@ -116,31 +118,22 @@ func validOpenRouterAudioConfig(server *httptest.Server, policy Policy) openRout
 	}
 }
 
-func audioResponseServer(t *testing.T, output string, requestBody *[]byte) *httptest.Server {
+func openRouterResponse(t *testing.T, output string) *http.Response {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		raw, err := io.ReadAll(request.Body)
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		if requestBody != nil {
-			*requestBody = raw
-		}
-		response := map[string]any{
-			"id": "generation", "model": "vendor/model",
-			"choices": []any{map[string]any{"message": map[string]any{"content": output, "reasoning": ""}}},
-			"usage":   map[string]any{"prompt_tokens": 10, "completion_tokens": 2, "cost": 0.001},
-			"openrouter_metadata": map[string]any{
-				"attempt":   1,
-				"attempts":  []any{map[string]any{"provider": "Pinned Provider", "model": "vendor/model-2026", "status": 200}},
-				"endpoints": map[string]any{"available": []any{map[string]any{"provider": "Pinned Provider", "model": "vendor/model-2026", "selected": true}}},
-			},
-		}
-		if err := json.NewEncoder(writer).Encode(response); err != nil {
-			t.Error(err)
-		}
-	}))
+	raw, err := json.Marshal(map[string]any{
+		"id": "generation", "model": "vendor/model",
+		"choices": []any{map[string]any{"message": map[string]any{"content": output, "reasoning": ""}}},
+		"usage":   map[string]any{"prompt_tokens": 10, "completion_tokens": 2, "cost": 0.001},
+		"openrouter_metadata": map[string]any{
+			"attempt":   1,
+			"attempts":  []any{map[string]any{"provider": "Pinned Provider", "model": "vendor/model-2026", "status": 200}},
+			"endpoints": map[string]any{"available": []any{map[string]any{"provider": "Pinned Provider", "model": "vendor/model-2026", "selected": true}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(string(raw))), Header: make(http.Header)}
 }
 
 func validCandidateWAV() []byte {

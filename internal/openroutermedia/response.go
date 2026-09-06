@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/loomarr/loomarr/internal/fillereval"
 )
@@ -53,14 +52,19 @@ type structuredWireError struct {
 	Message string `json:"message"`
 }
 
-// StatusError retains a bounded non-success provider response.
+// StatusError classifies a non-success provider response without retaining
+// provider-controlled detail in public error state.
 type StatusError struct {
 	StatusCode int
 	Detail     string
 }
 
 func (e *StatusError) Error() string {
-	return fmt.Sprintf("OpenRouter structured call returned status %d: %s", e.StatusCode, e.Detail)
+	return fmt.Sprintf("OpenRouter structured call returned status %d", e.StatusCode)
+}
+
+func newStatusError(statusCode int) *StatusError {
+	return &StatusError{StatusCode: statusCode, Detail: "provider request failed"}
 }
 
 func settleResponse(result Result, raw []byte, config Config) (Result, error) {
@@ -73,7 +77,7 @@ func settleResponse(result Result, raw []byte, config Config) (Result, error) {
 	result.CompletionTokens = wire.Usage.CompletionTokens
 	result.ChargedAmountUSD = wire.Usage.Cost.String()
 	if wire.Error != nil {
-		return result, fmt.Errorf("OpenRouter structured call error: %s", strings.TrimSpace(wire.Error.Message))
+		return result, fmt.Errorf("OpenRouter structured response included a provider error")
 	}
 	charged, err := fillereval.USDToNanoCeil(result.ChargedAmountUSD)
 	if err != nil || charged < 0 || charged > config.MaxChargeNanoUSD {
@@ -86,10 +90,10 @@ func settleResponse(result Result, raw []byte, config Config) (Result, error) {
 		if status < 100 || status > 599 {
 			status = http.StatusBadGateway
 		}
-		return result, &StatusError{StatusCode: status, Detail: strings.TrimSpace(wireError.Message)}
+		return result, newStatusError(status)
 	}
 	if wire.ID == "" || wire.Model != config.Model || len(wire.Choices) != 1 || wire.Metadata.Attempt != 1 || !validAttemptLedger(wire, config) || !selectedEndpoint(wire, config) {
-		return result, fmt.Errorf("OpenRouter structured response does not bind the requested one-attempt route (generation=%t model=%q choices=%d attempt=%d attempts=%s selected=%s)", wire.ID != "", wire.Model, len(wire.Choices), wire.Metadata.Attempt, attemptSummary(wire), endpointSummary(wire))
+		return result, fmt.Errorf("OpenRouter structured response does not bind the requested one-attempt route")
 	}
 	result.StructuredOutput = wire.Choices[0].Message.Content
 	result.ReasoningBytes = len(wire.Choices[0].Message.Reasoning)
@@ -132,32 +136,6 @@ func selectedEndpoint(wire structuredResponse, config Config) bool {
 		}
 	}
 	return selected == 1
-}
-
-func attemptSummary(wire structuredResponse) string {
-	parts := make([]string, 0, len(wire.Metadata.Attempts))
-	for _, attempt := range wire.Metadata.Attempts {
-		parts = append(parts, fmt.Sprintf("%q/%q/%d", attempt.Provider, attempt.Model, attempt.Status))
-	}
-	return "[" + strings.Join(parts, ",") + "]"
-}
-
-func endpointSummary(wire structuredResponse) string {
-	parts := make([]string, 0, len(wire.Metadata.Endpoints.Available))
-	for _, endpoint := range wire.Metadata.Endpoints.Available {
-		if endpoint.Selected {
-			parts = append(parts, fmt.Sprintf("%q/%q", endpoint.Provider, endpoint.Model))
-		}
-	}
-	return "[" + strings.Join(parts, ",") + "]"
-}
-
-func boundedMessage(raw []byte) string {
-	message := strings.TrimSpace(string(raw))
-	if len(message) > 512 {
-		return message[:512]
-	}
-	return message
 }
 
 func hashBytes(data []byte) string {

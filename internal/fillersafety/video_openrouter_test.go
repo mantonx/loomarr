@@ -2,18 +2,18 @@ package fillersafety
 
 import (
 	"encoding/json"
-	"net/http/httptest"
+	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/loomarr/loomarr/internal/testkit/httpfixture"
 )
 
 func TestOpenRouterVideoCorroboratorSendsCompleteSourceAndReturnsNoSignal(t *testing.T) {
 	t.Parallel()
-	var requestBody []byte
-	server := audioResponseServer(t, `{"visualAssessment":"completed","spokenLanguageAssessment":"completed","flags":[]}`, &requestBody)
-	defer server.Close()
+	transport := httpfixture.NewScriptedTransport(httpfixture.Step{Response: openRouterResponse(t, `{"visualAssessment":"completed","spokenLanguageAssessment":"completed","flags":[]}`)})
 	reservedAuthority, reservedRequest := "", ""
-	config := validOpenRouterVideoConfig(server)
+	config := validOpenRouterVideoConfig(&http.Client{Transport: transport})
 	config.Reserve = func(authoritySHA256, requestSHA256 string) error {
 		reservedAuthority, reservedRequest = authoritySHA256, requestSHA256
 		return nil
@@ -26,16 +26,19 @@ func TestOpenRouterVideoCorroboratorSendsCompleteSourceAndReturnsNoSignal(t *tes
 	if attempt.State != VideoNoSignal || len(attempt.Flags) != 0 || attempt.Flags == nil || reservedAuthority != plan.AuthoritySHA256 || reservedRequest == "" || reservedRequest != attempt.Transport.RequestSHA256 || !attempt.Transport.ChargeKnown {
 		t.Fatalf("attempt=%+v reservation=%q/%q", attempt, reservedAuthority, reservedRequest)
 	}
-	if !strings.Contains(string(requestBody), `"type":"video_url"`) || !strings.Contains(string(requestBody), `"data:video/mp4;base64,`) || !strings.Contains(string(requestBody), `Duration milliseconds: 30000`) {
+	requests := transport.Requests()
+	if len(requests) != 1 {
+		t.Fatalf("requests=%+v", requests)
+	}
+	if !strings.Contains(string(requests[0].Body), `"type":"video_url"`) || !strings.Contains(string(requests[0].Body), `"data:video/mp4;base64,`) || !strings.Contains(string(requests[0].Body), `Duration milliseconds: 30000`) {
 		t.Fatal("request omitted complete video or duration authority")
 	}
 }
 
 func TestOpenRouterVideoCorroboratorRetainsUnprojectablePresenceAsHold(t *testing.T) {
 	t.Parallel()
-	server := audioResponseServer(t, `{"visualAssessment":"completed","spokenLanguageAssessment":"completed","flags":[{"kind":"explicit_nudity","startMs":900,"endMs":800,"modality":"video"}]}`, nil)
-	defer server.Close()
-	config := validOpenRouterVideoConfig(server)
+	transport := httpfixture.NewScriptedTransport(httpfixture.Step{Response: openRouterResponse(t, `{"visualAssessment":"completed","spokenLanguageAssessment":"completed","flags":[{"kind":"explicit_nudity","startMs":900,"endMs":800,"modality":"video"}]}`)})
+	config := validOpenRouterVideoConfig(&http.Client{Transport: transport})
 	attempt, err := (&openRouterVideoCorroborator{config: config}).corroborate(t.Context(), proposalTestPlan(t))
 	if err == nil || attempt.State != VideoProhibitedUnprojectable || len(attempt.Flags) != 1 || attempt.Transport.ResponseSHA256 == "" {
 		t.Fatalf("attempt=%+v err=%v", attempt, err)
@@ -78,9 +81,8 @@ func TestValidateVideoModelOutputPreservesPresenceAndCoverageSemantics(t *testin
 
 func TestOpenRouterVideoCorroboratorRejectsStaleAuthorityBeforeReservation(t *testing.T) {
 	t.Parallel()
-	server := audioResponseServer(t, `{"visualAssessment":"completed","spokenLanguageAssessment":"completed","flags":[]}`, nil)
-	defer server.Close()
-	config := validOpenRouterVideoConfig(server)
+	transport := httpfixture.NewScriptedTransport(httpfixture.Step{Response: openRouterResponse(t, `{"visualAssessment":"completed","spokenLanguageAssessment":"completed","flags":[]}`)})
+	config := validOpenRouterVideoConfig(&http.Client{Transport: transport})
 	config.PromptSHA256 = strings.Repeat("f", 64)
 	called := false
 	config.Reserve = func(string, string) error { called = true; return nil }
@@ -90,9 +92,9 @@ func TestOpenRouterVideoCorroboratorRejectsStaleAuthorityBeforeReservation(t *te
 	}
 }
 
-func validOpenRouterVideoConfig(server *httptest.Server) openRouterVideoConfig {
+func validOpenRouterVideoConfig(client *http.Client) openRouterVideoConfig {
 	return openRouterVideoConfig{
-		Client: server.Client(), BaseURL: server.URL, APIKey: "secret-key",
+		Client: client, BaseURL: "https://openrouter.test/api/v1", APIKey: "secret-key",
 		Model: "vendor/model", ResolvedModel: "vendor/model-2026",
 		UpstreamProvider: "Pinned Provider", ProviderSlug: "pinned/provider",
 		CapabilitySHA256: strings.Repeat("b", 64), PromptSHA256: videoPromptSHA256(),

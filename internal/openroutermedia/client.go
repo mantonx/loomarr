@@ -98,7 +98,7 @@ func Call(ctx context.Context, client *http.Client, baseURL string, config Confi
 	result.ResponseSHA256 = hashBytes(raw)
 	result.RawResponse = bytes.Clone(raw)
 	if response.StatusCode != http.StatusOK {
-		return result, &StatusError{StatusCode: response.StatusCode, Detail: boundedMessage(raw)}
+		return result, newStatusError(response.StatusCode)
 	}
 	return settleResponse(result, raw, config)
 }
