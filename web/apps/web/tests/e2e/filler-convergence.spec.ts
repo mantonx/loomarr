@@ -308,7 +308,7 @@ test("a trusted source converges into a channel break without routine approval",
   await expect(fillerNav.getByRole("link", { name: "Incoming" })).toBeVisible();
   await expect(fillerNav.getByRole("link", { name: /Library/ })).toBeVisible();
   await expect(fillerNav.getByRole("link", { name: "Manage" })).toBeVisible();
-  await expect(fillerNav.getByRole("link", { name: "Sources" })).toHaveCount(0);
+  await expect(fillerNav.getByRole("link", { name: "Sources" })).toBeVisible();
 
   await page.goto("/filler/manage");
   await expect(page.getByText("Would admit (shadow)")).toBeVisible();
