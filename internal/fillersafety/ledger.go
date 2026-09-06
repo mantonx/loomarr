@@ -430,9 +430,9 @@ func boundedLedgerID(value string) bool {
 	if value == "" || len(value) > maxLedgerIDBytes || !utf8.ValidString(value) {
 		return false
 	}
-	return !strings.ContainsFunc(value, func(char rune) bool {
-		return !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '_' || char == '-')
-	})
+	return strings.IndexFunc(value, func(char rune) bool {
+		return (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '_' && char != '-'
+	}) == -1
 }
 
 // boundedPublicIdentity bounds public provider/model labels without treating
