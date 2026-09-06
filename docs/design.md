@@ -6150,6 +6150,17 @@ Startup recovery is idempotent: it validates each nonterminal manifest, complete
 publication or reports the exact repair reason, and leaves terminal rows alone. Archive and yt-dlp
 use this same contract; provider-specific code ends at producing the bounded output set.
 
+Provider deduplication advances only after the exact output manifests are durable. A manifest
+retains the provider archive entry needed to replay that commit; startup recovery must make that
+entry durable before publishing the corresponding staged media. An archive failure retains the
+owned staged bytes and a bounded error. Recovery never treats a failed or missing archive commit
+as permission to publish, and a successful restart leaves later acquisition attempts deduplicated.
+Only entries bound to reported, persisted outputs may advance the shared provider archive.
+
+Recovery counts each manifest at most once per scan even when processing changes its update time.
+Outstanding repair counts and a bounded most-recent reason remain available to readiness
+independently of the recent-run history limit; newer successful runs do not hide unresolved repairs.
+
 ### Many folders, many libraries (V38c — reverses V37's singleton rule)
 
 An operator may add **any number** of watched folders and media-server libraries, not one of each.
