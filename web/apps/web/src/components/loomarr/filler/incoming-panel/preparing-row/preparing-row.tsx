@@ -14,7 +14,7 @@ import { ClipPipeline, copyFor } from "../../clip-pipeline";
 // one place on the belt; which row it gets is `needsDecision`.
 //
 // ⚠ **Collapsed by default, and the collapsed summary is the thing that advances.** Forty clips ×
-// nine rungs is 360 lines of moving text. The pip strip carries the stage-by-stage watch for the
+// ten rungs is 400 lines of moving text. The pip strip carries the stage-by-stage watch for the
 // whole queue at once; expanding gives the named ladder, the skip reasons and the percentage. Rows
 // are never auto-expanded on a frame — that makes the queue jump under the cursor of someone
 // reading it.

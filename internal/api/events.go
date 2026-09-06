@@ -123,7 +123,7 @@ type FillerSplitEvent struct {
 // and GET /v1/filler/incoming is the truth on reconnect.
 type FillerClipEvent struct {
 	Hash  string `json:"hash"`
-	Stage string `json:"stage" enum:"probe,transcode,split,language,transcribe,tag,vision,admission,score"`
+	Stage string `json:"stage" enum:"probe,transcode,split,screen,language,transcribe,tag,vision,admission,score"`
 	// Status is how the CURRENT stage is going. `skipped` means the stage does not apply to this
 	// clip in this install — a different fact from `done`, and re-evaluated on every pass.
 	Status string `json:"status" enum:"queued,running,done,failed,skipped"`

@@ -2,6 +2,8 @@ package filler
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,17 +46,45 @@ func (s *spanTools) GrayFrames(context.Context, string, int64, int64) ([][]byte,
 func (s *spanTools) Cut(context.Context, string, int64, int64, string) error { return nil }
 
 type fixedVision struct {
-	answer string
-	err    error
-	calls  int
+	answer      string
+	err         error
+	calls       int
+	attribution llm.Attribution
+	prompts     []string
 }
 
-func (f *fixedVision) AskAboutImages(context.Context, string, [][]byte) (llm.Response, error) {
+type scriptedRoleEscalator struct {
+	calls int
+	spans [][2]int64
+	err   error
+}
+
+func (s *scriptedRoleEscalator) EscalateRole(_ context.Context, source SplitSourceAsset, _ string, segment SplitSegment, assessedAt time.Time) (*StructureRoleEvidence, error) {
+	s.calls++
+	s.spans = append(s.spans, [2]int64{segment.StartMs, segment.EndMs})
+	if s.err != nil {
+		return nil, s.err
+	}
+	evidence, err := NewStructureRoleEvidence(StructureRoleEvidenceInput{
+		Source: source, StartMs: segment.StartMs, EndMs: segment.EndMs,
+		Role: SegmentRoleCommercial, Reason: "the complete sequence contains a product offer and call to action",
+		Video: []byte("bounded-video"), PromptVersion: "video-role-v1", Prompt: "classify bounded video", Response: `{"role":"commercial"}`,
+		RequestedProvider: "openrouter", ResolvedProvider: "openrouter", RequestedModel: "video", ResolvedModel: "video",
+		Modalities: []string{"text", "video"}, Tokens: StructureRoleTokenUsage{Video: 1}, Attempts: 1, AssessedAt: assessedAt,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &evidence, nil
+}
+
+func (f *fixedVision) AskAboutImages(_ context.Context, prompt string, _ [][]byte) (llm.Response, error) {
 	f.calls++
+	f.prompts = append(f.prompts, prompt)
 	if f.err != nil {
 		return llm.Response{}, f.err
 	}
-	return llm.Response{Content: f.answer}, nil
+	return llm.Response{Content: f.answer, Attribution: f.attribution}, nil
 }
 
 type seedTaxa struct{}
@@ -139,6 +169,132 @@ func TestSegmentVision_GroundsFromFramesSoTheGateCanFire(t *testing.T) {
 			t.Errorf("segment %d carries SuggestedEra %d — that is an automatic gate refusal",
 				sg.Index, sg.SuggestedEra)
 		}
+	}
+}
+
+func TestSegmentVisionRetainsExactPerSpanRoleEvidence(t *testing.T) {
+	tools := &spanTools{frames: [][]byte{[]byte("opening"), []byte("closing")}}
+	escalator := &scriptedRoleEscalator{}
+	model := &fixedVision{
+		answer: `{"visibleText":"ACME","brand":"ACME","tags":["toys"],"role":"commercial","roleReason":"a product offer and closing brand card"}`,
+		attribution: llm.Attribution{
+			RequestedProvider: "ollama", ResolvedProvider: "ollama", RequestedModel: "vision", ResolvedModel: "vision@sha256:abc",
+			Modalities: []string{"text", "image"}, Tokens: llm.TokenUsage{Prompt: 20, Completion: 5, Image: 2},
+			Latency: 100 * time.Millisecond, Attempts: 1,
+		},
+	}
+	s := NewSplitStage(nil, nil).WithSegmentVision(&SegmentVision{
+		Tools: tools, Provider: model, RoleEscalator: escalator, Taxa: seedTaxa{}, Budget: func() int { return 10 },
+	})
+	source := structureSource(61_000)
+	segments := twoSegments()
+	pass := s.groundAt(context.Background(), StoreClip{}, "source.mp4", source, segments)
+	if pass.Looked != 2 || pass.Pending != 0 {
+		t.Fatalf("ground pass = %+v", pass)
+	}
+	for index, segment := range segments {
+		if segment.RoleEvidence == nil || segment.RoleEvidence.Role != SegmentRoleCommercial || segment.RoleEvidence.Source != source || segment.RoleEvidence.StartMs != segment.StartMs || segment.RoleEvidence.EndMs != segment.EndMs || segment.RoleEvidence.SHA256 == "" {
+			t.Fatalf("segment %d role evidence = %+v", index, segment.RoleEvidence)
+		}
+	}
+	if len(model.prompts) != 2 || !strings.Contains(model.prompts[0], "programme_fragment") || !strings.Contains(model.prompts[0], "never infer role from the generated filename or duration") {
+		t.Fatalf("role prompt = %q", model.prompts[0])
+	}
+	if escalator.calls != 0 {
+		t.Fatalf("resolved frame roles triggered %d video escalations", escalator.calls)
+	}
+
+	base := assessStructure(t, source.DurationMs, []StructureObservation{
+		structureObservation("black", ObservationBlackInterval, ObservationProposesBoundary, 29_900, 30_100),
+		structureObservation("silence", ObservationSilenceInterval, ObservationProposesBoundary, 29_900, 30_100),
+	}, nil)
+	assessment, err := reassessProposalStructure(SplitProposal{Source: source, Structure: &base, Segments: segments}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assessment.Kind != StructureCompilationBreak || len(assessment.Plan) != 2 || assessment.Plan[0].Role != SegmentRoleCommercial || assessment.Plan[1].Role != SegmentRoleCommercial {
+		t.Fatalf("role-enriched assessment = %+v", assessment)
+	}
+	// Partial confirmation removes published cuts from the live proposal. Regrounding a held cut
+	// must not erase the already-published interval's role from the complete source assessment.
+	remaining, err := reassessProposalStructure(SplitProposal{
+		Source: source, Structure: &assessment, Segments: segments[1:],
+	}, time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remaining.Kind != StructureCompilationBreak || remaining.Plan[0].Role != SegmentRoleCommercial || remaining.Plan[1].Role != SegmentRoleCommercial {
+		t.Fatalf("partial proposal erased prior role evidence: %+v", remaining)
+	}
+}
+
+func TestSegmentVisionMissingAttributionCannotEstablishRole(t *testing.T) {
+	model := &fixedVision{answer: `{"tags":["toys"],"role":"commercial","roleReason":"a product offer"}`}
+	s := NewSplitStage(nil, nil).WithSegmentVision(&SegmentVision{
+		Tools: &spanTools{frames: [][]byte{[]byte("frame")}}, Provider: model, Taxa: seedTaxa{}, Budget: func() int { return 1 },
+	})
+	segments := twoSegments()[:1]
+	s.groundAt(context.Background(), StoreClip{}, "source.mp4", structureSource(61_000), segments)
+	if segments[0].RoleEvidence != nil {
+		t.Fatalf("unattributed model output established a role: %+v", segments[0].RoleEvidence)
+	}
+	if segments[0].Category == "" {
+		t.Fatal("invalid role attribution discarded independently valid taxonomy grounding")
+	}
+}
+
+func TestSegmentVisionEscalatesOnlyUnresolvedRolesToBoundedVideo(t *testing.T) {
+	escalator := &scriptedRoleEscalator{}
+	model := &fixedVision{answer: `{"category":"toys","visibleText":"TOYS R US","role":"","roleReason":""}`}
+	s := NewSplitStage(nil, nil).WithSegmentVision(&SegmentVision{
+		Tools: &spanTools{frames: [][]byte{[]byte("frame")}}, Provider: model, RoleEscalator: escalator,
+		Taxa: seedTaxa{}, Budget: func() int { return 2 },
+	})
+	segments := twoSegments()
+	s.groundAt(context.Background(), StoreClip{}, "source.mp4", structureSource(61_000), segments)
+	if escalator.calls != 2 || len(escalator.spans) != 2 || escalator.spans[0] != [2]int64{0, 30_000} || escalator.spans[1] != [2]int64{30_000, 61_000} {
+		t.Fatalf("escalation calls=%d spans=%v", escalator.calls, escalator.spans)
+	}
+	for index, segment := range segments {
+		if segment.RoleEvidence == nil || segment.RoleEvidence.VideoSHA256 == "" || len(segment.RoleEvidence.FrameSHA256) != 0 || segment.Category == "" {
+			t.Fatalf("segment %d did not preserve taxonomy plus video role evidence: %+v", index, segment)
+		}
+	}
+}
+
+func TestSegmentVisionCanEscalateWhenSparseFramesAreUnavailable(t *testing.T) {
+	escalator := &scriptedRoleEscalator{}
+	s := NewSplitStage(nil, nil).WithSegmentVision(&SegmentVision{
+		Tools: &spanTools{}, Provider: &fixedVision{}, RoleEscalator: escalator, Taxa: seedTaxa{}, Budget: func() int { return 1 },
+	})
+	segments := twoSegments()[:1]
+	pass := s.groundAt(context.Background(), StoreClip{}, "source.mp4", structureSource(61_000), segments)
+	if pass.Looked != 1 || pass.Pending != 0 || escalator.calls != 1 || segments[0].RoleEvidence == nil || segments[0].RoleEvidence.VideoSHA256 == "" {
+		t.Fatalf("pass=%+v escalation=%d segment=%+v", pass, escalator.calls, segments[0])
+	}
+}
+
+func TestSegmentVisionDirectVideoCanResolveAnIndependentFrameProviderFailure(t *testing.T) {
+	escalator := &scriptedRoleEscalator{}
+	s := NewSplitStage(nil, nil).WithSegmentVision(&SegmentVision{
+		Tools: &spanTools{frames: [][]byte{[]byte("frame")}}, Provider: &fixedVision{err: errors.New("frame provider unavailable")},
+		RoleEscalator: escalator, Taxa: seedTaxa{}, Budget: func() int { return 1 },
+	})
+	segments := twoSegments()[:1]
+	pass := s.groundAt(context.Background(), StoreClip{}, "source.mp4", structureSource(61_000), segments)
+	if pass.Looked != 1 || pass.Pending != 0 || escalator.calls != 1 || segments[0].RoleEvidence == nil {
+		t.Fatalf("pass=%+v escalation=%d segment=%+v", pass, escalator.calls, segments[0])
+	}
+
+	failing := &scriptedRoleEscalator{err: errors.New("video provider unavailable")}
+	s = NewSplitStage(nil, nil).WithSegmentVision(&SegmentVision{
+		Tools: &spanTools{frames: [][]byte{[]byte("frame")}}, Provider: &fixedVision{err: errors.New("frame provider unavailable")},
+		RoleEscalator: failing, Taxa: seedTaxa{}, Budget: func() int { return 1 },
+	})
+	segments = twoSegments()[:1]
+	pass = s.groundAt(context.Background(), StoreClip{}, "source.mp4", structureSource(61_000), segments)
+	if pass.Looked != 0 || pass.Pending != 1 || failing.calls != 1 || segments[0].Looked {
+		t.Fatalf("dual failure burned retry: pass=%+v escalation=%d segment=%+v", pass, failing.calls, segments[0])
 	}
 }
 
@@ -327,5 +483,38 @@ func TestSplitStage_ResumesOnlyReviewsItCanImprove(t *testing.T) {
 	}
 	if _, ok := hashes["already-ambiguous"]; ok {
 		t.Error("a segment the model already examined was requeued; it genuinely needs review")
+	}
+}
+
+type pendingStructureShadow struct {
+	pending map[string]bool
+}
+
+func (s pendingStructureShadow) NeedsStructureSplitObservation(_ context.Context, proposal SplitProposal) (bool, error) {
+	return s.pending[proposal.ClipHash], nil
+}
+
+func (pendingStructureShadow) ObserveStructureSplit(context.Context, SplitProposal, SplitPartition) error {
+	return nil
+}
+
+func TestSplitStageResumesExistingReviewForOneMissingShadowObservation(t *testing.T) {
+	queue := proposalQueue{proposals: []SplitProposal{
+		{ClipHash: "unobserved", Segments: []SplitSegment{{StartMs: 0, EndMs: 30_000, Looked: true}}},
+		{ClipHash: "observed", Segments: []SplitSegment{{StartMs: 0, EndMs: 30_000, Looked: true}}},
+	}}
+	stage := NewSplitStage(nil, queue).WithStructureShadow(pendingStructureShadow{
+		pending: map[string]bool{"unobserved": true},
+	})
+
+	hashes, err := stage.resumableReviewHashes(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := hashes["unobserved"]; !ok {
+		t.Fatal("unobserved existing proposal was not requeued")
+	}
+	if _, ok := hashes["observed"]; ok {
+		t.Fatal("observed proposal was requeued again")
 	}
 }

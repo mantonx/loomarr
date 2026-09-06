@@ -135,8 +135,8 @@ const useLoomarrEvents = (extra?: EventHandlers): void => {
       },
       onFillerClip: (e) => {
         // One clip moved a rung (§10 V51b). ⚠ **Only a TERMINAL frame invalidates**, and the
-        // asymmetry is the whole point: forty clips × nine rungs is 360 frames, so invalidating
-        // on each would refetch the incoming queue 360 times to render a queue that already knows
+        // asymmetry is the whole point: forty clips × ten rungs is 400 frames, so invalidating
+        // on each would refetch the incoming queue 400 times to render a queue that already knows
         // how to draw itself from the frame. A running frame is a repaint; leaving it is what the
         // consumer's cache merge is for.
         //

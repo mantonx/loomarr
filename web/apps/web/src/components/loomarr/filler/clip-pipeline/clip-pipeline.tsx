@@ -4,7 +4,7 @@ import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import type { ClipPipelineProps } from "./clip-pipeline.type";
 
-// ClipPipeline — where one clip is in the nine-rung ingest pipeline (§10 V51b/V51e/V61).
+// ClipPipeline — where one clip is in the ten-rung ingest pipeline (§10 V51b/V51e/V61).
 //
 // ⚠ **The copy lives on the frontend, keyed by stage id; the SEQUENCE lives on the server.** The
 // backend sends stable ids (`probe`, `transcode`, …) — the §11 refusal-code precedent — and this
@@ -14,6 +14,7 @@ const COPY: Record<string, { active: string; label: string }> = {
   probe: { label: "Check the file", active: "Checking the file" },
   transcode: { label: "Level the sound", active: "Levelling the sound" },
   split: { label: "Find the ads inside", active: "Finding the ads inside" },
+  screen: { label: "Check broadcast safety", active: "Checking broadcast safety" },
   language: { label: "Check the language", active: "Checking the language" },
   transcribe: { label: "Listen", active: "Listening" },
   tag: { label: "Work out what it is", active: "Working out what it is" },
@@ -58,7 +59,7 @@ const resolve = (id: string, row: IncomingPipelineDTO): { note?: string; status:
 };
 
 // The pip palette. ⚠ `tune` for in-progress, NOT `suggest` — §2.1 reserves `suggest` as THE AI
-// colour, and only three of these nine rungs are AI. Spending the AI colour on "something is
+// colour, and only four of these ten rungs may use AI. Spending the AI colour on "something is
 // happening" would leave nothing to mean "a model decided this".
 const PIP: Record<RungStatus, string> = {
   done: "bg-lock",

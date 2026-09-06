@@ -170,6 +170,8 @@ func (s *VisionStage) Run(ctx context.Context, c StoreClip) (StageResult, error)
 // 320px UI preview: early, middle, late, and closing-card windows remain a small fixed request.
 const VisionKeyframes = 4
 
+const visionPromptVersion = "filler-vision-grounding-v2"
+
 // visionTags is a grounded vision classification for one clip — the fields ApplyClipVision
 // writes.
 type visionTags struct {
@@ -193,6 +195,10 @@ type visionOutput struct {
 	// the live forest.
 	Category string `json:"category"`
 	Era      int    `json:"era"`
+	// Role is a per-segment semantic judgement used only by the source-structure reducer. It is
+	// not taxonomy and never changes the grounding rules above.
+	Role       string `json:"role"`
+	RoleReason string `json:"roleReason"`
 }
 
 // UnmarshalJSON salvages independently valid fields from a model answer. Vision models
@@ -213,6 +219,8 @@ func (v *visionOutput) UnmarshalJSON(data []byte) error {
 	v.Tags = decodeVisionStrings(fields["tags"])
 	v.Category = decodeVisionString(fields["category"])
 	v.Era = decodeVisionInt(fields["era"])
+	v.Role = decodeVisionString(fields["role"])
+	v.RoleReason = decodeVisionString(fields["roleReason"])
 	return nil
 }
 
@@ -321,11 +329,11 @@ func visionPrompt(forest *taxonomy.Forest) string {
 	if forest != nil {
 		vocab = forest.Vocab()
 	}
-	return fmt.Sprintf(`You are shown a few still frames from a short TV filler clip (a commercial/bumper/PSA).
+	return fmt.Sprintf(`You are shown a few still frames from one candidate segment in a recording. It may be a commercial, promo, bumper, station ID, PSA, trailer, programme material, other non-filler, ambiguous, or materially unusable.
 First read any TEXT visible in the frames — a logo, a product name, a slogan, a year.
 Return ONLY this JSON, no prose:
-{"visibleText":"<the on-screen text you can read, verbatim; empty if none>","brand":"<advertiser name or empty>","era":<4-digit year visible in a frame, or 0>,"tags":["<zero or more taxonomy slugs>"]}
-Rules: put in visibleText only text you can actually READ in the frames; give brand ONLY when the advertiser's name is among that visible text — never guess it from the imagery or the products; give era ONLY when a 4-digit year is visible in a frame — never infer a decade from the film stock, colour, or style, use 0 otherwise; choose tags only from the live vocabulary below. Vocabulary entries written as "child (under parent)" explain hierarchy; return only the slug, never the annotation. A tag may describe what the imagery shows even when its slug is not printed as text. Return an empty tags array when the frames do not support a choice.
+{"visibleText":"<the on-screen text you can read, verbatim; empty if none>","brand":"<advertiser name or empty>","era":<4-digit year visible in a frame, or 0>,"tags":["<zero or more taxonomy slugs>"],"role":"<commercial|promo|bumper|station_id|psa|trailer|programme_fragment|non_filler|ambiguous|unusable>","roleReason":"<brief visual evidence for that role>"}
+Rules: put in visibleText only text you can actually READ in the frames; give brand ONLY when the advertiser's name is among that visible text — never guess it from the imagery or the products; give era ONLY when a 4-digit year is visible in a frame — never infer a decade from the film stock, colour, or style, use 0 otherwise; choose tags only from the live vocabulary below. Vocabulary entries written as "child (under parent)" explain hierarchy; return only the slug, never the annotation. A tag may describe what the imagery shows even when its slug is not printed as text. Return an empty tags array when the frames do not support a choice. Judge role independently from tags and the parent recording. Use commercial for a product/service offer, promo for promotion of a programme or network property, bumper for a brief transition into or out of a break, station_id for station identification, psa for a public-service message, trailer for promotion of a film or release, programme_fragment for material dependent on a larger programme, and non_filler for other independently bounded material that must not air as filler. Use ambiguous rather than guessing. Use unusable only when the frames are materially unassessable. Explain the observed visual evidence; never infer role from the generated filename or duration.
 
 Live taxonomy vocabulary:
 %s`, vocab)

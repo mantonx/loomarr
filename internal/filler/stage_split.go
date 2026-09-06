@@ -52,6 +52,15 @@ type SplitStage struct {
 	// vision grounds proposed segments from their own frames so the gate has data (§10 V54).
 	// nil ⇒ propose only.
 	vision *SegmentVision
+	// structureShadow durably records the compatibility comparison beside the complete-plan gate.
+	// It is diagnostic only and never authorizes child materialization.
+	structureShadow StructureSplitShadowObserver
+	// structureDecisioner independently assesses the complete retained source once. nil leaves
+	// detector structure in place and makes no provider request.
+	structureDecisioner CompleteTimelineStructureDecisioner
+	// structureMaterialization verifies the only gate that can materialize held children. A nil
+	// policy holds the proposal; compatibility is never application authority.
+	structureMaterialization *StructureMaterializationPolicy
 	// log reports what a grounding pass actually did (§10 V54b). nil is tolerated everywhere.
 	log *slog.Logger
 }
@@ -103,13 +112,39 @@ func (s *SplitStage) WithSegmentVision(v *SegmentVision) *SplitStage {
 	return s
 }
 
+// WithStructureShadow attaches the durable dual-evaluation module. A recording failure is an
+// error rather than a log-only omission: unattended materialization must not erase the disagreement
+// evidence by consuming its proposal.
+func (s *SplitStage) WithStructureShadow(observer StructureSplitShadowObserver) *SplitStage {
+	s.structureShadow = observer
+	return s
+}
+
+// WithCompleteTimelineStructureAssessment attaches the independently reduced whole-source
+// assessment module. Merely attaching it cannot authorize child materialization; the complete-plan
+// gate still requires an immutable structure authority.
+func (s *SplitStage) WithCompleteTimelineStructureAssessment(decisioner CompleteTimelineStructureDecisioner) *SplitStage {
+	s.structureDecisioner = decisioner
+	return s
+}
+
+// WithStructureMaterialization attaches the certified complete-plan gate. The policy itself still
+// verifies explicit release authority; a nil policy deliberately leaves every proposal held.
+func (s *SplitStage) WithStructureMaterialization(policy *StructureMaterializationPolicy) *SplitStage {
+	s.structureMaterialization = policy
+	return s
+}
+
 // SegmentVision grounds proposed segments from their own frames so the auto-confirm gate has
 // something to judge.
 type SegmentVision struct {
 	Tools    MediaTools
 	Provider llm.VisionProvider
-	Taxa     TaxaLister
-	ClipDir  string
+	// RoleEscalator inspects an exact bounded video only when frame evidence cannot establish
+	// a role. nil leaves the span unresolved; it never weakens the publication gate.
+	RoleEscalator SegmentRoleEscalator
+	Taxa          TaxaLister
+	ClipDir       string
 	// Budget caps how many segments ONE pass will look at (`filler.pipeline.max_split_vision`).
 	//
 	// ⚠ It is a per-pass cost bound, and §10 V51g is why it is not optional: a rung's cost must
@@ -140,19 +175,19 @@ func (s *SplitStage) ground(ctx context.Context, c StoreClip, segs []SplitSegmen
 	if s.vision != nil {
 		file = filepath.Join(s.vision.ClipDir, filepath.FromSlash(c.Path))
 	}
-	return s.groundAt(ctx, c, file, segs)
+	return s.groundAt(ctx, c, file, SplitSourceAsset{}, segs)
 }
 
 func (s *SplitStage) groundFromSource(ctx context.Context, c StoreClip, source SplitSourceAsset, segs []SplitSegment) groundPass {
 	if s.vision == nil {
-		return s.groundAt(ctx, c, "", segs)
+		return s.groundAt(ctx, c, "", source, segs)
 	}
 	_, file, err := resolveSplitSource(ctx, s.vision.ClipDir, c, source)
 	if err != nil {
 		s.groundSkipped(ctx, c, "the proposal's evidence derivative is unavailable", "err", err)
 		return groundPass{Pending: countPendingGrounding(segs)}
 	}
-	return s.groundAt(ctx, c, file, segs)
+	return s.groundAt(ctx, c, file, source, segs)
 }
 
 func countPendingGrounding(segs []SplitSegment) int {
@@ -165,7 +200,7 @@ func countPendingGrounding(segs []SplitSegment) int {
 	return n
 }
 
-func (s *SplitStage) groundAt(ctx context.Context, c StoreClip, file string, segs []SplitSegment) groundPass {
+func (s *SplitStage) groundAt(ctx context.Context, c StoreClip, file string, source SplitSourceAsset, segs []SplitSegment) groundPass {
 	pending := func() int {
 		return countPendingGrounding(segs)
 	}
@@ -200,7 +235,7 @@ func (s *SplitStage) groundAt(ctx context.Context, c StoreClip, file string, seg
 	looked := 0
 	// The pass tally. Counted rather than logged per segment: 60 lines a pass is noise, and the
 	// question an operator has is about the pass, not any one cut.
-	var noFrames, unreadable, learned int
+	var noFrames, unreadable, learned, roles, unresolvedRoles, videoAttempts, videoRoles, videoErrors int
 	var providerErr error
 	for i := range segs {
 		if looked >= budget {
@@ -213,24 +248,78 @@ func (s *SplitStage) groundAt(ctx context.Context, c StoreClip, file string, seg
 		if err != nil || len(frames) == 0 {
 			segs[i].Looked, looked = true, looked+1
 			noFrames++
+			if evidence, attempted, escalationErr := s.escalateSegmentRole(ctx, source, file, segs[i]); attempted {
+				videoAttempts++
+				if escalationErr != nil {
+					videoErrors++
+					unresolvedRoles++
+				} else if evidence != nil {
+					segs[i].RoleEvidence = evidence
+					roles, videoRoles, learned = roles+1, videoRoles+1, learned+1
+				} else {
+					unresolvedRoles++
+				}
+			} else {
+				unresolvedRoles++
+			}
 			continue
 		}
-		resp, err := s.vision.Provider.AskAboutImages(ctx, visionPrompt(forest), frames)
+		prompt := visionPrompt(forest)
+		resp, err := s.vision.Provider.AskAboutImages(ctx, prompt, frames)
 		if err != nil {
-			// ⚠ NOT marked, and the loop STOPS: a provider that is failing will fail for every
-			// remaining segment too, so marking would burn the whole reel on one outage. Next pass
-			// retries exactly the segments this one could not reach.
+			// A separately routed direct-video model may still settle the temporal role. Only a
+			// successful escalation marks the span looked; if both routes fail, the old retry
+			// behavior remains and this pass stops without burning the rest of the reel.
+			if evidence, attempted, escalationErr := s.escalateSegmentRole(ctx, source, file, segs[i]); attempted {
+				videoAttempts++
+				if escalationErr != nil {
+					videoErrors++
+					providerErr = errors.Join(err, escalationErr)
+					break
+				}
+				segs[i].Looked, looked = true, looked+1
+				if evidence != nil {
+					segs[i].RoleEvidence = evidence
+					roles, videoRoles, learned = roles+1, videoRoles+1, learned+1
+				} else {
+					unresolvedRoles++
+				}
+				continue
+			}
 			providerErr = err
 			break
 		}
 		segs[i].Looked, looked = true, looked+1
 		var out visionOutput
-		if err := json.Unmarshal([]byte(llm.ExtractJSONObject(resp.Content)), &out); err != nil {
+		parsed := json.Unmarshal([]byte(llm.ExtractJSONObject(resp.Content)), &out) == nil
+		if !parsed {
 			unreadable++
-			continue
 		}
 		v := groundVisionTags(out, forest)
-		if len(v.Tags) > 0 || v.Era > 0 {
+		var roleEvidence *StructureRoleEvidence
+		var roleErr error
+		if parsed {
+			roleEvidence, roleErr = structureRoleEvidenceFromVision(source, segs[i], prompt, frames, resp, out, s.structureAssessedAt())
+		}
+		if roleEvidence == nil {
+			if evidence, attempted, escalationErr := s.escalateSegmentRole(ctx, source, file, segs[i]); attempted {
+				videoAttempts++
+				if escalationErr != nil {
+					videoErrors++
+				} else if evidence != nil {
+					roleEvidence = evidence
+					roleErr = nil
+					videoRoles++
+				}
+			}
+		}
+		if roleErr == nil && roleEvidence != nil {
+			segs[i].RoleEvidence = roleEvidence
+			roles++
+		} else {
+			unresolvedRoles++
+		}
+		if len(v.Tags) > 0 || v.Era > 0 || roleEvidence != nil {
 			learned++
 		}
 		segs[i].Tags = unionLeaves(segs[i].Tags, v.Tags)
@@ -244,15 +333,33 @@ func (s *SplitStage) groundAt(ctx context.Context, c StoreClip, file string, seg
 	}
 	s.groundReport(ctx, c, groundTally{
 		looked: looked, pending: pending(), learned: learned,
-		noFrames: noFrames, unreadable: unreadable, providerErr: providerErr,
+		noFrames: noFrames, unreadable: unreadable, roles: roles, unresolvedRoles: unresolvedRoles,
+		videoAttempts: videoAttempts, videoRoles: videoRoles, videoErrors: videoErrors,
+		providerErr: providerErr,
 	})
 	return groundPass{Looked: looked, Pending: pending()}
 }
 
 // groundTally is one pass's outcome, counted so the pass can be reported in a single line.
 type groundTally struct {
-	looked, pending, learned, noFrames, unreadable int
-	providerErr                                    error
+	looked, pending, learned, noFrames, unreadable, roles, unresolvedRoles int
+	videoAttempts, videoRoles, videoErrors                                 int
+	providerErr                                                            error
+}
+
+func (s *SplitStage) escalateSegmentRole(ctx context.Context, source SplitSourceAsset, file string, segment SplitSegment) (*StructureRoleEvidence, bool, error) {
+	if s.vision == nil || s.vision.RoleEscalator == nil || source.validate() != nil {
+		return nil, false, nil
+	}
+	evidence, err := s.vision.RoleEscalator.EscalateRole(ctx, source, file, segment, s.structureAssessedAt())
+	return evidence, true, err
+}
+
+func (s *SplitStage) structureAssessedAt() time.Time {
+	if s.splitter != nil && s.splitter.now != nil {
+		return s.splitter.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 // groundSkipped reports a pass that never began. Each caller passes a DIFFERENT reason, which is
@@ -281,6 +388,8 @@ func (s *SplitStage) groundReport(ctx context.Context, c StoreClip, t groundTall
 	args := []any{
 		"clip", c.Hash, "looked", t.looked, "learned", t.learned,
 		"pending", t.pending, "noFrames", t.noFrames, "unreadable", t.unreadable,
+		"roles", t.roles, "unresolvedRoles", t.unresolvedRoles,
+		"videoAttempts", t.videoAttempts, "videoRoles", t.videoRoles, "videoErrors", t.videoErrors,
 	}
 	switch {
 	case t.providerErr != nil:
@@ -417,7 +526,27 @@ func (s *SplitStage) Run(ctx context.Context, c StoreClip) (StageResult, error) 
 			return StageResult{}, ErrDeferred
 		}
 	}
-
+	if p.StructureDecision == nil && s.structureDecisioner != nil {
+		assessed, assessErr := s.splitter.AssessProposalStructure(ctx, *p, s.structureDecisioner)
+		if errors.Is(assessErr, ErrProposalGone) {
+			return StageResult{Verdict: VerdictContinue, Note: "already resolved"}, nil
+		}
+		if assessErr != nil {
+			// An assessment outage or invalid runtime result says nothing about the source or
+			// its proposed boundaries. Keep both at split review rather than letting ordinary
+			// retry exhaustion skip the rung and file a compilation without an assessment.
+			// Context cancellation is control flow, though: the pipeline resumes it without
+			// turning an incomplete attempt into review evidence.
+			if errors.Is(assessErr, context.Canceled) || errors.Is(assessErr, context.DeadlineExceeded) {
+				return StageResult{}, assessErr
+			}
+			return StageResult{
+				Verdict: VerdictReview,
+				Note:    "the complete-timeline assessment could not be completed; review the split proposal",
+			}, nil
+		}
+		p = &assessed
+	}
 	// Deterministic outcomes are curation, not decisions. Persist them before any model work so a
 	// restart and the review UI see the same smaller reel.
 	kept, discarded := discardDeterministic(p.Segments, s.minClipFloor())
@@ -471,9 +600,24 @@ func (s *SplitStage) Run(ctx context.Context, c StoreClip) (StageResult, error) 
 	//
 	// ⚠ **PER SEGMENT since V54.** This used to be one verdict for the reel, so one doubtful cut
 	// in 52 sent all 52 back and the operator's work never shrank.
-	part := AutoConfirmable(*p, s.autoConfirm, s.minClipFloor())
+	legacy, part := s.splitPartitions(*p)
+	if s.structureShadow != nil {
+		if err := s.structureShadow.ObserveStructureSplit(ctx, *p, legacy); err != nil {
+			return StageResult{}, err
+		}
+	}
 	if part.Reject != AutoSplitOK {
-		// A whole-proposal refusal — auto-split switched off, or nothing detected.
+		// A whole-proposal refusal — disabled splitting, an incomplete certified plan, or nothing
+		// detected. Certified holds must be persisted too: a reviewable proposal without its
+		// attributable reason would turn missing authority into an opaque failure.
+		if len(part.Hold) > 0 {
+			if err := s.persistHeldReasons(ctx, p.ID, part.Hold); err != nil {
+				if errors.Is(err, ErrProposalGone) {
+					return StageResult{Verdict: VerdictContinue, Note: "already resolved"}, nil
+				}
+				return StageResult{}, err
+			}
+		}
 		note := string(part.Reject)
 		if d := discardNote(discarded); d != "" {
 			note += "; " + d
@@ -496,7 +640,7 @@ func (s *SplitStage) Run(ctx context.Context, c StoreClip) (StageResult, error) 
 		// the review screen has to tell the operator which cut needs classification, a grounded
 		// era, or a closer look at its boundary. Partial confirmation persists these through
 		// ConfirmSome; the all-held path previously returned before writing them anywhere.
-		if _, err := s.splitter.Reground(ctx, p.ID, part.Hold); err != nil {
+		if err := s.persistHeldReasons(ctx, p.ID, part.Hold); err != nil {
 			if errors.Is(err, ErrProposalGone) {
 				return StageResult{Verdict: VerdictContinue, Note: "already resolved"}, nil
 			}
@@ -550,6 +694,17 @@ func (s *SplitStage) Run(ctx context.Context, c StoreClip) (StageResult, error) 
 	return StageResult{Verdict: VerdictContinue, Spawned: spawned, Note: note}, nil
 }
 
+func (s *SplitStage) persistHeldReasons(ctx context.Context, proposalID string, held []SplitSegment) error {
+	_, err := s.splitter.Reground(ctx, proposalID, held)
+	return err
+}
+
+func (s *SplitStage) splitPartitions(proposal SplitProposal) (SplitPartition, SplitPartition) {
+	compatibility := AutoConfirmable(proposal, s.autoConfirm, s.minClipFloor())
+	application := CertifiedStructureMaterializable(proposal, s.autoConfirm, s.structureMaterialization, s.minClipFloor())
+	return compatibility, application
+}
+
 // minClipFloor resolves the clip-duration floor, defaulting to zero (no floor check).
 func (s *SplitStage) minClipFloor() time.Duration {
 	if s.minClipDuration == nil {
@@ -575,6 +730,20 @@ func (s *SplitStage) resumableReviewHashes(ctx context.Context) (map[string]stru
 		if !p.Ready() {
 			out[p.ClipHash] = struct{}{}
 			continue
+		}
+		if s.structureDecisioner != nil && p.StructureDecision == nil {
+			out[p.ClipHash] = struct{}{}
+			continue
+		}
+		if s.structureShadow != nil {
+			pending, shadowErr := s.structureShadow.NeedsStructureSplitObservation(ctx, p)
+			if shadowErr != nil {
+				return nil, shadowErr
+			}
+			if pending {
+				out[p.ClipHash] = struct{}{}
+				continue
+			}
 		}
 		kept, discarded := discardDeterministic(p.Segments, s.minClipFloor())
 		if len(kept) != len(p.Segments) || discarded.duplicates > 0 || discarded.short > 0 {

@@ -235,6 +235,10 @@ func scanDir(ctx context.Context, dir, watchDir string, probe Prober, minMs int6
 			}
 		}
 
+		kind := KindFromName(heuristicName)
+		if tags.Kind != "" && validKind(Kind(tags.Kind)) {
+			kind = Kind(tags.Kind)
+		}
 		clips = append(clips, RawClip{
 			ID:               id,
 			Path:             rel,
@@ -251,7 +255,7 @@ func scanDir(ctx context.Context, dir, watchDir string, probe Prober, minMs int6
 			// clean title would silently lose filename-encoded eras. Without this a clip lands as a
 			// generic interstitial the pod assembler can never place, so filler would silently never
 			// build unless AI tagging is on.
-			Kind:            KindFromName(heuristicName),
+			Kind:            kind,
 			Era:             EraFromName(heuristicName),
 			GeographicScope: GeographicScope(tags.GeographicScope),
 			Country:         tags.Country, Market: tags.Market, Network: tags.Network,

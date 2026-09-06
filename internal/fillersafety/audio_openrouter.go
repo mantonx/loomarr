@@ -103,7 +103,7 @@ func (a *openRouterAudioAdjudicator) adjudicate(
 		SystemPrompt: audioSystemPrompt,
 		Content:      "Private rule policy: " + string(policyJSON) + ". Decide whether this audio triggers any rule.",
 		Audios:       []openroutermedia.Audio{{Format: "wav", Base64: base64.StdEncoding.EncodeToString(wav)}},
-		MaxTokens:    audioMaxTokens, MaxChargeNanoUSD: a.config.MaxChargeNanoUSD,
+		MaxTokens:    audioMaxTokens, ReservationNanoUSD: a.config.MaxChargeNanoUSD,
 		DisableReasoning: a.config.DisableReasoning,
 		Title:            "Loomarr spoken-safety native-audio adjudication",
 		Reserve:          reserve,

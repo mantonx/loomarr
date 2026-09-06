@@ -14,6 +14,7 @@ import (
 	"github.com/loomarr/loomarr/internal/filleradmission"
 	"github.com/loomarr/loomarr/internal/fillerdecision"
 	"github.com/loomarr/loomarr/internal/fillersafety"
+	"github.com/loomarr/loomarr/internal/fillerstructure"
 	"github.com/loomarr/loomarr/internal/schedule"
 	"github.com/loomarr/loomarr/internal/taxonomy"
 )
@@ -2977,15 +2978,86 @@ func testSplitProposals(t *testing.T, newStore NewStoreFunc) {
 	s := newStore(t)
 	now := time.Now().UTC().Truncate(time.Second)
 
+	source := filler.SplitSourceAsset{
+		Role: filler.SplitSourceEvidence, SHA256: strings.Repeat("a", 64), Bytes: 42,
+		ClipHash: strings.Repeat("b", 64), Path: ".loomarr-media/evidence/aa/bb/evidence.mp4", DurationMs: 149_000,
+	}
+	structure, err := filler.AssessSourceStructure(filler.SourceStructureInput{
+		Source: source, AssessedAt: now,
+		Observations: []filler.StructureObservation{
+			{ID: "black", Kind: filler.ObservationBlackInterval, Effect: filler.ObservationProposesBoundary, StartMs: 29_900, EndMs: 30_100, Producer: "fixture:v1", EvidenceSHA256: strings.Repeat("c", 64)},
+			{ID: "silence", Kind: filler.ObservationSilenceInterval, Effect: filler.ObservationProposesBoundary, StartMs: 29_900, EndMs: 30_100, Producer: "fixture:v1", EvidenceSHA256: strings.Repeat("d", 64)},
+			{ID: "role-left", Kind: filler.ObservationOCRLogoChange, Effect: filler.ObservationSupportsBoundary, StartMs: 30_000, EndMs: 30_000, Producer: "fixture:v1", EvidenceSHA256: strings.Repeat("e", 64)},
+			{ID: "role-right", Kind: filler.ObservationTranscriptChange, Effect: filler.ObservationSupportsBoundary, StartMs: 30_000, EndMs: 30_000, Producer: "fixture:v1", EvidenceSHA256: strings.Repeat("f", 64)},
+		},
+		RoleClaims: []filler.StructureRoleClaim{
+			{StartMs: 0, EndMs: 30_000, Role: filler.SegmentRoleCommercial, EvidenceIDs: []string{"role-left"}, Reason: "commercial evidence"},
+			{StartMs: 30_000, EndMs: 149_000, Role: filler.SegmentRolePromo, EvidenceIDs: []string{"role-right"}, Reason: "promo evidence"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	roleEvidence, err := filler.NewStructureRoleEvidence(filler.StructureRoleEvidenceInput{
+		Source: source, StartMs: 0, EndMs: 30_000, Role: filler.SegmentRoleCommercial,
+		Reason: "product offer and closing brand card", Frames: [][]byte{[]byte("opening"), []byte("closing")},
+		PromptVersion: "filler-vision-grounding-v2", Prompt: "bounded segment prompt", Response: `{"role":"commercial"}`,
+		RequestedProvider: "ollama", ResolvedProvider: "ollama", RequestedModel: "vision", ResolvedModel: "vision@sha256:fixture",
+		Modalities: []string{"image", "text"}, Tokens: filler.StructureRoleTokenUsage{Prompt: 20, Completion: 5, Image: 2},
+		LatencyMs: 100, Attempts: 1, AssessedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	videoRoleEvidence, err := filler.NewStructureRoleEvidence(filler.StructureRoleEvidenceInput{
+		Source: source, StartMs: 30_000, EndMs: 61_000, Role: filler.SegmentRolePromo,
+		Reason: "complete sequence promotes a programme", Video: []byte("bounded-video-derivative"),
+		PromptVersion: "filler-segment-video-role-v1", Prompt: "bounded video prompt", Response: `{"role":"promo"}`,
+		RequestedProvider: "openrouter", ResolvedProvider: "openrouter", RequestedModel: "video", ResolvedModel: "video",
+		Modalities: []string{"audio", "text", "video"}, Tokens: filler.StructureRoleTokenUsage{Prompt: 30, Completion: 5, Video: 4, Audio: 2},
+		LatencyMs: 200, Attempts: 1, GenerationID: "video-generation", AssessedAt: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisionSource := fillerstructure.Source{SHA256: source.SHA256, Bytes: source.Bytes, DurationMS: source.DurationMs}
+	structureMedia := fillerstructure.AssessmentMedia{SHA256: strings.Repeat("6", 64), Bytes: source.Bytes, DurationMS: source.DurationMs, ProfileSHA256: strings.Repeat("5", 64), LineageSHA256: strings.Repeat("4", 64)}
+	structureInput, err := fillerstructure.NewCompleteVideoInput(decisionSource, structureMedia)
+	if err != nil {
+		t.Fatal(err)
+	}
+	structureCandidate := func(id, family, assessmentDigest string) fillerstructure.Candidate {
+		return fillerstructure.Candidate{
+			Source: decisionSource, InputSHA256: structureInput.SHA256,
+			Assessor: fillerstructure.Assessor{
+				ID: id, ModelFamily: family, Provider: "fixture-provider", Model: "fixture-model",
+				ModelDigest: strings.Repeat("8", 64), CapabilitySHA256: strings.Repeat("7", 64),
+				PromptVersion: "structure-prompt-v1", EvidenceContract: "assessment-v1",
+				AssessmentSHA256: assessmentDigest,
+			},
+			Unit: fillerstructure.UnitCompilation,
+			Segments: []fillerstructure.Segment{
+				{StartMS: 0, EndMS: 30_000, Role: fillerstructure.RoleCommercial},
+				{StartMS: 30_000, EndMS: 149_000, Role: fillerstructure.RolePromo},
+			},
+		}
+	}
+	structureDecision, err := fillerstructure.NewArtifact(fillerstructure.Request{
+		Source: decisionSource, Input: structureInput, BoundaryToleranceMS: 2_000,
+		Candidates: []fillerstructure.Candidate{
+			structureCandidate("structure-assessor-a", "structure-family-a", strings.Repeat("9", 64)),
+			structureCandidate("structure-assessor-b", "structure-family-b", strings.Repeat("a", 64)),
+		},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := filler.SplitProposal{
 		ID: "sp_1", ClipHash: clipHashFor("comps/1987.mp4"), CreatedAt: now,
-		Source: filler.SplitSourceAsset{
-			Role: filler.SplitSourceEvidence, SHA256: strings.Repeat("a", 64), Bytes: 42,
-			ClipHash: strings.Repeat("b", 64), Path: ".loomarr-media/evidence/aa/bb/evidence.mp4", DurationMs: 149_000,
-		},
+		Source: source, Structure: &structure, StructureDecision: &structureDecision,
 		Segments: []filler.SplitSegment{
-			{Index: 0, StartMs: 0, EndMs: 30000, Name: "comps/1987 part 1", Era: 1987, Audience: filler.Kids, Category: "toys"},
-			{Index: 1, StartMs: 30000, EndMs: 61000, Name: "unknown", SuggestedEra: 1985, DupOf: "old/ad.mp4", Looked: true},
+			{Index: 0, StartMs: 0, EndMs: 30000, Name: "comps/1987 part 1", Era: 1987, Audience: filler.Kids, Category: "toys", RoleEvidence: &roleEvidence},
+			{Index: 1, StartMs: 30000, EndMs: 61000, Name: "unknown", SuggestedEra: 1985, DupOf: "old/ad.mp4", Looked: true, RoleEvidence: &videoRoleEvidence},
 			{Index: 2, StartMs: 61000, EndMs: 149000, Name: "comps/1987 part 3", Unsplittable: true, Transcript: "[00:00] …"},
 		},
 	}
@@ -2996,7 +3068,7 @@ func testSplitProposals(t *testing.T, newStore NewStoreFunc) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ClipHash != p.ClipHash || got.Source != p.Source || len(got.Segments) != 3 || !got.CreatedAt.Equal(now) {
+	if got.ClipHash != p.ClipHash || got.Source != p.Source || !reflect.DeepEqual(got.Structure, p.Structure) || !reflect.DeepEqual(got.StructureDecision, p.StructureDecision) || len(got.Segments) != 3 || !got.CreatedAt.Equal(now) {
 		t.Fatalf("proposal round-trip = %+v", got)
 	}
 	// Every segment field survives the JSON round-trip — including the V34-specific
@@ -3008,19 +3080,27 @@ func testSplitProposals(t *testing.T, newStore NewStoreFunc) {
 	if !got.Segments[2].Unsplittable || got.Segments[2].Transcript == "" {
 		t.Errorf("unsplittable marker/transcript lost: %+v", got.Segments[2])
 	}
+	if !reflect.DeepEqual(got.Segments[0].RoleEvidence, &roleEvidence) {
+		t.Errorf("segment role evidence lost: %+v", got.Segments[0].RoleEvidence)
+	}
+	if !reflect.DeepEqual(got.Segments[1].RoleEvidence, &videoRoleEvidence) || got.Segments[1].RoleEvidence.VideoSHA256 == "" {
+		t.Errorf("segment video role evidence lost: %+v", got.Segments[1].RoleEvidence)
+	}
 
 	draft := filler.SplitProposal{
 		ID: "sp_draft", ClipHash: clipHashFor("comps/long.mp4"), CreatedAt: now.Add(time.Minute),
 		Detection: &filler.SplitDetectionProgress{
 			ScannedThroughMs: 600_000,
 			Black:            []filler.Interval{{StartMs: 29_900, EndMs: 30_100}},
+			ChapterEdges:     []int64{0, 30_000, 33_000, 600_000},
+			Discarded:        []filler.Interval{{StartMs: 30_000, EndMs: 33_000}},
 		},
 	}
 	if err := s.UpsertSplitProposal(ctx, draft); err != nil {
 		t.Fatal(err)
 	}
 	gotDraft, err := s.GetSplitProposal(ctx, draft.ID)
-	if err != nil || gotDraft.Ready() || gotDraft.Detection.ScannedThroughMs != 600_000 || len(gotDraft.Detection.Black) != 1 {
+	if err != nil || gotDraft.Ready() || gotDraft.Detection.ScannedThroughMs != 600_000 || len(gotDraft.Detection.Black) != 1 || len(gotDraft.Detection.ChapterEdges) != 4 || len(gotDraft.Detection.Discarded) != 1 {
 		t.Fatalf("detector checkpoint round-trip = (%+v, %v)", gotDraft, err)
 	}
 	if err := s.DeleteSplitProposal(ctx, draft.ID); err != nil {
@@ -3910,6 +3990,155 @@ func testFillerInferenceAccountingAndBudgets(t *testing.T, newStore NewStoreFunc
 	}
 }
 
+func testFillerStructureAssessmentLedger(t *testing.T, newStore NewStoreFunc) {
+	t.Helper()
+	s := newStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, time.September, 10, 6, 0, 0, 0, time.UTC)
+	budget := InferenceBudget{PerClipNanoUSD: 200, PerDayNanoUSD: 2_000}
+
+	acceptedReservation := structureAssessmentReservationFixture(t, "1", "a", at)
+	state, err := s.ReserveStructureAssessment(ctx, acceptedReservation, budget)
+	if err != nil || state != fillerstructure.AssessmentReservationAccepted {
+		t.Fatalf("accepted reservation state=%q error=%v", state, err)
+	}
+	open, err := s.GetStructureAssessmentLedgerEntry(ctx, acceptedReservation.RequestSHA256)
+	if err != nil || open.State != fillerstructure.AssessmentLedgerOpen || open.Record != nil {
+		t.Fatalf("open ledger entry=%+v error=%v", open, err)
+	}
+	if _, err := s.ReserveStructureAssessment(ctx, acceptedReservation, budget); !errors.Is(err, fillerstructure.ErrAssessmentLedgerConflict) {
+		t.Fatalf("duplicate reservation error=%v", err)
+	}
+	accepted := structureAssessmentRecordFixture(t, acceptedReservation, fillerstructure.AssessmentRecordAccepted, 40)
+	if err := s.SettleStructureAssessment(ctx, accepted); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SettleStructureAssessment(ctx, accepted); err != nil {
+		t.Fatalf("idempotent settlement: %v", err)
+	}
+	closed, err := s.GetStructureAssessmentLedgerEntry(ctx, acceptedReservation.RequestSHA256)
+	if err != nil || closed.State != fillerstructure.AssessmentLedgerSettled || closed.Record == nil || closed.Record.SHA256 != accepted.SHA256 {
+		t.Fatalf("closed ledger entry=%+v error=%v", closed, err)
+	}
+	drifted := accepted
+	drifted.AssessedAt = drifted.AssessedAt.Add(time.Second)
+	drifted.SHA256 = fillerstructure.AssessmentRecordSHA256(drifted)
+	if err := s.SettleStructureAssessment(ctx, drifted); !errors.Is(err, fillerstructure.ErrAssessmentLedgerConflict) {
+		t.Fatalf("drifted settlement error=%v", err)
+	}
+	evaluation, err := s.GetInferenceEvaluation(ctx, "structure-"+acceptedReservation.RequestSHA256)
+	if err != nil || evaluation.State != InferenceCompleted || evaluation.ReservedNanoUSD != 40 || evaluation.Outcome != "standalone" {
+		t.Fatalf("shared accepted accounting=%+v error=%v", evaluation, err)
+	}
+
+	unsettledReservation := structureAssessmentReservationFixture(t, "2", "b", at.Add(time.Minute))
+	if state, err = s.ReserveStructureAssessment(ctx, unsettledReservation, budget); err != nil || state != fillerstructure.AssessmentReservationAccepted {
+		t.Fatalf("unsettled reservation state=%q error=%v", state, err)
+	}
+	unsettled := structureAssessmentRecordFixture(t, unsettledReservation, fillerstructure.AssessmentRecordUnsettled, 0)
+	if err := s.SettleStructureAssessment(ctx, unsettled); err != nil {
+		t.Fatal(err)
+	}
+	evaluation, err = s.GetInferenceEvaluation(ctx, "structure-"+unsettledReservation.RequestSHA256)
+	if err != nil || evaluation.State != InferenceFailed || evaluation.ReservedNanoUSD != unsettledReservation.RequestedNanoUSD {
+		t.Fatalf("shared unsettled accounting=%+v error=%v", evaluation, err)
+	}
+
+	heldReservation := structureAssessmentReservationFixture(t, "3", "c", at.Add(2*time.Minute))
+	heldBudget := InferenceBudget{PerClipNanoUSD: 50, PerDayNanoUSD: 2_000}
+	if state, err = s.ReserveStructureAssessment(ctx, heldReservation, heldBudget); err != nil || state != fillerstructure.AssessmentReservationHeldBudget {
+		t.Fatalf("held reservation state=%q error=%v", state, err)
+	}
+	entries, err := s.ListOpenStructureAssessmentLedgerEntries(ctx, 10)
+	if err != nil || len(entries) != 1 || entries[0].State != fillerstructure.AssessmentLedgerHeldBudget {
+		t.Fatalf("open ledger entries=%+v error=%v", entries, err)
+	}
+	held := structureAssessmentRecordFixture(t, heldReservation, fillerstructure.AssessmentRecordHeldBudget, 0)
+	if err := s.SettleStructureAssessment(ctx, held); err != nil {
+		t.Fatal(err)
+	}
+
+	overReservation := structureAssessmentReservationFixture(t, "4", "d", at.Add(3*time.Minute))
+	if state, err = s.ReserveStructureAssessment(ctx, overReservation, budget); err != nil || state != fillerstructure.AssessmentReservationAccepted {
+		t.Fatalf("over reservation state=%q error=%v", state, err)
+	}
+	over := structureAssessmentRecordFixture(t, overReservation, fillerstructure.AssessmentRecordOverReservation, 120)
+	if err := s.SettleStructureAssessment(ctx, over); err != nil {
+		t.Fatal(err)
+	}
+	evaluation, err = s.GetInferenceEvaluation(ctx, "structure-"+overReservation.RequestSHA256)
+	if err != nil || evaluation.State != InferenceHeldBudget || evaluation.ChargedNanoUSD != 120 || evaluation.ReservedNanoUSD != 120 {
+		t.Fatalf("shared over-reservation accounting=%+v error=%v", evaluation, err)
+	}
+	entries, err = s.ListOpenStructureAssessmentLedgerEntries(ctx, 10)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("remaining open ledger entries=%+v error=%v", entries, err)
+	}
+}
+
+func structureAssessmentReservationFixture(t *testing.T, requestDigit, sourceDigit string, at time.Time) fillerstructure.AssessmentReservation {
+	t.Helper()
+	reservation, err := fillerstructure.NewAssessmentReservation(fillerstructure.AssessmentReservationInput{
+		RequestSHA256: strings.Repeat(requestDigit, 64),
+		Source:        fillerstructure.Source{SHA256: strings.Repeat(sourceDigit, 64), Bytes: 8_192, DurationMS: 10_000},
+		Media:         fillerstructure.AssessmentMedia{SHA256: strings.Repeat("8", 64), Bytes: 4_096, DurationMS: 10_000, ProfileSHA256: strings.Repeat("9", 64), LineageSHA256: strings.Repeat("7", 64)},
+		Assessor: fillerstructure.AssessorProfile{
+			ID: "assessor-" + requestDigit, ModelFamily: "family-" + requestDigit,
+			Provider: "openrouter", Model: "requested-model-" + requestDigit,
+			ModelDigest: strings.Repeat("a", 64), CapabilitySHA256: strings.Repeat("b", 64),
+			PromptVersion:    fillerstructure.DirectVideoPromptVersion,
+			EvidenceContract: fillerstructure.AssessmentRecordContractVersion,
+		},
+		MetadataSnapshotSHA256: strings.Repeat("6", 64),
+		PromptSHA256:           strings.Repeat("c", 64), SchemaSHA256: strings.Repeat("d", 64),
+		ExpectedResolvedModel: "resolved-model-" + requestDigit,
+		UpstreamProvider:      "Provider", UpstreamProviderSlug: "provider",
+		RequestedNanoUSD: 100, MaximumChargeNanoUSD: 80, RequestedAt: at,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reservation
+}
+
+func structureAssessmentRecordFixture(t *testing.T, reservation fillerstructure.AssessmentReservation, state fillerstructure.AssessmentRecordState, charge int64) fillerstructure.AssessmentRecord {
+	t.Helper()
+	input := fillerstructure.AssessmentRecordInput{
+		Source: reservation.Source, Media: reservation.Media, Assessor: reservation.Assessor,
+		MetadataSnapshotSHA256: reservation.MetadataSnapshotSHA256,
+		PromptSHA256:           reservation.PromptSHA256, SchemaSHA256: reservation.SchemaSHA256,
+		RequestSHA256:    reservation.RequestSHA256,
+		UpstreamProvider: reservation.UpstreamProvider, UpstreamProviderSlug: reservation.UpstreamProviderSlug,
+		RequestedNanoUSD: reservation.RequestedNanoUSD, AssessedAt: reservation.RequestedAt.Add(time.Second),
+		State: state,
+	}
+	switch state {
+	case fillerstructure.AssessmentRecordAccepted:
+		input.RawResponse = []byte(`{"id":"generation"}`)
+		input.StructuredOutput = `{"segments":[{"endMs":10000,"role":"commercial","decisiveAtMs":[1000],"reason":"offer"}]}`
+		input.ResolvedProvider, input.ResolvedModel = "openrouter", reservation.ExpectedResolvedModel
+		input.GenerationID = "generation"
+		input.ReservedNanoUSD, input.ChargeKnown = reservation.RequestedNanoUSD, true
+		input.ChargedAmountUSD, input.ChargedNanoUSD, input.AccountedNanoUSD = "0.00000004", charge, charge
+	case fillerstructure.AssessmentRecordUnsettled:
+		input.Failure = fillerstructure.AssessmentFailureTransport
+		input.ReservedNanoUSD, input.AccountedNanoUSD = reservation.RequestedNanoUSD, reservation.RequestedNanoUSD
+	case fillerstructure.AssessmentRecordHeldBudget:
+		input.Failure = fillerstructure.AssessmentFailureBudget
+	case fillerstructure.AssessmentRecordOverReservation:
+		input.Failure = fillerstructure.AssessmentFailureOverReservation
+		input.RawResponse = []byte(`{"id":"generation"}`)
+		input.GenerationID = "generation"
+		input.ReservedNanoUSD, input.ChargeKnown = reservation.RequestedNanoUSD, true
+		input.ChargedAmountUSD, input.ChargedNanoUSD, input.AccountedNanoUSD = "0.00000012", charge, charge
+	}
+	recorded, err := fillerstructure.NewAssessmentRecord(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return recorded.Record
+}
+
 func testFillerAdmissionDecisionAudit(t *testing.T, newStore NewStoreFunc) {
 	t.Helper()
 	s := newStore(t)
@@ -4143,6 +4372,58 @@ func testFillerAdmissionDecisionAudit(t *testing.T, newStore NewStoreFunc) {
 	counts, err = s.FillerDecisionCounts(ctx)
 	if err != nil || counts.UnresolvedReviews != 0 {
 		t.Fatalf("resolved counts = %+v, %v", counts, err)
+	}
+}
+
+func testFillerSplitShadowDecisions(t *testing.T, newStore NewStoreFunc) {
+	t.Helper()
+	s := newStore(t)
+	ctx := context.Background()
+	decision := filler.StructureSplitShadowDecision{
+		SchemaVersion: filler.StructureSplitShadowSchemaVersion, ContractVersion: filler.StructureSplitShadowContractVersion,
+		ProposalID: "proposal-shadow-1", ClipHash: "clip-shadow-1",
+		SourceSHA256: strings.Repeat("a", 64), AssessmentSHA256: strings.Repeat("b", 64),
+		PolicyVersion: "production-shadow-no-certified-slices-v1",
+		Legacy: filler.StructureSplitShadowOutcome{
+			Confirm: []filler.StructureSplitShadowSpan{{StartMs: 0, EndMs: 30_000}, {StartMs: 30_000, EndMs: 60_000}},
+		},
+		Certified: filler.StructureSplitShadowOutcome{
+			Verdict: filler.RejectStructureUncertified,
+			Hold: []filler.StructureSplitShadowSpan{
+				{StartMs: 0, EndMs: 30_000, HoldReason: string(filler.RejectStructureUncertified)},
+				{StartMs: 30_000, EndMs: 60_000, HoldReason: string(filler.RejectStructureUncertified)},
+			},
+		},
+		ObservedAt: time.Unix(1_900_000_000, 123).UTC(),
+	}
+	decision.SHA256 = filler.StructureSplitShadowDecisionSHA256(decision)
+	decision.ID = "split-shadow-" + decision.SHA256
+	if err := filler.ValidateStructureSplitShadowDecision(decision); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutStructureSplitShadowDecision(ctx, decision); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.PutStructureSplitShadowDecision(ctx, decision); err != nil {
+		t.Fatalf("idempotent retry failed: %v", err)
+	}
+	got, found, err := s.GetStructureSplitShadowDecision(ctx, decision.ID)
+	if err != nil || !found || !reflect.DeepEqual(got, decision) {
+		t.Fatalf("get split shadow = %+v, %v, %v; want %+v", got, found, err, decision)
+	}
+	if _, found, err := s.GetStructureSplitShadowDecision(ctx, "missing-split-shadow"); err != nil || found {
+		t.Fatalf("missing split shadow found = %v, error = %v", found, err)
+	}
+	rows, err := s.ListStructureSplitShadowDecisions(ctx, decision.ClipHash, 10)
+	if err != nil || len(rows) != 1 || !reflect.DeepEqual(rows[0], decision) {
+		t.Fatalf("split shadow round trip = %+v, %v; want %+v", rows, err, decision)
+	}
+	other, err := s.ListStructureSplitShadowDecisions(ctx, "another-clip", 10)
+	if err != nil || len(other) != 0 {
+		t.Fatalf("split shadow clip filter = %+v, %v", other, err)
+	}
+	if _, err := s.ListStructureSplitShadowDecisions(ctx, "", 0); err == nil {
+		t.Fatal("invalid split shadow page limit was accepted")
 	}
 }
 

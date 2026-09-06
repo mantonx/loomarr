@@ -20,6 +20,7 @@ const (
 	temporalOpenRouterAttemptAccepted         = "accepted"
 	temporalOpenRouterAttemptFailed           = "failed"
 	temporalOpenRouterAttemptUnsettled        = "unsettled"
+	temporalOpenRouterAttemptOverReservation  = "over_reservation"
 )
 
 type TemporalOpenRouterAttempt struct {

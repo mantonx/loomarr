@@ -265,6 +265,10 @@ RETIRED=(
   'io.github.takahirom.roborazzi|P5c: native reference captures replaced the retired JVM screenshot harness'
   'gen-android-tokens.mjs|P5c: no Kotlin token consumer remains'
   'with-shield-sideload-signing|P5b: all React Native release channels use the release-signing plugin'
+	# The detector compatibility partition remains a ledger comparison only. Returning it as the
+	# application partition recreated unattended split materialization whenever certified runtime
+	# wiring was absent.
+	'return legacy, legacy|retired: automatic split materialization requires the certified complete-plan gate'
 )
 # ⚠ `internal/store/migrations/` is exempt, and it is the one exemption that is forced rather than
 # chosen. A migration that CREATES a table names it, and §16 makes applied migrations immutable —

@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	temporalStructureOpenRouterCheckpointSchemaVersion = 1
+	temporalStructureOpenRouterCheckpointSchemaVersion = 2
 	temporalStructureOpenRouterCheckpointFilename      = "structure-checkpoint.json"
 	temporalStructureOpenRouterResponsesDir            = "responses"
 )
@@ -37,26 +37,28 @@ type TemporalStructureOpenRouterAttempt struct {
 }
 
 type temporalStructureOpenRouterCheckpointIdentity struct {
-	SchemaVersion            int       `json:"schemaVersion"`
-	ChallengeID              string    `json:"challengeId"`
-	ChallengeGeneratedAt     time.Time `json:"challengeGeneratedAt"`
-	PublicManifestSHA256     string    `json:"publicManifestSha256"`
-	SelectionSHA256          string    `json:"selectionSha256"`
-	CapabilitySnapshotSHA256 string    `json:"capabilitySnapshotSha256"`
-	BaseURL                  string    `json:"baseUrl"`
-	Model                    string    `json:"model"`
-	ResolvedModel            string    `json:"resolvedModel"`
-	ModelFamily              string    `json:"modelFamily"`
-	UpstreamProvider         string    `json:"upstreamProvider"`
-	UpstreamProviderSlug     string    `json:"upstreamProviderSlug"`
-	PromptVersion            string    `json:"promptVersion"`
-	PromptSHA256             string    `json:"promptSha256"`
-	ReasoningMode            string    `json:"reasoningMode"`
-	AssessorID               string    `json:"assessorId"`
-	ExpectedCases            int       `json:"expectedCases"`
-	MaxRequests              int       `json:"maxRequests"`
-	MaxSpendNanoUSD          int64     `json:"maxSpendNanoUsd"`
-	MaxChargeNanoUSD         int64     `json:"maxChargeNanoUsd"`
+	SchemaVersion                 int       `json:"schemaVersion"`
+	ChallengeID                   string    `json:"challengeId"`
+	ChallengeGeneratedAt          time.Time `json:"challengeGeneratedAt"`
+	PublicManifestSHA256          string    `json:"publicManifestSha256"`
+	SelectionSHA256               string    `json:"selectionSha256"`
+	CapabilitySnapshotSHA256      string    `json:"capabilitySnapshotSha256"`
+	BaseURL                       string    `json:"baseUrl"`
+	Model                         string    `json:"model"`
+	ResolvedModel                 string    `json:"resolvedModel"`
+	ModelFamily                   string    `json:"modelFamily"`
+	UpstreamProvider              string    `json:"upstreamProvider"`
+	UpstreamProviderSlug          string    `json:"upstreamProviderSlug"`
+	PromptVersion                 string    `json:"promptVersion"`
+	PromptSHA256                  string    `json:"promptSha256"`
+	ReasoningMode                 string    `json:"reasoningMode"`
+	AssessorID                    string    `json:"assessorId"`
+	ExpectedCases                 int       `json:"expectedCases"`
+	MaxRequests                   int       `json:"maxRequests"`
+	MaxSpendNanoUSD               int64     `json:"maxSpendNanoUsd"`
+	ReservationNanoUSD            int64     `json:"reservationNanoUsd"`
+	MaximumInputTokens            int64     `json:"maximumInputTokens"`
+	EstimatedMaximumChargeNanoUSD int64     `json:"estimatedMaximumChargeNanoUsd"`
 }
 
 type temporalStructureOpenRouterCheckpoint struct {
@@ -67,6 +69,7 @@ type temporalStructureOpenRouterCheckpoint struct {
 
 func buildTemporalStructureOpenRouterCheckpointIdentity(config TemporalStructureOpenRouterConfig, manifest TemporalStructureChallengeManifest, manifestSHA, selectionSHA, baseURL string) temporalStructureOpenRouterCheckpointIdentity {
 	model := openRouterTemporalModel(config.Snapshot, config.Model)
+	estimatedMaximumCharge, _ := estimateTemporalStructureOpenRouterCharge(config)
 	return temporalStructureOpenRouterCheckpointIdentity{
 		SchemaVersion: temporalStructureOpenRouterCheckpointSchemaVersion,
 		ChallengeID:   manifest.ChallengeID, ChallengeGeneratedAt: manifest.GeneratedAt,
@@ -77,7 +80,8 @@ func buildTemporalStructureOpenRouterCheckpointIdentity(config TemporalStructure
 		PromptVersion: TemporalStructureOpenRouterPromptVersion, PromptSHA256: temporalStructureOpenRouterPromptSHA256(),
 		ReasoningMode: config.ReasoningMode, AssessorID: config.AssessorID,
 		ExpectedCases: config.ExpectedCases, MaxRequests: config.MaxRequests,
-		MaxSpendNanoUSD: config.MaxSpendNanoUSD, MaxChargeNanoUSD: config.MaxChargeNanoUSD,
+		MaxSpendNanoUSD: config.MaxSpendNanoUSD, ReservationNanoUSD: config.ReservationNanoUSD,
+		MaximumInputTokens: config.MaximumInputTokens, EstimatedMaximumChargeNanoUSD: estimatedMaximumCharge,
 	}
 }
 
@@ -144,7 +148,7 @@ func persistTemporalStructureOpenRouterCheckpoint(dir string, checkpoint tempora
 
 func validateTemporalStructureOpenRouterCheckpoint(dir string, checkpoint temporalStructureOpenRouterCheckpoint, selected []TemporalStructureChallengePublicCase) error {
 	identity := checkpoint.Identity
-	if identity.SchemaVersion != temporalStructureOpenRouterCheckpointSchemaVersion || strings.TrimSpace(identity.ChallengeID) == "" || identity.ChallengeGeneratedAt.IsZero() || !reviewSHA256(identity.PublicManifestSHA256) || !reviewSHA256(identity.SelectionSHA256) || !reviewSHA256(identity.CapabilitySnapshotSHA256) || !reviewSHA256(identity.PromptSHA256) || identity.BaseURL == "" || identity.Model == "" || identity.ResolvedModel == "" || identity.ModelFamily == "" || identity.UpstreamProvider == "" || identity.UpstreamProviderSlug == "" || identity.PromptVersion != TemporalStructureOpenRouterPromptVersion || !validTemporalStructureOpenRouterReasoningMode(identity.ReasoningMode) || identity.AssessorID == "" || identity.ExpectedCases <= 0 || identity.MaxRequests != identity.ExpectedCases || identity.MaxSpendNanoUSD <= 0 || identity.MaxChargeNanoUSD <= 0 || identity.MaxChargeNanoUSD > identity.MaxSpendNanoUSD {
+	if identity.SchemaVersion != temporalStructureOpenRouterCheckpointSchemaVersion || strings.TrimSpace(identity.ChallengeID) == "" || identity.ChallengeGeneratedAt.IsZero() || !reviewSHA256(identity.PublicManifestSHA256) || !reviewSHA256(identity.SelectionSHA256) || !reviewSHA256(identity.CapabilitySnapshotSHA256) || !reviewSHA256(identity.PromptSHA256) || identity.BaseURL == "" || identity.Model == "" || identity.ResolvedModel == "" || identity.ModelFamily == "" || identity.UpstreamProvider == "" || identity.UpstreamProviderSlug == "" || identity.PromptVersion != TemporalStructureOpenRouterPromptVersion || !validTemporalStructureOpenRouterReasoningMode(identity.ReasoningMode) || identity.AssessorID == "" || identity.ExpectedCases <= 0 || identity.MaxRequests != identity.ExpectedCases || identity.MaxSpendNanoUSD <= 0 || identity.ReservationNanoUSD <= 0 || identity.ReservationNanoUSD > identity.MaxSpendNanoUSD || identity.MaximumInputTokens <= 0 || identity.EstimatedMaximumChargeNanoUSD <= 0 || identity.EstimatedMaximumChargeNanoUSD > identity.ReservationNanoUSD {
 		return fmt.Errorf("OpenRouter structure checkpoint identity is invalid")
 	}
 	if len(selected) != identity.ExpectedCases || len(checkpoint.Attempts) > identity.MaxRequests || len(checkpoint.Assessments) > identity.ExpectedCases {
@@ -154,15 +158,11 @@ func validateTemporalStructureOpenRouterCheckpoint(dir string, checkpoint tempor
 	if !countsBound {
 		return fmt.Errorf("OpenRouter structure checkpoint has an unbound settled attempt")
 	}
-	var consumed int64
 	for index, attempt := range checkpoint.Attempts {
-		if index >= len(selected) || attempt.Alias != selected[index].Alias || attempt.RequestedAt.IsZero() || !reviewSHA256(attempt.RequestSHA256) || attempt.ReservedNanoUSD != identity.MaxChargeNanoUSD || attempt.LatencyMS < 0 || attempt.PromptTokens < 0 || attempt.CompletionTokens < 0 || attempt.ChargedNanoUSD < 0 || attempt.ChargedNanoUSD > attempt.ReservedNanoUSD {
+		if index >= len(selected) || attempt.Alias != selected[index].Alias || attempt.RequestedAt.IsZero() || !reviewSHA256(attempt.RequestSHA256) || attempt.LatencyMS < 0 || attempt.PromptTokens < 0 || attempt.CompletionTokens < 0 {
 			return fmt.Errorf("OpenRouter structure checkpoint attempt %d is invalid", index)
 		}
-		settled := attempt.State == temporalOpenRouterAttemptAccepted || attempt.State == temporalOpenRouterAttemptFailed
-		unsettled := attempt.State == temporalOpenRouterAttemptReserved || attempt.State == temporalOpenRouterAttemptUnsettled
-		settledNanoUSD, chargeErr := fillereval.USDToNanoCeil(attempt.ChargedAmountUSD)
-		if !settled && !unsettled || settled && (attempt.ChargedAmountUSD == "" || chargeErr != nil || settledNanoUSD != attempt.ChargedNanoUSD || attempt.ResponseSHA256 == "" || attempt.RawResponsePath == "") || unsettled && (attempt.ChargedAmountUSD != "" || attempt.ChargedNanoUSD != 0) || attempt.State == temporalOpenRouterAttemptAccepted && attempt.OperationalFailure != "" || (attempt.State == temporalOpenRouterAttemptFailed || attempt.State == temporalOpenRouterAttemptUnsettled) && !validTemporalOpenRouterFailure(attempt.OperationalFailure) {
+		if _, err := validateTemporalStructureAttemptAccounting(attempt, identity.ReservationNanoUSD); err != nil {
 			return fmt.Errorf("OpenRouter structure checkpoint attempt %d has invalid settlement state", index)
 		}
 		if attempt.ResponseSHA256 != "" {
@@ -176,14 +176,9 @@ func validateTemporalStructureOpenRouterCheckpoint(dir string, checkpoint tempor
 				return fmt.Errorf("OpenRouter structure raw response binding failed")
 			}
 		}
-		cost := attempt.ChargedNanoUSD
-		if unsettled {
-			cost = attempt.ReservedNanoUSD
-		}
-		if consumed > identity.MaxSpendNanoUSD-cost {
-			return fmt.Errorf("OpenRouter structure checkpoint exceeds its spend ceiling")
-		}
-		consumed += cost
+	}
+	if _, err := summarizeTemporalStructureAccounting(checkpoint.Attempts, identity.ReservationNanoUSD, identity.MaxSpendNanoUSD); err != nil {
+		return fmt.Errorf("OpenRouter structure checkpoint accounting is invalid: %w", err)
 	}
 	for index, assessment := range checkpoint.Assessments {
 		if assessment.Alias != selected[index].Alias {
@@ -202,18 +197,11 @@ func validateTemporalStructureOpenRouterCheckpoint(dir string, checkpoint tempor
 }
 
 func temporalStructureOpenRouterCheckpointSpend(checkpoint temporalStructureOpenRouterCheckpoint) (int64, error) {
-	var consumed int64
-	for _, attempt := range checkpoint.Attempts {
-		cost := attempt.ChargedNanoUSD
-		if attempt.State == temporalOpenRouterAttemptReserved || attempt.State == temporalOpenRouterAttemptUnsettled {
-			cost = attempt.ReservedNanoUSD
-		}
-		if consumed > checkpoint.Identity.MaxSpendNanoUSD-cost {
-			return 0, fmt.Errorf("OpenRouter structure checkpoint exhausts its spend ceiling")
-		}
-		consumed += cost
+	summary, err := summarizeTemporalStructureAccounting(checkpoint.Attempts, checkpoint.Identity.ReservationNanoUSD, checkpoint.Identity.MaxSpendNanoUSD)
+	if err != nil {
+		return 0, fmt.Errorf("OpenRouter structure checkpoint exhausts its authorized spend: %w", err)
 	}
-	return consumed, nil
+	return summary.consumed, nil
 }
 
 func writeTemporalStructureOpenRouterRawResponse(dir, alias string, raw []byte) (string, error) {

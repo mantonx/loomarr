@@ -61,6 +61,9 @@ type structuredJSONSchema struct {
 }
 
 func buildRequest(config Config) ([]byte, error) {
+	if config.DisableReasoning && config.EnableReasoning {
+		return nil, fmt.Errorf("OpenRouter structured request cannot enable and disable reasoning")
+	}
 	parts := []structuredPart{{Type: "text", Text: config.Content}}
 	for _, image := range config.Images {
 		parts = append(parts, structuredPart{Type: "image_url", ImageURL: &structuredMediaURL{URL: "data:image/jpeg;base64," + image}})
@@ -89,6 +92,8 @@ func buildRequest(config Config) ([]byte, error) {
 	}
 	if config.DisableReasoning {
 		payload.Reasoning = &structuredReasoning{Enabled: false}
+	} else if config.EnableReasoning {
+		payload.Reasoning = &structuredReasoning{Enabled: true}
 	}
 	return json.Marshal(payload)
 }

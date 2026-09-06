@@ -123,23 +123,27 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 | `catalog` | 6 | `library`, `provision` |
 | `contact` | 5 | — |
 | `diagnostics` | 8 | — |
-| `filler` | 8 | `diagnostics`, `filleradmission`, `llm`, `mediatools`, `taxonomy` |
+| `filler` | 10 | `diagnostics`, `filleradmission`, `fillerstructure`, `fillerstructurewindow`, `llm`, `mediatools`, `taxonomy` |
 | `filleradmission` | 8 | — |
+| `fillerbakeoff` | 5 | `filleradmission`, `fillereval`, `httpx`, `openroutermedia` |
 | `fillereval` | 5 | — |
-| `fillersafety` | 5 | `mediatools` |
-| `httpx` | 10 | `metrics` |
+| `fillersafety` | 5 | `mediatools`, `openroutermedia` |
+| `fillerstructure` | 8 | — |
+| `fillerstructurewindow` | 6 | `fillerstructure` |
+| `httpx` | 11 | `metrics` |
 | `invitation` | 6 | `contact` |
 | `library` | 8 | `filler`, `httpx`, `metrics` |
 | `llm` | 6 | `httpx`, `metrics` |
-| `mediatools` | 6 | `diagnostics` |
+| `mediatools` | 7 | `diagnostics` |
 | `metrics` | 8 | `provision` |
 | `notifications` | 5 | `httpx` |
+| `openroutermedia` | 6 | `fillereval` |
 | `provision` | 18 | — |
 | `quality` | 7 | `provision` |
 | `recovery` | 5 | — |
 | `schedule` | 15 | `provision` |
 | `scheduler` | 6 | `store` |
-| `store` | 14 | `contact`, `diagnostics`, `filler`, `filleradmission`, `fillersafety`, `invitation`, `notifications`, `provision`, `quality`, `recovery`, `schedule`, `taxonomy` |
+| `store` | 14 | `contact`, `diagnostics`, `filler`, `filleradmission`, `fillersafety`, `fillerstructure`, `fillerstructurewindow`, `invitation`, `notifications`, `provision`, `quality`, `recovery`, `schedule`, `taxonomy` |
 | `suggest` | 6 | `catalog`, `llm`, `provision`, `quality`, `schedule`, `store` |
 | `taxonomy` | 5 | — |
 
@@ -165,6 +169,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns the source-neutral, non-authorizing inventory contract used to qualify certification corpus lanes.
 - **`fillereval`** · 5 importers
   Owns the hermetic certification contract for filler admission.
+- **`fillerstructure`** · 8 importers
+  Owns the provider-neutral complete-timeline agreement policy shared by certification and production.
 - **`images/rustgen`** · 4 importers
   Concrete adapter for Loomarr's required Rust image worker (§22).
 - **`inventory`** · 3 importers
@@ -214,7 +220,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns administrator admission decisions and their bearer grants (§11).
 - **`metrics`** · 8 importers · → `images/rustgen`, `provision`
   Owns Loomarr's generation-scoped Prometheus surface (design §7 /metrics, §17).
-- **`openroutermedia`** · 4 importers · → `fillereval`
+- **`openroutermedia`** · 6 importers · → `fillereval`
   Owns Loomarr's bounded OpenRouter structured-media transport.
 - **`prepared`** · 4 importers · → `diagnostics`, `media`
   Owns immutable, reusable playout publications.
@@ -223,7 +229,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 2**
 
-- **`httpx`** · 10 importers · → `metrics`
+- **`httpx`** · 11 importers · → `metrics`
   Shared outbound HTTP client factory (design §6, §21 phase 1).
 - **`plannerreference`** · → `quality`
   Binds a planner scorecard to the exact local model, runtime, host, and cold/warm protocol used to produce it.
@@ -232,7 +238,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 3**
 
-- **`fillerbakeoff`** · 4 importers · → `filleradmission`, `fillereval`, `httpx`, `openroutermedia`
+- **`fillerbakeoff`** · 5 importers · → `filleradmission`, `fillereval`, `httpx`, `openroutermedia`
   Runs bounded, inference-spending filler admission comparisons.
 - **`llm`** · 6 importers · → `httpx`, `metrics`
   LLM provider abstraction (design §8): one provider-neutral Chat primitive with tool-use, implemented by exactly TWO wire kinds — Ollama (the homelab default) and OpenAI-compatible.
@@ -247,34 +253,52 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 
 **Layer 4**
 
-- **`mediatools`** · 6 importers · → `diagnostics`, `playout`, `proctree`
+- **`mediatools`** · 7 importers · → `diagnostics`, `playout`, `proctree`
   Ffmpeg / ffprobe / whisper layer (§10, §14.2): the exec calls, the parsers for what those binaries print, and the shapes they return.
 - **`recommend`** · → `llm`
   Defines inert Channel Concepts and the hermetic evaluator used to certify channel-recommendation models.
 
 **Layer 5**
 
-- **`filler`** · 8 importers · → `diagnostics`, `filleradmission`, `fillerdecision`, `llm`, `mediatools`, `taxonomy`
-  Commercials & filler domain (design §10): the clip catalog model and pod assembly.
 - **`fillerreference`** · 1 importer · → `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `mediatools`, `taxonomy`
   Owns the deterministic pre-screen for the production-ready filler reference cohort.
 - **`fillersafety`** · 5 importers · → `mediatools`, `openroutermedia`, `proctree`
   Owns the fail-closed spoken-safety cascade and its shadow evidence.
+- **`fillerstructuremedia`** · 4 importers · → `fillerstructure`, `mediatools`
+  Owns the exact media contract shared by complete-timeline structure qualification and production assessment.
 
 **Layer 6**
 
-- **`clipfetch`** · 1 importer · → `filler`, `proctree`
-  Downloads filler clips into the drop-folder (design §10, §16).
-- **`fillerreview`** · → `filler`, `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `fillerreference`, `fillersafety`, `httpx`, `mediatools`, `openroutermedia`
-  Materializes identity-blind evidence for independent semantic review.
 - **`fillersafetycert`** · 2 importers · → `fillersafety`
   Owns deterministic, non-authorizing certification of the durable spoken-safety cascade.
-- **`library`** · 8 importers · → `episodeevidence`, `filler`, `httpx`, `inventory`, `metrics`
-  Library port (design §6, §2 boundaries): a shared Emby/Jellyfin adapter.
-- **`store`** · 14 importers · → `contact`, `diagnostics`, `episodeevidence`, `filler`, `filleradmission`, `fillerdecision`, `fillersafety`, `inventory`, `invitation`, `notifications`, `provision`, `quality`, `recovery`, `schedule`, `secretprotection`, `taxonomy`
-  Loomarr's persistence abstraction (design §5): one Store interface, two first-class backends (SQLite via modernc.org/sqlite, Postgres via pgx's database/sql shim).
+- **`fillerstructurewindow`** · 6 importers · → `fillerstructure`, `fillerstructuremedia`
+  Owns the complete-coverage plan used to assess long filler reels without pretending that independently processed windows are independent model votes.
 
 **Layer 7**
+
+- **`filler`** · 10 importers · → `diagnostics`, `filleradmission`, `fillerdecision`, `fillerstructure`, `fillerstructuremedia`, `fillerstructurewindow`, `llm`, `mediatools`, `taxonomy`
+  Commercials & filler domain (design §10): the clip catalog model and pod assembly.
+- **`fillersafetycorpus`** · 1 importer · → `fillercorpus`, `fillersafety`, `fillersafetycert`
+  Prepares private real-speech cohorts for later spoken-safety authority assembly without assigning certification truth.
+- **`fillerstructurewindowcert`** · 1 importer · → `fillerstructure`, `fillerstructurewindow`
+  Certifies the long-reel window protocol against private, known-truth timelines.
+
+**Layer 8**
+
+- **`clipfetch`** · 1 importer · → `filler`, `proctree`
+  Downloads filler clips into the drop-folder (design §10, §16).
+- **`fillersafetyreview`** · → `fillerbakeoff`, `fillereval`, `fillersafety`, `fillersafetycert`, `fillersafetycorpus`, `httpx`, `mediatools`, `openroutermedia`
+  Runs one independent, exhaustive model review of an assembled spoken-safety certification draft.
+- **`fillerstructureopenrouter`** · 1 importer · → `filler`, `fillerstructure`, `fillerstructuremedia`, `openroutermedia`
+  Adapts the bounded OpenRouter media transport to the provider-neutral complete-timeline assessor port.
+- **`fillerstructurewindowopenrouter`** · 2 importers · → `filler`, `fillerbakeoff`, `fillerstructure`, `fillerstructurewindow`, `httpx`, `openroutermedia`
+  Adapts the bounded OpenRouter media transport to one complete planned-window assessment call.
+- **`library`** · 8 importers · → `episodeevidence`, `filler`, `httpx`, `inventory`, `metrics`
+  Library port (design §6, §2 boundaries): a shared Emby/Jellyfin adapter.
+- **`store`** · 14 importers · → `contact`, `diagnostics`, `episodeevidence`, `filler`, `filleradmission`, `fillerdecision`, `fillersafety`, `fillerstructure`, `fillerstructurewindow`, `inventory`, `invitation`, `notifications`, `provision`, `quality`, `recovery`, `schedule`, `secretprotection`, `taxonomy`
+  Loomarr's persistence abstraction (design §5): one Store interface, two first-class backends (SQLite via modernc.org/sqlite, Postgres via pgx's database/sql shim).
+
+**Layer 9**
 
 - **`activity`** · 3 importers · → `store`
   Records what Loomarr did, for the Dashboard's Recent activity feed (§5, §12, V32).
@@ -284,8 +308,8 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
   Owns the durable workflow that separates preparing a playout backend from publishing it to the media server.
 - **`catalog`** · 6 importers · → `library`, `provision`
   Catalog boundary (design §7.2, §8): federated search over the library + TMDB + the clip catalog, returning grounded Candidates with real external ids and an in_library flag.
-- **`fillersafetycorpus`** · 1 importer · → `fillercorpus`, `fillersafety`, `fillersafetycert`
-  Prepares private real-speech cohorts for later spoken-safety authority assembly without assigning certification truth.
+- **`fillerreview`** · → `filler`, `filleradmission`, `fillerbakeoff`, `fillercorpus`, `fillereval`, `fillerreference`, `fillersafety`, `fillerstructure`, `fillerstructuremedia`, `fillerstructureopenrouter`, `fillerstructurewindow`, `fillerstructurewindowcert`, `fillerstructurewindowopenrouter`, `httpx`, `mediatools`, `openroutermedia`
+  Materializes identity-blind evidence for independent semantic review.
 - **`scheduler`** · 6 importers · → `store`
   Runs Loomarr's recurring background work as named, tunable, on-demand JOBS (design §18.1) — the model Sonarr/Radarr/Overseerr expose as System → Tasks.
 - **`settings`** · 1 importer · → `library`
@@ -297,14 +321,12 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 - **`testkit/libraryfixture`** · → `library`, `schedule`
   No-network adapters for library-facing tests.
 
-**Layer 8**
+**Layer 10**
 
 - **`channels`** · 2 importers · → `filler`, `programmer`, `provision`, `schedule`, `scheduler`, `store`
   Channel reconcile engine (design §9/§18): the conductor that turns a store.Channel's approved lineup + live availability into durable desired state for whichever playout backend owns it.
 - **`devbootstrap`** · → `auth`, `store`
   Prepares an isolated agent worktree for UI development.
-- **`fillersafetyreview`** · → `fillerbakeoff`, `fillereval`, `fillersafety`, `fillersafetycert`, `fillersafetycorpus`, `httpx`, `mediatools`, `openroutermedia`
-  Runs one independent, exhaustive model review of an assembled spoken-safety certification draft.
 - **`images`** · 2 importers · → `images/rustgen`, `scheduler`
   One pipeline every image in Loomarr travels (§22).
 - **`reconcile`** · 1 importer · → `activity`, `library`, `provision`, `requester`, `schedule`, `scheduler`, `store`
@@ -318,7 +340,7 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 - **`tmdb`** · 2 importers · → `catalog`, `httpx`, `metrics`, `provision`
   TMDB adapter (design §8 grounding): the TMDB-scope corpus for the catalog and the exists-check for acquisition validation.
 
-**Layer 9**
+**Layer 11**
 
 - **`binder`** · 2 importers · → `provision`, `schedule`, `store`, `suggest`
   Plans how an APPROVED proposal changes a channel (§7): create it on first approval, patch it (preserving operator-owned fields) on re-approval or refine.
@@ -329,14 +351,14 @@ Packages imported by 5 or more others, and their dependencies within the spine. 
 - **`recurate`** · 1 importer · → `catalog`, `provision`, `schedule`, `scheduler`, `store`, `suggest`
   Scheduled channel re-curation (programming-design §8.2): a self-updating channel that periodically re-evaluates its intent against the current library and evolves its lineup — preferring in-library matches, weighting net-new acquisitions by quality + intent, and NEVER bypassing the approval gate.
 
-**Layer 10**
+**Layer 12**
 
 - **`api`** · 1 importer · → `activity`, `auth`, `binder`, `buildinfo`, `channels`, `contact`, `diagnostics`, `events`, `filler`, `filleradmission`, `fillerdecision`, `images`, `invitation`, `media`, `metrics`, `notifications`, `playout`, `prepared`, `proposalworkflow`, `provision`, `quality`, `recovery`, `schedule`, `store`, `suggest`, `taxonomy`, `web`
   Wires Loomarr's inbound HTTP surface (§7).
 
-**Layer 11**
+**Layer 13**
 
-- **`app`** · → `activity`, `api`, `auth`, `backendtransition`, `binder`, `buildinfo`, `catalog`, `channels`, `clipfetch`, `config`, `contact`, `diagnostics`, `events`, `filler`, `filleradmission`, `fillerdecision`, `httpx`, `images`, `images/rustgen`, `inventory`, `invitation`, `library`, `llm`, `media`, `mediatools`, `metrics`, `notifications`, `playout`, `prepared`, `programmer`, `proposalworkflow`, `provision`, `quality`, `reconcile`, `recovery`, `recurate`, `reference`, `requester`, `retention`, `schedule`, `scheduler`, `secretprotection`, `settings`, `setup`, `store`, `suggest`, `taxonomy`, `tmdb`
+- **`app`** · → `activity`, `api`, `auth`, `backendtransition`, `binder`, `buildinfo`, `catalog`, `channels`, `clipfetch`, `config`, `contact`, `diagnostics`, `events`, `filler`, `filleradmission`, `fillerdecision`, `fillerstructurewindow`, `fillerstructurewindowopenrouter`, `httpx`, `images`, `images/rustgen`, `inventory`, `invitation`, `library`, `llm`, `media`, `mediatools`, `metrics`, `notifications`, `playout`, `prepared`, `programmer`, `proposalworkflow`, `provision`, `quality`, `reconcile`, `recovery`, `recurate`, `reference`, `requester`, `retention`, `schedule`, `scheduler`, `secretprotection`, `settings`, `setup`, `store`, `suggest`, `taxonomy`, `tmdb`
   Composition root: it wires every subsystem from an open store into the API handler that cmd/loomarr serves and the integration tests drive.
 
 
@@ -3523,7 +3545,10 @@ the master; it never promotes a partial derivative.
 
 Confirmed compilation children retain the reviewed parent hash and exact intended interval as today,
 and additionally bind the parent media-asset digest and the exact source role from which the cut was
-made. Boundary measurements compare the child with that immutable parent role. This prevents a future
+made. A child cut from a confirmed complete-timeline decision also retains that decision's exact
+semantic segment role; materialization derives the catalog kind from this role instead of copying the
+compilation parent's generic kind. Boundary measurements compare the child with that immutable parent
+role. This prevents a future
 playback-recipe change from silently changing what the split decision meant. The actual boundary
 detection and commercial-versus-scene-change policy remain the following split rung's responsibility.
 
@@ -3531,6 +3556,340 @@ There is deliberately no automatic master garbage collection in V66. A later rec
 a master only after no playable clip, split lineage, audit record, inference evidence, acquisition
 authority, or retention obligation refers to it and after proving every remaining derivative is
 regenerable. Until that complete ownership graph exists, storage costs are visible and masters stay.
+
+### Compilation structure is assessed before held children are materialized (V67)
+
+The duration quarantine introduced in V45 answers only **“is this recording too long to air as one
+ordinary filler clip?”** It does not answer **“does this recording contain several commercials?”** A
+two-hour programme excerpt, a damaged capture, and a commercial compilation all cross the same duration
+threshold. The existing `is_composite` column remains the conservative non-airable guard for migration
+compatibility, but while structure is unresolved it means **long-source candidate**, not a semantic
+compilation verdict. Only the source-structure assessment below may establish that verdict.
+
+One deep structure-assessment module owns the complete evidence-to-plan operation. Its interface accepts
+an exact V66 evidence asset plus independently timestamped observations and returns one validated,
+content-addressed assessment. Callers do not sequence individual detectors, interpret model confidence,
+or assemble cuts themselves. Internally the module may use deterministic reducers and a bounded model
+adapter; those are internal seams, not additional application interfaces.
+
+The source verdict uses one closed vocabulary:
+
+| Source structure | Meaning |
+| --- | --- |
+| `single_unit` | One independently usable item, including a long single-product infomercial. |
+| `compilation_break` | Two or more independently bounded filler units recorded back to back. |
+| `programme_with_spots` | Programme material containing inserted filler units; programme spans remain explicit. |
+| `ambiguous` | Available evidence cannot safely distinguish the structures above. |
+| `unusable` | The source cannot support a complete trustworthy assessment (for example, corrupt or materially missing evidence). |
+
+Duration can request assessment and keep a source non-airable; it is never evidence for
+`compilation_break`. A source remains `ambiguous` rather than being promoted by plausible 15/30/60-second
+unit lengths. A single long span is not split merely because it resembles several standard slots.
+
+Every observation is a durable source-relative fact with a closed kind, exact interval or uncertainty
+window, producer identity, evidence digest, and outcome. Container chapters, black intervals, silence
+intervals, transcript topic transitions, OCR/logo transitions, audio continuity, and visual continuity
+remain independent observations even when they coincide. Coincidence is computed by the reducer; it is
+not flattened into a score that discards which detector agreed or contradicted the candidate. An ordinary
+scene cut is never a boundary proposal because it describes editing inside commercials as often as joins
+between them. Scene change and standard duration may be recorded only as supporting context for a boundary
+already proposed by a more specific observation.
+
+Boundary fusion is deterministic and conservative:
+
+1. A declared chapter edge or compatible precise separator observations may propose a bounded cut.
+2. Agreement narrows the candidate's uncertainty window; conflicts survive on the candidate and prevent
+   unattended materialization.
+3. Transcript, OCR/logo, audio-continuity, and visual-continuity changes may support, contradict, or leave
+   that candidate unresolved. Absence from a modality that did not run is not negative evidence.
+4. The bounded observation model may inspect only unresolved spans. Its strict output cites supplied
+   observation IDs and records exact provider, model, prompt/schema, request/response digest, time, token,
+   and cost identity. It contributes an observation and cannot override a hard conflict, invent an
+   observation, or directly set the source verdict.
+5. No scene-only, duration-only, model-only, or round-timestamp candidate becomes an automatic cut.
+
+The assessment contains a **coverage-preserving segment plan** over the complete half-open source timeline
+`[0,duration)`. Plan intervals are ordered, non-overlapping, adjacent, and together cover exactly the whole
+asset. Every interval has one disposition:
+
+- `keep`: a proposed child with two resolved boundaries and one independently established role;
+- `discard`: material intentionally omitted with a closed reason and retained source-relative interval;
+- `unresolved`: material requiring review, including uncertain joins or roles.
+
+There are no implicit gaps. A three-second stinger that cannot enter the catalog may be an explained
+discard, but its time, evidence, and reason remain in the proposal. Editing or partial confirmation rewrites
+the plan while preserving complete coverage; it cannot make omitted time disappear. The existing aggregate
+drop tally is compatibility display data only and is not structure authority.
+
+Each `keep` interval is classified independently as `commercial`, `promo`, `bumper`, `station_id`, `psa`,
+`trailer`, `interstitial`, `programme_fragment`, `non_filler`, `ambiguous`, or `unusable`. A parent catalog kind is never
+copied as the child's role. `programme_fragment`, `non_filler`, `ambiguous`, and `unusable` are never
+automatically admitted as filler. Every child binds its role evidence, transcript spans, OCR/logo findings,
+frame/audio evidence, exact parent evidence asset, and intended source-relative interval before media is
+cut. The portable lineage retains the exact role and the sidecar retains the derived catalog kind so a
+catalog rebuild cannot collapse every child back to the parent's generic `commercial` value. The legacy
+catalog vocabulary represents `promo` as `interstitial`; the exact `promo` role remains in lineage rather
+than being erased by that scheduling projection. Post-screen taxonomy enrichment remains a later operation
+and cannot repair an unresolved role.
+
+The existing bounded split-time vision request may return taxonomy grounding and a segment-role judgement
+in the same call; role assessment does not introduce an unbounded second request per cut. The role result is
+a distinct `segment_role` observation, not a tag projected into a role. It binds the exact source and span,
+ordered frame digests, prompt contract and digest, request and response digests, assessment time, requested
+and resolved provider/model identity, modalities, attempts, latency, token accounting, generation identity,
+and provider-reported charge when available. Missing provider/model identity, malformed evidence, an
+unsupported role, or an absent explanation yields no role claim. `ambiguous` and `unusable` remain recorded
+outcomes but cannot create a `keep` interval. Rebuilding an assessment replaces role observations for the
+same spans from the proposal's retained evidence while preserving independent detector observations and
+explicit discard intervals; it never treats a prior tag, generated name, or parent kind as role evidence.
+
+When that sparse-frame request cannot establish a role, the exact unresolved interval may make one
+**direct-video escalation** through the certified `filler_video` route. The escalation receives a freshly
+rendered, metadata-free MP4 of only that source interval, capped at 60 seconds and 12 MiB; an over-limit span
+is held rather than narrowed silently. A valid frame role suppresses the escalation. The resulting role
+evidence binds the derivative SHA-256 instead of frame SHA-256s plus the same exact source/span,
+prompt/response, route, modalities, accounting, and generation identity. An extraction failure, derivative
+identity drift, unavailable route, malformed output, missing attribution, or unsupported role leaves the
+interval unresolved. Merely implementing or capability-checking this route does not certify it and cannot
+expand unattended materialization; only the locked source/signal-slice result below may do that.
+
+Raw assessors are observations, not competing materialization authorities. A deterministic
+**structure-decision reducer** receives complete, content-addressed candidate assessments from at least
+two independently locked producer families bound by the current reducer certificate. Two routes serving
+the same model family count once. The
+reducer first validates exact source identity and complete timeline coverage, then requires the candidates
+to agree on the source unit, interval count, per-interval disposition and role, and ordered joins. Joins may
+differ only inside the locked boundary tolerance; the reducer selects their deterministic midpoint and
+revalidates complete coverage. A hard detector conflict, operational failure, missing interval, different
+unit, different role, excessive join distance, or unsupported candidate produces an explicit hold.
+Majority voting cannot turn disagreement into a decision, and one valid prohibited observation remains
+governed by the separate safety reducer rather than this structure policy.
+
+A complete-timeline candidate assessor is distinct from the bounded observation and per-interval role
+escalations above. It receives the same exact deterministic assessment derivative, sees no peer answer,
+and must describe every millisecond from zero through the measured duration. One shared, content-addressed
+assessment-media contract owns the challenge and runtime normalization recipe: MP4 with H.264/yuv420p at
+960-by-720 and 30 frames per second using aspect-preserving padding and square pixels, AAC stereo at 48 kHz,
+a 90,000 video timescale, normalized timestamp origin, stripped metadata, bitexact controls, and a 64 MiB
+encoded-byte ceiling. The recipe identity includes the exact part and concat argument templates; copying
+those arguments into a challenge-only or provider-only adapter is not an equivalent contract. Every
+assessment binds both the immutable V66 source (complete SHA-256, byte length, and source timeline) and
+the exact submitted derivative (complete SHA-256, byte length, measured duration, and media-profile
+SHA-256). The source and derivative are distinct first-class identities in every candidate, reservation,
+settled assessment, reducer decision, and materialization-authority check; a transformed-media digest may
+never replace or masquerade as the parent source digest. The production preparer likewise receives two
+distinct filesystem authorities: the applied filler root used to resolve the retained source path, and a
+private assessment-media root used only for snapshots, normalized derivatives, lineage, and operation
+indexes. Treating the private output root as the source root makes every catalog path fail before rendering;
+deriving either root from the other makes relocation part of semantic identity. Both roots are clean absolute
+runtime locators and remain excluded from the path-free evidence. The certification
+authority also names the tested source-duration and encoded-byte envelope, and runtime holds before spend
+when a source or derivative falls outside it. The certified hosted runtime prepares and validates the complete
+media set before it refreshes provider-route metadata, constructs an assessor, reserves spend, or submits HTTP;
+an unreadable source, profile mismatch, incomplete decode, or over-ceiling derivative therefore makes no
+provider request. Qualification may not extrapolate from shorter cases, silently
+truncate a reel, or replace complete-timeline authority with independently judged chunks. If a truthful
+full-timeline derivative cannot fit the certified ceiling, long-reel handling requires a separate designed
+and certified protocol.
+
+The OpenRouter adapter fixes one fallback-disabled, zero-data-retention route and strict schema, hashes the
+exact prompt, schema, request, response, and structured output, and durably reserves the request digest
+before sending any bytes. Its configured
+worst-case charge must fit inside that reservation. A budget hold sends no provider request; an unknown
+transport settlement retains the full reservation; a known charge closes against the provider-reported
+amount, and an over-reservation response is retained but unusable. The adapter settles the durable
+accounting record before it returns candidate evidence. A crash between reservation and settlement leaves
+a discoverable open reservation rather than silently freeing budget. Implementing this adapter grants no
+runtime or materialization authority: two independently locked families, persisted raw evidence, the
+reducer, and a locked structure-slice certificate remain mandatory. Downstream screening remains mandatory
+for broadcast admission but is intentionally not part of this pre-child decision.
+
+The structure reservation participates in the shared filler-inference budget rather than keeping a
+provider-specific spend total. One transaction reserves that shared budget and appends a structure journal
+entry binding the exact source, assessor profile, expected route, prompt/schema, request, worst-case charge,
+and request time. The journal rejects a second reservation for the same request regardless of whether the
+first is open, budget-held, or settled. Settlement atomically closes the shared accounting row and stores
+the validated content-addressed assessment record. Open and budget-held entries remain listable for
+recovery; they are operational holds, never permission to repeat a possibly billed request.
+
+The reducer's immutable artifact retains every candidate identity and the exact reason each case was
+confirmed or held. The runtime publishes that content-addressed artifact before attaching it to a split
+proposal. A child cut on an exact confirmed `keep` interval carries the artifact SHA-256 in its portable
+conditioning lineage; a legacy detector cut or operator-edited interval leaves that field absent rather
+than claiming decision provenance it does not have. Certification scores this deterministic policy as the
+production candidate: every automatic decision must have zero under-splits, over-splits, unexplained gaps,
+wrong filler/programme dispositions, wrong roles, or boundary misses beyond tolerance. Abstentions remain
+in the denominator and are reported as coverage, globally and per predeclared slice. Raw assessors may be imperfect; they do not
+individually need perfect recall when their disagreement correctly becomes a hold. Each enabled slice still
+requires its predeclared minimum number of independently sourced decided cases and zero wrong automatic
+decisions. The development certificate that permits shadow evaluation requires at least 30 of 60 decisions
+globally, at least 6 decisions in each source-unit category, and at least 6 decisions in every declared
+difficult slice. It grants no automatic materialization authority; later slice activation remains a separate decision based
+on the locked shadow evidence. This changes what is measured, not the safety bar.
+
+Structure authority and broadcast admission are deliberately separate decisions. A certified
+`compilation_break` or explicitly bounded filler portion of `programme_with_spots` may authorize automatic
+**materialization** of its complete keep plan: Loomarr cuts every decided filler interval into a held,
+non-airable child and enrolls each child at the start of the ordinary ingest ladder. This authority requires
+exact evidence bytes, resolved boundaries and allowed filler roles, complete explained coverage, and a
+source/signal slice inside the locked structure certificate. It does not claim that a child is safe, lawful,
+playable, enriched, or ready to air. An unresolved interval retains one concise structure review, and a human
+confirmation is still validated against complete coverage and exact source identity.
+
+The five content screens run on each materialized child only after its final playback derivative exists.
+This sequencing is mandatory: a playback-integrity result over the parent span, the stream-copy cut, or a
+throwaway preflight rendition cannot prove the bytes that will air. One content-addressed child-screening
+subject binds the immutable child lineage, source-master identity, evidence-derivative identity, final
+playback-derivative identity, derivative recipes and measurements, and the parent's exact half-open interval.
+The subject excludes relocatable filesystem paths: runtime paths only locate artifacts, and each evaluator
+must reopen the artifact it uses and reproduce the subject's byte identity before deciding. The aggregate
+contains exactly five independent
+closed outcomes: `visual_safety` (including explicit imagery), `spoken_safety` (including audibly
+prohibited language), `written_safety` (including visibly written prohibited language), `rights`, and
+`playback_integrity`. Visual, spoken, and written evaluators inspect the complete evidence derivative;
+rights replays acquisition and participation authority; playback integrity inspects the final playback
+derivative plus its conditioning evidence. A semantic tagger, a few representative frames, transcript
+absence, or visual-model prose cannot satisfy any of those complete-coverage safety axes. Each outcome is
+`pass`, `reject`, or `hold`, names an
+opaque reason code, and binds the SHA-256 of one immutable axis-evidence record. Raw restricted phrases and
+descriptions never enter proposal, catalog, or public admission records.
+
+Each axis record binds the complete child subject described above, its outcome, and the evaluator's policy,
+certification, implementation, and evidence-contract profile, plus the SHA-256 of its private bounded raw
+ledger or measurement bytes. The axis record publishes only after those raw bytes are durable. A child
+screening coordinator requires exactly one named evaluator for each axis, makes the path-free subject durable
+before the first call, calls them serially without showing one evaluator another's answer, rejects subject or
+profile drift, and persists each axis before moving to the next and the validated five-axis aggregate before
+returning it. Each evaluator owns repeat-safe settlement of its exact operation;
+a retry after a later persistence failure replays the same closed authority-bound result instead of repeating
+a possibly billed call. The aggregate's `assessedAt` is the latest of those five immutable axis assessment
+times, not a fresh coordinator clock reading, so a crash after aggregate publication but before its caller
+records the digest reproduces the same aggregate identity on retry. An operational error means no trustworthy result exists and creates an operational
+hold. Reject and hold are durable domain answers, not retryable absence.
+
+The ordinary ingest ladder has one rendered-child screening rung immediately after split. It does
+not apply to a top-level source; every child with parent lineage reaches it after transcode has
+published the final evidence and playback derivatives. The rung writes a versioned portable pointer
+to the exact subject and aggregate only after both are durable. A missing coordinator, malformed
+sidecar, operational failure, non-passing result, absent production release authority, or failed
+terminal replay resolves to review or rejection and never falls through to metadata enrichment or
+the compatibility score gate. The pipeline's exhausted-failure policy parks this rung just as it
+parks admission; a panic or store outage cannot turn screening into a skipped stage.
+At startup, a data-selected compatibility repair holds and rewinds any pre-rung child that had
+already advanced beyond screening and lacks a completed screening stage record. It holds the clip
+before rewriting its pipeline row, so an interrupted repair cannot leave the legacy child airable;
+already certified children, top-level clips, dismissed rows, and hard file rejections are untouched.
+The administrator filing endpoint enforces the same boundary for materialized children: it may
+settle a later human metadata decision only when the pipeline row proves that screening completed
+and advanced. A review-shaped screening result is recorded as done at its current rung but cannot
+be filed, because a person's generic catalog action is not a substitute for the release authority.
+
+Production starts this rung with a **qualification runtime**, rather than leaving the whole coordinator
+absent until every independent safety lane is certified. The runtime uses the production rights registry and
+deterministic playback verifier immediately, and installs one explicit non-authorizing evaluator for each
+of visual, spoken, and written safety. Each non-authorizing evaluator reopens the exact evidence derivative,
+records its measured artifact identity, and returns a durable `hold` naming the missing axis certification;
+it never emits `pass` or `reject` and performs no inference or provider call. Its profile hashes identify
+the built-in qualification policy, unavailable-certification marker, and implementation—not a safety
+certificate. Consequently the five-axis aggregate and per-axis evidence are exercised on real children,
+rights prohibitions and objective playback failures retain their closed outcomes, and no child can reach
+enrichment or release while one of the three safety authorities is absent. An unavailable evidence root,
+rights repository, or runtime constructor leaves the existing missing-coordinator hold in place. The private
+content-addressed repository lives under the filler root's excluded `.loomarr/segment-screening` tree.
+
+The file evidence adapter gives each subject/profile pair one deterministic operation identity pointing at
+its settled axis record. Once present, a different result cannot replace it; paid evaluators still own their
+pre-call reservation journals so a crash before publication cannot repeat an ambiguous charge. The
+deterministic playback evaluator reopens the final playback file, verifies its full SHA-256, byte length, and
+sparse catalog identity, reprojects the at-most-64-MiB non-symlink sidecar, and then reopens the playback file
+before deciding. Its subject requires valid derivative quality evidence and, for a split child, exact agreement
+between the playback manifest and post-rewrite conditioning measurement. Existing derivative QC supplies
+complete decode, seek, keyframe, A/V, loudness, and fast-start evidence; the conservative media-quality rule
+rejects objective dead air and holds long black, silent, or frozen spans. A sparse-hash match alone never
+passes because middle-of-file changes must be caught by the full digest.
+
+The rights evaluator has one deliberately narrow dependency: a current-use authority queried for the exact
+child subject, source, acquisition, source-master bytes, production policy, `filler_broadcast` use, and UTC
+decision instant. A provider-declared licence string, source `autoAdmit`, acquisition preference, old corpus
+rights worksheet, or matching document digest is not that authority. Missing source/acquisition identity or
+an absent/unknown current decision produces a rights hold; an exact current prohibition or withdrawal
+rejects; only an exact, unexpired, withdrawal-clear authorization passes. Malformed, stale, differently bound,
+or self-inconsistent authority is an operational failure rather than a guessed semantic answer. The private
+raw axis evidence retains the path-free request and content-addressed decision. The settled screening result
+is immutable historical evidence; terminal release must query the same current-use boundary again so a later
+expiry or withdrawal cannot be hidden by replaying an earlier pass. The production registry below satisfies
+this port; without a matching current grant, the rights axis remains held.
+
+The production rights registry is append-only and operator-reviewed. One content-addressed grant binds the
+source, acquisition, source-master bytes, policy, and use above to a closed authorization, prohibition, or
+unknown decision; it also binds the private review-evidence digest, recording actor, effective instant,
+optional expiry or withdrawal, and the exact prior grant it supersedes. A separate current-head row exists
+only to provide an atomic compare-and-swap over that immutable history: two reviewers cannot silently fork
+or overwrite the same scope. The current-use module opens the exact head, validates its complete content
+identity, applies its effective/expiry/withdrawal state at the requested instant, and derives the
+subject-specific decision consumed by both screening and terminal release. A future or expired grant yields
+an attributable unknown decision, never authorization. Recording a grant alone does not make a child
+airable; every other certified screening axis and the terminal admission decision still apply.
+Administrators record and inspect this history through an admin-only append endpoint and exact-scope current
+read. The server supplies the authenticated actor and recording instant; the request supplies the immutable
+scope, closed decision, private evidence digest, effective/expiry/withdrawal times, and expected current
+grant digest. There is no update or delete endpoint.
+
+Screening aggregates, provider-neutral axis records, operation identities, and opaque raw evidence live
+separately in a private content-addressed repository. The immutable screening-release authority is explicitly
+non-authorizing by default, names exactly one canonical profile per axis, and locks the aggregate contract.
+Terminal admission
+must re-read the aggregate, every axis record, its unique settled operation, and every raw-evidence identity;
+verify exact child lineage,
+all three media identities, parent span, outcomes, reasons, and profiles; and require all five passes plus
+explicit production permission. A boolean callback, aggregate-only replay, model self-assertion, pre-split
+screen, or structure certificate cannot release a child. Missing, stale, rejected, held, identity-drifted,
+profile-drifted, or unverifiable evidence keeps it held.
+
+**Replacement contract (maintainer decision, 2026-09-06).** The new filler pipeline replaces the
+previous pipeline entirely. There is no live compatibility fallback for automatic materialization or
+catalog publication. Missing, disabled, malformed, expired, or non-authorizing configuration,
+deployment, certificate, assessment, or evidence leaves material held with an attributable reason.
+A structure-assessment failure, including a source outside the reviewed duration envelope, keeps
+the source and its pending proposal at the split review rung. It must not exhaust ordinary
+non-fatal retries into a terminal filed disposition. Cancellation preserves resumable work and is
+not an assessment result. No such failure may create children or confer publication authority.
+No confidence score, source trust, detector-only proposal, or alternate filing route may substitute
+for the new pipeline's required authority. Human review supplies the particular missing decision
+through its governed review path; it does not waive unrelated structure, screening, rights, or
+terminal-publication requirements. This contract supersedes earlier rollout language in this section.
+
+The split stage applies only the complete-plan materialization gate. A proposal without a verified
+complete-timeline decision and matching materialization authority remains reviewable and cannot
+create children automatically. The compatibility calculation may remain a non-authorizing comparison
+for measurement. Its immutable shadow record binds proposal, source, assessment, structure authority,
+and policy identities plus exact materialize, hold, and discard spans. Recording agreement never
+activates a slice. Failure to persist a required comparison blocks unattended materialization; it
+never selects the comparison result as a fallback. Screening identities do not enter this ledger
+because no child playback derivative exists yet. The separate admission shadow ledger compares
+held-child terminal decisions only after all child evidence exists. Shadow decisions never publish;
+only the new pipeline's verified terminal applied decision can grant broadcast availability.
+
+Structure-validated children reuse the V66 derivative publisher and are prepared as one replacement generation.
+Their playable and evidence derivatives are built from the exact reviewed source intervals, not from an
+older playback rendition. The parent, assessment, observations, and prior complete child generation remain
+intact until every replacement child and durable lineage record validates and the generation switch commits
+atomically. New children remain held through derivative production, the five screens, enrichment, and
+terminal admission; filesystem visibility is not broadcast permission. A crash, partial re-split,
+derivative failure, or screening failure cannot replace a complete generation with a partial airable one.
+
+Certification is separate from production assessment. Its rights-cleared corpus is split by source family
+and contains declared/chaptered truth, deterministically authored compilations, programme excerpts with
+inserted spots, long single units, same-brand joins, wordless units, bumpers/station IDs, slivers, damaged
+tails, and adversarial internal scene/music changes and standard-duration non-joins. It scores source
+structure, under-splitting, over-splitting, boundary error at predeclared tolerances, segment purity,
+timeline coverage, role accuracy, abstention, operational failures, and worst source/signal slices.
+Under-splitting and over-splitting remain separate safety results. No automatic slice may contain an
+observed cross-unit merge, unexplained timeline gap, or published interval with an unresolved role. New
+logic is measured against retained V34/V54 proposals without allowing their compatibility outcome
+to create children. Automatic materialization expands only for the exact
+predeclared slices whose locked point estimates and confidence bounds pass. Model training is deferred
+until this measurement identifies a specific residual error class and a rights-cleared training split.
 
 **Conditioning measurement is evidence, never authority (V64).** The media-tools module can inspect
 one bounded local regular-file artifact and, optionally, compare it with one local regular-file
@@ -3959,25 +4318,28 @@ single wrong tag over a whole break. V45 fixes this at the root and turns the sp
 clips a channel can be **automatically, confidently curated** to match. Four parts, each building on
 V44's signals.
 
-#### 1. Composite is a first-class kind, detected at intake
+#### 1. Long-source quarantine is first-class at intake (semantic structure moves to V67)
 
-A **composite** is a recorded break — many adverts in one file. It is detected when the clip is
-pulled in (not left to be mis-tagged as a single advert) from the cheap deterministic signal the
-catalog already has: duration past `OverlongSegmentMs` (§10 V34, 120s — by definition it cannot be
-one normally airable advert). The earlier intake detector also required multiple black/silence
+A **confirmed composite** is a recorded break — many independently bounded units in one file. Intake
+cannot establish that from duration. It conservatively quarantines a **long-source candidate** (not left
+to be mis-tagged or aired as a single ordinary advert) from the cheap deterministic signal the catalog
+already has: duration past `OverlongSegmentMs` (§10 V34, 120s). V67 structure assessment determines
+whether that source is a compilation, a programme with spots, one long unit, ambiguous, or unusable.
+The earlier intake detector also required multiple black/silence
 boundaries, but that made `probe` fully decode every long recording and then made `split` fully
 decode it again. On hour-scale captures the first pass could consume the whole job deadline before
 the owning stage began. Boundary detection therefore belongs only to `split`; a long single-product
-infomercial may ultimately remain one `unsplittable` proposal for review, but it is still correctly
-quarantined from playout while Loomarr decides. A composite is **not airable**: it is never matched
-into a pod, exactly like a `held` clip, because airing a 16-minute block as one "commercial" is the
-bug this section removes.
+infomercial may ultimately be established as `single_unit`, but it is still correctly quarantined
+from playout while Loomarr decides. A long-source candidate or confirmed composite is **not airable**:
+neither is matched into a pod, exactly like a `held` clip, because airing a 16-minute block as one
+"commercial" is the bug this section removes.
 
-⚠ **`IsComposite` is a distinct axis from `Kind`, deliberately.** A composite's *segments* are
-commercials/bumpers/PSAs; the composite itself is a container. Overloading `Kind` with a `composite`
+⚠ **`IsComposite` is a distinct axis from `Kind`, deliberately, and its persisted name is now broader
+than its unresolved meaning.** A confirmed composite's *segments* are commercials/bumpers/PSAs; the
+composite itself is a container. Overloading `Kind` with a `composite`
 value would make every `filterKinds` call site have to special-case it, which is how a container
 leaks into a pod. A boolean the pod filter excludes once (like `held`/`removed_at`) is the safe
-polarity.
+polarity. The V67 assessment, rather than this compatibility-named boolean, is semantic authority.
 
 #### 2. Auto-detect, auto-split, review to confirm — and KEEP THE PARENT
 
@@ -4513,10 +4875,10 @@ verdict. Model confidence is retained for diagnostics but is never read by admis
 Untrusted evidence values are compared only as data; instruction-looking metadata, OCR, or transcript
 text cannot select a reason, change precedence, or authorize a verdict.
 
-The first production integration is shadow-only: it records what this evaluator would decide but the
-V38 compatibility gate remains the filing authority until the corpus and rollout gates below pass.
-The durable decision projection and unattended cutover are separate changes, so adding this module
-cannot by itself expand what reaches a channel without review.
+The evaluator may record shadow decisions while certification is incomplete, but these records
+grant no filing authority. Material remains held until the replacement pipeline validates its
+required evidence and commits the terminal applied admission decision. The V38 compatibility gate
+is retired as a live filing authority; incomplete rollout does not reactivate it.
 
 Every durable filler decision carries a closed `ApplicationMode`: exactly `shadow` or `applied`.
 `shadow` records what the evaluator would decide without granting catalog filing authority;
@@ -4729,7 +5091,7 @@ accounts for more than half the disputes, stops the development run for contract
 being hidden behind adjudication. This diagnostic artifact is non-certifying and does not replace the
 complete label or holdout contracts above.
 
-The next temporal-structure gate is a private, mechanically constructed 36-case holdout; it does
+The current temporal-structure gate is a private, mechanically constructed 60-case holdout; it does
 not require another full blind human viewing pass. Its planner strictly decodes and hashes the exact
 48-case selection, evidence manifest and private map, locked human assessment and attestation,
 full-decode media-quality report, two-family broadcast-suitability comparison, the exact 300-case
@@ -4744,6 +5106,12 @@ quality-eligible, non-prohibited standalone anchors with two bumpers, three comm
 two PSAs, and three trailers. Every anchor has distinct source bytes and duplicate-family identity;
 the family authority covers every non-excluded reference case, not merely the later 48-case
 selection, and the planner independently recomputes its canonical relationship graph before use.
+The replacement certification cohort has 60 cases: 12 standalone units, 12 two-item compilations,
+12 three-item compilations, 12 programme excerpts, and 12 programme excerpts with one inserted
+filler unit. The combined construction receipt uses schema 3 and contract
+`filler-temporal-structure-holdout-plan-v7`: it retains the accepted provenance, transition, and
+holdout-exclusion authorities while binding the expanded cohort. Older receipts are not upgraded
+by inference and cannot authorize construction under this contract.
 
 **Transition evidence is a prior measurement authority, not a label inferred from the chosen
 corpus.** A development-only generator measures all 48 exact evidence cases before role, safety, or
@@ -4801,18 +5169,19 @@ paths compare as slash-normalized relative paths. Unsupported source-record form
 identity matches are rejected. This is origin binding and known-filler lineage exclusion only: it
 does not certify that a programme is globally non-filler.
 
-Seed-ranked parents each supply two
-different position-authoritative cuts, balanced to exactly four cases per pattern: `dependent_start`
-is 30 seconds at `[10s,40s)`; `dependent_end` is 45 seconds ending 10 seconds before the parent;
-`both_edges` is a centred 45-second internal cut. Parent ranks 0 and 3 receive start+end, ranks 1 and
-4 start+both, and ranks 2 and 5 end+both. These names describe which omitted parent context the
-construction is meant to challenge, not a semantic scene-boundary claim. Every parent is at least
-120 seconds, every cut retains at least ten seconds before and after it, and no cut touches a parent
-edge.
+Every anchor appears exactly three times across the three-item set: six cases contain an adjacent
+same-role join and six contain only mixed-role joins. Each of the six seed-ranked programme parents
+supplies a 30-second near-start excerpt at `[10s,40s)` and a 45-second near-end excerpt ending ten
+seconds before the parent ends. Each parent is at least 120 seconds, and both excerpts retain at
+least ten seconds of omitted context on either side. These are construction positions, not a
+semantic scene-boundary claim. Each parent also supplies one early and one late inserted-spot
+case, with the source's exact programme spans and one independently selected filler anchor. Every
+anchor appears exactly once as an inserted spot. The receipt binds these additional constructions
+and their exact spans alongside the original two-item transition constraints.
 
 The planner emits only coordinator-private construction authoring and a receipt binding all input
-and output digests, deterministic seed ranks, selected families, role quotas, compilation pairs,
-their measured transition stratum and join positions, and programme cuts. The receipt is also the
+and output digests, deterministic seed ranks, selected families, role quotas, two- and three-item compilation constructions,
+their measured transition stratum and join positions, programme cuts, and inserted-spot constructions. The receipt is also the
 future split authority: it declares `split=holdout` and enumerates every selected source SHA-256,
 duplicate-family id, and programme provenance pair that later development/training corpus builders
 must exclude. Missing or broader inferred exclusions are not accepted; a future split change needs
@@ -4820,13 +5189,21 @@ a new independently reviewed artifact. It performs no rendering or inference. Th
 challenge preparer requires the authoring and its structurally validated current-contract receipt,
 then records both digests and the plan contract in private challenge authority; authoring alone is
 not render authority. It renders and freshly blinds the bound plan before two distinct direct-video
-model families assess it serially. The direct-video request contract reserves 4,096 completion
-tokens so provider-required hidden reasoning cannot consume the output budget needed for the strict
-JSON answer. In-range decisive timestamps are deterministically sorted and deduplicated before
-semantic validation because response order and repetition carry no claim; the untouched raw
-response remains the inference authority. The array ceiling and canonicalization rule are part of
-the prompt digest and prompt-contract version; provider-facing schemas do not use `uniqueItems`
-because otherwise qualifying CoreWeave structured-output routes reject the grammar. Every source
+model families assess it serially. The direct-video request contract reserves 4,096 completion tokens so provider-required hidden
+reasoning cannot consume the output budget needed for the strict JSON answer. The hosted-model
+interface requests one ordered, coverage-preserving timeline with a role, exclusive end timestamp,
+and evidence for each interval. The first interval starts at zero and each later start is the
+preceding end; redundant starts and a second whole-file classification are not requested. The
+adapter coalesces adjacent programme-fragment observations, never adjacent filler intervals, then
+derives the internal whole-file claim from the complete timeline. One filler interval is a
+standalone unit, two or more non-programme intervals a compilation, one programme interval a
+programme excerpt, and programme intervals surrounding filler a programme with spots. A single
+ambiguous or non-filler interval is unclear; a single unusable interval is unusable; other mixed
+shapes are unclear. Standalone role evidence comes from its sole interval. The shared strict
+decoder retains every semantic and length constraint unsupported by a provider-facing schema.
+Schemas use the subset accepted by the exact pinned route and do not use `uniqueItems`. The
+untouched raw response remains the inference authority; transport adapters do not reinterpret it.
+Every source
 must have an audio stream. Before concatenation,
 every segment is encoded deterministically to a common 960-by-720, 30-frame-per-second video and
 48 kHz stereo AAC audio profile with aspect-preserving padding and a fixed video track time base;
@@ -4845,6 +5222,370 @@ training data, or authorize production admission. Plan contract v4 requires the 
 Missing, null, or true dispositions are rejected before media probing or rendering. Older receipts
 remain immutable historical evidence, not current-contract rendering authority. This explicit
 no-full-blind-audit disposition does not replace targeted human adjudication of challenged anchors.
+
+The single-video protocol is only the short-source slice. It cannot authorize general compilation
+reels: a 579.5-second construction from the 12 independently reviewed anchors exceeds the 64 MiB
+transport ceiling. The separately versioned long-reel protocol therefore plans complete primary
+coverage in two-minute spans with 15 seconds of context on both sides, clamped only at source ends,
+for at most 30 minutes and 15 windows. Primary spans partition the source exactly; overlap supplies
+context but never creates a second boundary vote. A boundary exactly on a primary seam belongs to the
+right-hand span. These limits describe protocol capacity, not production authority: every normalized
+window must still fit the media byte ceiling, every window must complete for one assessor family to
+produce one source-level candidate, and a real seam-focused certificate must authorize the duration
+slice before use. Sparse sampling, chunk-majority voting, and silently lowering the canonical media
+quality are not valid long-reel fallbacks.
+Production chooses between those protocols once, before media preparation, from the immutable
+source duration and an explicitly configured short-source ceiling that must equal the activated
+short certificate's duration envelope. Sources at or below that ceiling use the complete-video
+runtime; longer sources use the window runtime only through its declared 30-minute capacity. A
+selected runtime's preparation, provider, evidence, or reduction failure is final for that attempt:
+the router never falls through to another representation, because doing so would silently change
+the prompt, media authority, accounting operation, and certification slice. A source outside both
+duration envelopes holds before either runtime can prepare media or reserve provider spend.
+
+One content-addressed media-set artifact embeds the complete plan and the ordinal, normalized media
+identity, and lineage of every window; its ordered membership is the common input authority for all
+assessor families. The preparer takes one full-hash- and sparse-hash-verified immutable source snapshot,
+renders every declared media interval through the same canonical 960-by-720 profile as the short path,
+fully decodes each output, and publishes media and lineage only by content address. Reuse re-hashes,
+re-probes, and fully decodes the retained bytes; no partial set is returned after a failed window.
+Each accepted window answer covers its complete media interval in source-relative
+coordinates and binds that exact media set, its own ordinal, and the assessor profile. An attributable
+transport or provider failure is retained as an operational-failure answer with no semantic timeline;
+it holds that assessor family's complete source result rather than letting the remaining windows vote.
+The deterministic stitcher requires exactly one answer for every planned window from one assessor
+profile. For each adjacent pair it compares the complete ordered boundary sequence and the role on
+both sides throughout their shared context. Matching observations no more than 2,000 ms apart become
+one boundary at their deterministic mean; a missing, extra, differently typed, or farther-apart
+observation holds the complete family result. A boundary observed only in non-owning context is not
+projected, while a matched observation that straddles a primary seam is retained. Projection must
+reproduce one ordered timeline covering `[0,duration)` and preserves adjacent same-role intervals:
+two consecutive commercials are two units even though both carry `commercial`. The stitch artifact
+retains the plan and every window answer and replays byte-for-byte; it is one assessor-family
+candidate, not independent agreement and not split authority.
+
+The direct-video runner's per-request nanodollar value is an **accounting reservation**, not a
+provider-enforced total-price cap. OpenRouter does not expose such a cap for token-priced video.
+The transport therefore preserves every syntactically valid provider-reported charge before it
+checks the reservation. A charge above the reservation closes that attempt as
+`over_reservation`, records the exact decimal and nanodollars, request/response digests, generation,
+route, tokens, and reserved amount, and makes the structured answer semantically unusable. The
+actual charge, even when it exceeds the run's authorized spend, is the consumed-spend truth; the
+overrun is explicit and no later request may start. Missing or malformed settlement remains the
+separate unknown-charge state and consumes the reservation. The runner must never describe either
+the reservation or the run authorization as a hard provider billing limit. Before media is opened,
+the runner also multiplies the pinned route's snapshot prompt/completion prices by a declared
+worst-case input-token allowance and the fixed completion-token ceiling using exact decimal
+arithmetic; a reservation smaller than that bound is refused before HTTP.
+
+The production-domain hosted structure assessor profile separates durable semantic identity from one
+live metadata capture. `modelDigest` hashes the requested model id, its exact catalog canonical revision, and the
+provider creation identity. `capabilitySha256` hashes that model identity together with the selected
+upstream provider name and selector slug, input/output modalities, quantization, context and token
+limits, supported parameters, ZDR membership, implicit-cache behavior, and the selected reasoning
+mode. Both projections exclude
+the snapshot retrieval time, request/response accounting, endpoint liveness status, display names,
+and prices: those are capture facts, not a different model or route capability. The complete
+metadata snapshot SHA-256 remains separately bound to every certification family result and supplies
+freshness, current liveness, exact price, and historical audit evidence. A live or calibration runner
+must still validate a fresh under-24-hour snapshot and exact ZDR route before media is opened or spend
+is reserved. Every provider reservation and settled call record also binds that complete snapshot
+digest, so a production decision artifact's retained evidence can replay which live metadata capture
+authorized its route and price. It may reproduce a certified profile from a later fresh snapshot only when both stable
+digests match; a capability or canonical-model change holds for recertification, while a price change
+changes the reservation evidence without pretending that the assessor itself changed.
+
+The immutable structure-certification report reproduces the comparison from at least two locked,
+distinct model-family assessment sets and binds its digest to the exact public manifest, private
+construction authority, holdout authoring, and source-family receipt. Certification requires all 60
+cases and at least six cases from each predeclared difficult slice: two-item compilations, three-item
+compilations, adjacent same-role joins, mixed-role joins, programme cuts near either parent edge, and
+inserted spots in either the early or late position. Every assessor must have zero operational
+failures, under-splits, over-splits, incomplete timelines, wrong segment roles, or structural
+boundary misses beyond 2,000 ms, both globally and in every slice. A passing report still grants no
+training or production-admission permission; its only next action is the locked shadow comparison.
+
+Long-reel certification is a separate content-addressed authority over the window protocol rather
+than an extrapolation from that complete-video report. Its private suite binds every case to one real,
+replay-valid window media set, a complete known-truth source timeline, and the complete set of derived
+seam traits. Non-geometric traits such as a wordless join or high-motion window additionally name an
+independent measured-evidence digest; a coordinator declaration alone does not prove them. The suite
+must contain at least six cases in each predeclared slice: a boundary in shared overlap, immediately
+left and immediately right of primary ownership seams, an adjacent same-role join, one unit crossing
+a seam, a programme/filler join, a wordless join, a high-motion window, and the six largest
+successfully encoded windows in the fixed corpus. The suite records and reproduces the resulting
+minimum high-byte threshold; separately constructed over-ceiling cases must hold before inference
+rather than being mislabeled as successful stress cases. Exactly two locked, distinct assessor families
+supply complete persisted
+stitches for every case. The certification judge replays each stitch, scores each family independently
+against private truth, then feeds the same two source-level candidates through `fillerstructure.Reduce`
+and scores that confirmed decision too. Any missing case or stitch, held family, operational failure,
+under-split, over-split, wrong role, incomplete coverage, or boundary error beyond 2,000 ms fails the
+affected slice and the whole certificate. The immutable report names the suite, assessor profiles,
+slice counts, errors, and reducer contract. It always sets training and automatic-materialization
+permission false: a pass is evidence from which a separate window-specific materialization authority
+may later be issued after the locked short-versus-long shadow comparison.
+
+That shadow comparison is a provider-neutral replay over the complete 28-case long-reel corpus, not
+a second truth-scoring pass. For every opaque case it receives the two immutable reducer artifacts
+produced from the same exact source: one through `complete_video` and one through
+`window_media_set`. It revalidates both artifacts, requires the same reducer version, boundary
+tolerance, source identity, and ordered pair of underlying model families, and requires each paired
+family to retain the same provider, declared model, model digest, and capability snapshot across the
+two representations. Prompt and evidence-contract identities remain representation-specific and are
+therefore bound in the report rather than required to be equal. Both decisions must be confirmed and
+must agree on whole-source unit and standalone role, interval count, every interval role and
+disposition, and every internal boundary within the certified tolerance. Missing, duplicate, held,
+wrong-kind, differently sourced, differently profiled, or semantically divergent cases fail the
+whole shadow report; there is no majority or partial-slice pass. The content-addressed report binds
+both artifact digests for every case and always leaves training and automatic materialization false.
+A repository publication wrapper additionally binds the content and file digests of the passing
+window certificate and both complete decision sets, so the family-result lineage checked before the
+comparison remains recoverable rather than becoming an unrecorded coordinator precondition. The
+wrapper embeds the self-contained replayable report and grants neither training, production
+admission, nor automatic materialization authority.
+A separately reviewed long-reel authority may consume only a complete passing report together with
+the passing window certificate; the shadow report cannot activate production by itself.
+
+Each family run is a separate truth-blind artifact over the complete 28-case public window-set
+manifest. The runner receives only opaque aliases, exact public source and media-set authority, and
+machine-local window paths; it cannot open case identifiers, construction truth, measured slice
+labels, or another family's answers. It evaluates cases and windows serially through the same
+production family runtime, returns no partial result after an error, and retains one replay-valid
+stitch per alias plus every ordered call record and completed-operation publication that produced
+it. The result reproduces provider-request count, known charge, conservative accounted spend, and
+unknown-charge reservations and binds them with the exact assessor profile, manifest digest,
+complete metadata-snapshot digest, completion time, and self-digest.
+Publication reopens the complete public manifest and creates the private result file immutably. The
+private certification join starts only after both complete family artifacts exist, attaches case
+identifiers by exact media-set identity from the suite, and binds its wrapper digest to the public
+manifest, suite content and file digests, and both family content and file digests. Neither the family
+artifact nor its certification wrapper grants training or automatic-materialization permission.
+The calibration command requires its declared request ceiling to equal the manifest's complete
+window count before opening the provider transport, rejects an existing result path before spending,
+and uses the production SQLite call ledger for aggregate spend reservation and settlement. Replaying
+settled content-addressed evidence consumes no request; a crash-open request conflicts in that ledger
+before transport rather than being retried speculatively.
+
+The complete-video half of the shadow uses the same truth-blind, one-family-at-a-time discipline over
+the public 28-case manifest. Its production preparer creates or revalidates one exact canonical
+derivative per source before the family call. A completed-operation publication keyed by source,
+derivative, assessor profile, current prompt digest, and current schema digest points to the full
+settled call record only after response, structured output, and record bytes are durable. Restart
+therefore replays accepted or closed failure evidence without another request; an interrupted call
+whose reservation has no completed publication remains held by the durable inference ledger rather
+than being guessed or repeated. Each complete-video family result retains those records and cost
+totals and grants no authority. Only two complete family results may be reduced into the complete-
+video shadow decision set, and both decision sets must descend from their exact family artifacts
+before the representation comparison begins.
+
+The first long-reel corpus plan reuses only the twelve family-distinct bounded anchors and six
+programme parents already locked by the 60-case holdout. One private deterministic planner binds
+that authoring and receipt and emits 28 programme-with-spots constructions: six place a same-role
+filler join ten seconds inside shared seam context, six place it one second left of primary ownership,
+six place it one second right, and six place one complete filler unit across a primary seam. Programme
+material brackets every construction, filler sources are always used whole, same-role pairs never
+share a source or source family, and exact source-relative truth is derived from requested parts rather
+than entered separately. The programme prefix begins one third into its parent. For the four
+duration-edge constructions, the suffix begins two thirds into that parent rather than being packed
+against EOF; even the shortest locked parent therefore retains more than fifteen seconds between the
+longest possible prefix and suffix and more than fifteen seconds after that suffix. The seam
+constructions retain their separate ten-second end margin. Packet measurement found ten-second
+timestamp holes at 100 seconds in one otherwise useful parent and near 650 seconds in another, so
+neither an arbitrary ten-second prefix start nor a long EOF-relative edge suffix is continuous
+evidence. The plan performs no rendering or model call. A later renderer measures the
+canonical encoded parts and may publish a certification suite only when wordless, motion, and largest-
+byte evidence also satisfy the fixed slice counts; insufficiency fails the corpus rather than causing
+model-outcome-guided case substitution.
+The remaining four constructions establish the first intended continuous production-duration
+slice without changing those seam cohorts after seeing model output. Two place one whole bounded
+filler between programme excerpts in a 121-second source, immediately above the 120-second short
+slice. Two use the same real programme/filler/programme shape at 301 seconds, within the fixed
+tolerance below the first 302-second windowed ceiling. The pairs use distinct filler families and
+programme parents. These edge cases participate in window certification and the locked
+complete-video comparison; later expansion beyond the complete-video transport envelope requires
+a separate window-only duration certificate rather than pretending this first slice proves the
+protocol's full 30-minute capacity.
+
+Rendering that plan is one atomic, non-authorizing operation. It reopens and hashes every declared
+source before any output is created, renders each construction through the canonical structure-media
+recipe, completely decodes both output streams, and publishes only opaque case names plus exact
+full-file, sparse-file, duration, profile, tool, and complete-coverage window-plan identities. Its
+private authority retains the construction plan, source provenance, requested parts, measured encoded
+part durations, and the resulting complete source-relative truth. Interior truth boundaries come from
+the measured encoded part joins rather than requested timestamps; only a bounded final container-
+duration reconciliation may extend or trim the final programme interval. A rendered case that leaves
+its predeclared seam slice, exceeds the ordinary retained-source byte ceiling, lacks audio or video,
+or fails complete decode aborts the entire publication. The resulting files remain corpus inputs, not
+training examples or production-admission authority.
+
+One subsequent atomic packager reopens that public/private join, snapshots every exact constructed
+source into its own staging root, and invokes the production structure-window media preparer over the
+already-bound complete-coverage plan. Its public manifest exposes only opaque aliases, exact source
+identity, path-free media sets, and the local paths of their content-addressed windows; its private
+authority binds those aliases back to the rendered truth. A missing window, byte or lineage drift,
+profile mismatch, over-ceiling window, incomplete decode, or partial source snapshot aborts the whole
+package. This packager does not measure semantic traits, call an assessor, assign a certificate, or
+grant materialization authority.
+
+The suite assembler accepts only those locked media and pre-model authorities; model responses are
+not an input. A wordless join is proven when at least one independently bounded filler source beside
+the planned join has a retained transcript artifact containing one or more closed non-speech markers
+and no lexical segment. The source-to-evidence alias and transcript digest must replay through the
+holdout receipt. Motion is measured over every prepared window as the mean absolute luma delta between
+each pair of adjacent decoded frames; the evidence also retains frame count, sum, 95th percentile,
+maximum, exact media identity, and ffmpeg identity. The highest-scoring window in each case competes
+for the fixed six-case high-motion cohort, with stable case/ordinal tie-breaking, and the sixth score
+becomes the reproduced cohort threshold. Selecting one window per case prevents several energetic
+windows from one construction from satisfying the slice by themselves. Both measured slices are fixed
+before inference, and insufficiency aborts suite publication rather than substituting cases after model
+outcomes are known.
+
+Before either paid representation run, one provider-free preflight reopens the complete public
+window set and private certification suite, rehashes every retained source and window, and proves
+that the suite contains exactly the same media sets. The operator must declare the already-certified
+short-source ceiling and the intended first long-source ceiling. The preflight reports the observed
+minimum and maximum source durations, window and byte envelope, exact per-family window and
+complete-video request counts, and the four-run total. It is ready only when at least two sealed
+cases occur within the fixed timeline tolerance above the short ceiling and at least two occur within
+that tolerance below the intended long ceiling; any case beyond the intended ceiling also fails
+readiness. The content-addressed report grants no authority and performs no provider or metadata
+request. A failed report's only next action is to extend and rerender the sealed corpus before paid
+assessment, preventing cost approval or a passing semantic score from silently standing in for an
+unrepresented production duration slice.
+
+The agreement policy itself is one provider-neutral production-domain module, not a scorer-owned
+copy: both the challenge adapter and the eventual production runtime supply source-bound immutable
+candidate assessments to the same pure reducer. Challenge aliases, private truth, provider clients,
+and persistence stay outside that module. Its interface retains exact source identity, complete
+timelines, assessor/model-family identity, immutable assessment identity, and every disagreement.
+The shared assessment-input manifest represents either one complete normalized video or one complete
+ordered window media set; it binds the source, media profile, every derivative identity and lineage,
+and the window plan digest when applicable. Candidates name that manifest's digest. The reducer never
+models a window set as one synthetic video and never needs provider or filesystem knowledge;
+this makes implementation drift between the passing certificate and the deployed decision path a
+compile-time architecture error rather than a rollout convention.
+Production persists that reducer input and output as one content-addressed decision artifact before
+the split proposal may consume it. The artifact identifies the reducer contract and boundary
+tolerance, retains every independent complete-timeline candidate or operational failure, and
+reproduces the decision byte-for-byte when validated. The proposal document binds the artifact's
+media digest and duration to its exact retained source. An invalid, drifted, missing, or held artifact
+cannot certify the heuristic assessment; a later certification authority must verify its declared
+assessor slices rather than replacing those durable identities with a boolean callback.
+The complete-plan gate independently checks that a confirmed artifact and the proposal assessment
+name the same source unit and the same exhaustive ordered spans, roles, and filler/non-filler
+dispositions. A certification callback therefore cannot turn a detector-only plan into model
+agreement or approve a projection whose programme spans became filler children.
+Structure release authority is itself a content-addressed document, not an injected predicate. It
+locks the external certificate digest, reducer contract and tolerance, exact assessor/model-family/
+provider/model/capability/prompt/evidence-contract profiles, and the allowed source-unit and segment-
+role slices. Verification requires an exact profile set and a confirmed artifact; unknown profiles,
+units, roles, held decisions, or an authority without explicit production permission fail closed.
+The current short-source authority admits only the complete-video input kind. Window-set activation
+requires its separately measured certificate and receives a distinct authority contract; a short-
+source certificate cannot authorize a long reel merely because both use the same encode profile.
+That long-reel authority binds the passing window certificate and short-versus-long shadow digests,
+the canonical window-profile identity, the exact window assessor profiles, the observed source-
+duration and per-window byte envelope, and only the source units and segment roles present in every
+passing shadow case. Issuance records one bounded reviewer identity and canonical review time and
+requires an explicit materialization-permission flag. Verification reconstructs the canonical plan
+from the artifact's source, matches its plan digest and complete ordered item count, and checks every
+window's measured duration, media profile, and byte ceiling. It can create held child work only;
+training and broadcast admission remain separate authorities.
+A second content-addressed deployment document turns that reviewed authority into an executable but
+still fail-closed production configuration. It binds the authority digest; explicit automatic-
+assessment permission; exactly the authority's ordered assessor ids, model families, and requested
+models; each exact upstream provider name and selector slug; reasoning mode; worst-case input-token
+allowance; per-request accounting reservation; and positive per-source and per-day spend ceilings.
+The per-source ceiling must reserve every certified window for both families before activation. The
+document contains no credential, filesystem path, current canonical model revision, mutable price, or
+metadata capture. Production reads the OpenRouter credential from its existing provider secret,
+fetches and caches a fresh canonical metadata snapshot for less than half its 24-hour validity,
+recomputes every stable assessor profile, and requires exact equality with the reviewed authority
+before preparing media. It then price-checks every route against the deployment reservation and uses
+the complete fresh snapshot digest in every durable call reservation and settlement. Missing or
+invalid authority, deployment, credential, route, snapshot, evidence store, media preparer, or budget
+leaves independent assessment and certified materialization disabled; it never restores the heuristic
+gate under a certified policy label.
+The runtime assessment coordinator calls each configured complete-timeline assessor serially with
+the same immutable conditioned-media identity and path. Its port exposes no prior answers. Each
+adapter must return either a complete source-bound candidate or an attributable operational-failure
+candidate; ordinary provider failures are domain evidence, while an error means the adapter could
+not produce trustworthy evidence and aborts reduction. The coordinator rejects declared-profile or
+source drift before creating the durable artifact.
+The long-reel coordinator preserves those semantics in family-major order. It prepares one complete
+window media set, then calls every window for the first assessor serially, durably commits each
+validated window answer before starting the next, deterministically stitches and commits that family,
+and only then repeats for the next assessor. An assessor receives exactly one path, its source-relative
+window geometry, and the common media-set identity; the interface exposes no peer or earlier-family
+answers. A normal provider failure returns an attributable operational-failure window and still closes
+the family as a held stitch. An error, profile/media/ordinal drift, or failure to persist any answer or
+stitch aborts without reduction. Only persisted, replay-valid family stitches become whole-source
+candidates, and the final decision artifact is persisted before return.
+Each window call crosses the persistence seam as one separately versioned recorded assessment, not
+as a bare semantic answer. Its reservation and settlement embed the complete media-set authority and
+bind the exact ordinal, assessor profile, prompt and schema digests, requested and resolved route,
+generation, tokens, requested/reserved/charged/accounted nanodollars, closed state, raw-response and
+structured-output digests, and the resulting semantic window-assessment digest. The request is
+durably reserved before transport. Response and structured-output blobs plus the semantic assessment
+publish before the settlement record, and the coordinator reloads that complete record before the
+answer may enter stitching. Accepted output is parsed in window-local coordinates and projected
+deterministically onto the plan's source-relative media interval; the exact planned interval, rather
+than encoder-duration drift, remains the coverage authority. Budget holds, route drift, provider or
+schema failure, unknown settlement, and reservation overrun each produce one closed operational-
+failure assessment with no segments. Cancellation does not bypass settlement: once a reservation
+exists, the adapter settles through a bounded context detached from caller cancellation. A paid or
+reserved call therefore cannot influence a boundary from memory alone, disappear from accounting,
+or be mistaken for semantic evidence.
+The completed-call lookup is itself immutable and deterministic. An operation identity hashes the
+exact media-set digest, ordinal, and complete assessor profile; its publication binds that operation
+to exactly one call-record digest and is written only after all referenced evidence and the durable
+settlement exist. On restart, the coordinator resolves this identity before invoking an assessor,
+strictly reloads every referenced byte, and reuses the answer only when the complete authority
+revalidates. A second, different record for one operation is a conflict, not a retry. A missing
+publication permits a new call only when no durable reservation for that exact request exists; an
+open crash reservation remains an explicit unknown-charge hold and must never cause an automatic
+duplicate provider call. Completed earlier windows therefore resume without repayment while an
+interrupted in-flight window fails closed instead of guessing whether the provider charged it.
+The conditioned-media identity also binds a content-addressed, path-free lineage document. That
+document names the original source identity, the complete canonical assessment-media profile, the
+exact ffmpeg version and executable digest, and the normalized derivative's digest, byte count, and
+measured duration. Production renders the derivative into staging, validates its streams and profile,
+then atomically publishes both derivative and lineage beneath the hidden media tree. A retry may reuse
+that derivative only after strictly decoding and re-hashing the lineage, re-hashing and re-probing the
+media, and reproducing the operation key from source, profile, and tool identities. Filesystem paths
+are locations, never authority. A missing, drifted, oversized, incomplete-stream, or out-of-profile
+derivative fails before either assessor or provider is called.
+The direct-video prompt version, identity-blind system instructions, dynamic duration message, JSON
+schema, strict decoder, programme-only coalescing, whole-source unit derivation, evidence bounds,
+and reducer-candidate projection are one `fillerstructure` contract used by evaluation and runtime.
+Provider adapters supply transport and durable attribution only; they may not carry a private parser
+or reinterpret interval roles.
+Each runtime assessor returns one content-addressed assessment record rather than an unaudited
+candidate. The record binds the exact source bytes and duration, declared assessor profile, request
+and raw-response digests, requested and resolved route, generation, tokens, accounting reservation,
+provider charge, closed operational state, and either one complete parsed timeline or no semantic
+claim. The coordinator verifies the supplied raw bytes against that record and commits both through
+its evidence-repository seam before projecting a reducer candidate. A missing response for a closed
+transport failure remains explicit; an unsettled, budget-held, over-reservation, route-drifted, or
+invalid-response record becomes attributable operational-hold evidence. Persistence failure aborts
+the reduction, so a paid call can never influence a split from memory alone.
+Only one confirmed artifact may project model-decided spans into V67. The projection validates and
+replays the artifact, binds it to the proposal's exact source, and constructs the V67 assessment
+from the artifact's exhaustive ordered intervals. Previous
+chapter, black, silence, transcript, and sparse-frame observations remain content-addressed context;
+their boundary effects are neutralized in the projected assessment so they cannot impersonate a
+third assessor, add an interval, or override the certified reducer. The detector-authored proposal
+remains intact for compatibility comparison; a later certified split projection joins metadata only
+onto exact decided spans and does not carry stale detector failure or hold decisions. Programme and
+non-filler intervals remain explicit discards and never enter the child-confirm list.
+
+The certified gate does not translate complete-timeline agreement into the legacy detector's
+boundary-confidence percentage or require that percentage to authorize the same cut a verified
+artifact already establishes. It still applies deterministic duplicate and duration refusals,
+grounded taxonomy requirements, the four exact-span screens, and the immutable structure authority.
+The compatibility calculation is non-authorizing measurement only. Missing complete-timeline
+evidence or materialization authority holds the proposal; it never selects the older automatic gate.
 
 Suitability screening is repeated over every freshly rendered structure case because concatenation
 and excerpt construction create new viewing contexts. Its prompt identity binds the system prompt,
@@ -5348,6 +6089,15 @@ to the selection, capability snapshot, prompt, route, request ledger, known char
 unknown-charge reservations. This diagnostic remains non-certifying and cannot authorize unattended
 admission or the 300-case relabel by itself.
 
+The shared `openroutermedia` capability snapshot is the sole owner of model, endpoint, and pricing
+validation for runtime and certification. Schema 3 adds at most four canonical prompt-token pricing
+tiers per endpoint. Thresholds are positive, strictly increasing integers; each tier contains only
+its changed price fields and inherits omitted fields from the validated base pricing. Previously
+captured schema-2 snapshots remain valid only without tiers; a schema-2 artifact carrying tiers is
+invalid. The adapter preserves the recorded schema and never invents a tier, upgrades old evidence,
+or bypasses the shared validator. Exact route, privacy, freshness, capability, and positive
+reservation checks remain mandatory, and known over-reservation charges remain accountable holds.
+
 A hosted review run additionally binds one exact upstream route from a capability snapshot no more
 than 24 hours old. It requires image and text input plus strict structured output, zero-data-retention
 eligibility, one provider attempt with fallback disabled, and response metadata proving the selected
@@ -5841,9 +6591,9 @@ Overview and Activity follow the existing member-readable filler contract. Needs
 Diagnostics, and every action require an admin; member attempts return 403 and create no action.
 The API never returns raw evidence sources or locations, provider response bodies, or secrets. A
 review action requires the current unresolved review and is idempotent under its action id; stale or
-duplicate conflicting actions fail closed. Automatic catalog filing remains behind the existing
-compatibility gate until V61 certification explicitly enables a slice, so durable shadow records do
-not themselves widen unattended behavior.
+duplicate conflicting actions fail closed. Automatic catalog filing requires the replacement pipeline
+and an explicitly certified slice. Durable shadow records never grant filing authority, and absent
+certification leaves clips held without a compatibility fallback.
 
 **Loudness normalisation — SPECIFIED, NOT YET BUILT.** Clips filed automatically should be
 normalised to **−16 LUFS** on the ingest path: filler is cut together from sources recorded
@@ -6384,12 +7134,21 @@ pill in that space instead. The capability is not lost — the Tasks page has Ru
 scheduled job — and the pill's "last scan" is what those buttons were really being used to check.
 
 ### Compilation splitting (V34)
+V67 supersedes V34's assumption that every duration-quarantined source is a compilation and its
+lossy drop tally. The V34 detector remains a shadow/proposal input while the V67 structure assessment
+adds semantic source proof, complete timeline coverage, independent interval roles, and certified-slice
+admission. The measured detector behavior below remains evidence; where it conflicts, V67 governs.
+
 Discovery (V33) surfaces a source; ingest downloads it. But a large share of what discovery finds is a **compilation** — one file holding twenty or more commercials back to back. Ingested whole it is a single 15-minute "clip" the pod assembler can never place (`durationEligible` rejects anything far longer than a break); split blindly it is twenty files named `compilation_seg07` with no era, audience or category, which the ladder cannot place either. **Splitting and metadata are one phase because either alone produces unplaceable clips.** The pipeline, designed from measurement on six real compilations rather than reasoning (plan §6.4 — every number below names its method there):
 
 1. **Triage.** A source with chapters splits for free (chapters are exposed without downloading the file). Rare in practice — 6 of 8 sampled sources had none — so this is an optimisation, not the mechanism.
-2. **Coarse split.** ffmpeg's `blackdetect` + `silencedetect`, parsed in Go; segments under the **detection floor** are dropped. That floor is `max(MinSegmentMs, filler.min_duration)` — the 3s sliver floor and the catalog floor, whichever binds (10s on a default install). ⚠ `max()`, never replacement: `filler.min_duration` is settable to `0s`, and a 400ms fade artefact must still be dropped there. The two numbers are **one floor on purpose** — a segment the auto-confirm gate would admit and the scan boundary would then reject (§10 V40) is a clip cut out of a compilation and thrown away, work done to produce nothing and a source file consumed for it. Scene-cut detectors (`scdet`, PySceneDetect) were measured and rejected: they fire on camera cuts *inside* an advert — the wrong granularity, not a tuning problem. Detection quality is a property of the **source**, not of any threshold (69–100% across the six compilations; two had genuinely absent boundaries no setting fixes).
+2. **Coarse split.** ffmpeg's `blackdetect` + `silencedetect`, parsed in Go; segments under the **detection floor** become explicit discard intervals in the V67 plan rather than disappearing. That floor is `max(MinSegmentMs, filler.min_duration)` — the 3s sliver floor and the catalog floor, whichever binds (10s on a default install). ⚠ `max()`, never replacement: `filler.min_duration` is settable to `0s`, and a 400ms fade artefact must still be omitted there. The two numbers are **one floor on purpose** — a segment the auto-confirm gate would admit and the scan boundary would then reject (§10 V40) is a clip cut out of a compilation and thrown away, work done to produce nothing. Scene-cut detectors (`scdet`, PySceneDetect) were measured and rejected: they fire on camera cuts *inside* an advert — the wrong granularity, not a tuning problem. Detection quality is a property of the **source**, not of any threshold (69–100% across the six compilations; two had genuinely absent boundaries no setting fixes).
 3. **Rescue.** A segment far longer than a plausible advert means boundaries the A/V pass could not see; it goes to **transcript (whisper) + LLM** for cut points. ⚠ The LLM must return **exactly one entry when the transcript is a single advert** — without that instruction it invented cuts at suspiciously round 30/61/92s marks inside one 121s infomercial. With no runnable whisper (`INGEST_WHISPER_PATH`, §15) an over-long segment is not guessed at: it surfaces in the review as **unsplittable**.
-4. **Metadata.** Each segment's transcript feeds the **existing** text-signal classifier unchanged (above) — it already knows `cereal`, `toys`, `cars`. Era follows the grounding rule above: persisted only when the year appears in the text, else carried on the proposal as an unconfirmed suggestion.
+4. **Independent role before enrichment (V67).** Each planned interval first receives its own closed
+content role; a reel-wide `commercial` kind is never inherited. Only after the role and structure are
+resolved may ordinary text/vision taxonomy enrichment add product, era, and audience facts. Era follows
+the grounding rule above: persisted only when the year appears in the evidence, else carried as an
+unconfirmed suggestion.
 5. **Deterministic discard.** The same advert recurs across compilations. A dHash over frames sampled at 1/3fps — ~30 lines of pure Go over `ffmpeg -pix_fmt gray` output, no library, no cgo — separates a re-encoded duplicate from a different advert by a measured 25× margin (mean per-frame Hamming 1.1 vs 27.6–32.2), so any threshold in the teens works. A matched segment is discarded before classification: keeping another copy cannot improve the catalog, and asking a person to make that decision is queue-shaped busywork. A segment shorter than the existing `filler.min_duration` floor is discarded at the same seam — the scan boundary would reject the resulting clip immediately, so cutting and reviewing it can produce no usable outcome. **Neither discard deletes source media:** the composite row and file remain (§10 V45), so re-splitting with improved detection is the recovery path. Detection ambiguity is never a deterministic discard: an `unsplittable` or over-long span remains with the whole reel for review.
 6. **Review — required unless the result is unambiguous (V43).** Because detection quality is a property of the source, an uncertain result is confirmed by a human before anything enters the catalog; auto-accepting a 69% result puts 3-minute "commercials" into 30-second breaks. Detection runs as a **job** (minutes per file) producing a **persisted split proposal** (§5) — review can happen long after detection, and a restart must not lose it — and an unconfirmed proposal writes nothing until `POST /v1/filler/splits/{id}/confirm` (§7) commits a cut list.
 
@@ -6910,7 +7669,7 @@ appears in the UI without a second edit, and a guard test compares the served li
 way to hide the bug.
 
 ⚠ **A disabled stage is a `skipped` rung, not an absent one.** An install with vision off still has
-a nine-rung pipeline; the rung renders greyed with its reason inline ("Listen — skipped (the
+a ten-rung pipeline; the rung renders greyed with its reason inline ("Listen — skipped (the
 description already says enough)"). A stage that silently does not happen reads as broken, and the
 sentence is what turns a bug report into an answer.
 
@@ -6919,7 +7678,7 @@ frames merge onto the cached row and never assemble it: the bus drops frames for
 by design, a frame for an unknown clip triggers a refetch rather than inserting a half-built row,
 and a terminal frame invalidates `/v1/filler` outright — a filed clip changes the catalog, which
 nobody watching the catalog tab has a pipeline listener for. Only running frames merge, which is
-what keeps forty clips × nine rungs from becoming 360 refetches.
+what keeps forty clips × ten rungs from becoming 400 refetches.
 
 ⚠ **The ordering rule is derived from the ladder, because there is no sequence number.** A frame
 carries no `seq` and no timestamp, so "is this newer than what is shown" is answered by the
@@ -8829,6 +9588,8 @@ Notifications → Add provider**.
 | `FILLER_REJECT_UNIDENTIFIED` | **`true`** (§10 V51b). Set aside a clip when every signal tier ran and grounded nothing — no era, audience, tag, brand, speech or on-screen text. ⚠ **The only reject an operator can switch off**, because "we could not identify it" is not the claim "it is not a commercial", and a wordless station ident is exactly that case. ⚠ It is also why the rejected list is not optional: every refusal carries a stable reason code plus the measured detail and is reversible in one click. The guard that makes the default safe lives in the score rung — a clip is only unidentified if something actually LOOKED, so a clip the tagger never reached falls through to review, never to a reject |
 | `FILLER_AUTOSPLIT_ENABLED` / `FILLER_AUTOSPLIT_MIN_CONFIDENCE` | **`true` / `85`** (§10 V43, default flipped in V51b). Whether an unambiguous split is confirmed without a human, and the score every remaining segment must reach. Known duplicates and below-`FILLER_MIN_DURATION` fragments are discarded first; they are deterministic non-clips, not review decisions, and the preserved composite is the recovery path. ⚠ **This was OFF, and the note here argued for it**: cutting is destructive in a way tagging is not — a mis-cut clip plays half an advert. That risk has not changed; the evidence has. The gate remains strict (the remaining reel qualifies as a whole or none of it does, an ungrounded era disqualifies at every threshold, and a segment the detector admits it could not resolve sends the reel to a human) and its measured failure mode is refusing GOOD reels, not admitting bad ones. Off by default meant every compilation waited for a click the design says should be unnecessary. ⚠ **A SEPARATE threshold from `FILLER_AUTOFILE_MIN_CONFIDENCE`, deliberately.** One dial would force the stricter of two different failure modes to govern both |
 | `FILLER_AUTOSPLIT_MAX_DURATION` | `120s` (§10 V43). The longest a segment may be and still count as advert-shaped. ⚠ Serves TWO jobs and that is why it is one key: it selects which catalog clips the split job even looks at (longer than this ⇒ a compilation worth detecting), and it is the ceiling every segment must clear for auto-confirm. A single number keeps those two answers from disagreeing — a clip the job considers too long to be an advert must not then auto-confirm as one |
+| `FILLER_STRUCTURE_WINDOW_AUTHORITY_PATH` | **empty** (§10 V67). Optional absolute path to the separately reviewed long-reel materialization-authority JSON. Empty, missing, malformed, drifted, or non-authorizing evidence enables no certified slice. The file is loaded at generation start and therefore requires restart after replacement. A valid authority permits independently assessed long-reel proposals to use the certified complete-plan gate. Without matching authority and a verified decision, automatic materialization holds; no compatibility fallback exists. Materialization can create held children but grants no training or broadcast admission. |
+| `FILLER_STRUCTURE_WINDOW_DEPLOYMENT_PATH` | **empty** (§10 V67). Optional absolute path to the content-addressed long-reel deployment JSON that binds the reviewed authority to two exact OpenRouter routes, reasoning modes, token bounds, reservations, and aggregate spend ceilings. It contains no credential; production uses the existing OpenRouter provider secret. Authority and deployment must both validate at generation start, and replacement requires restart. Empty, malformed, drifted, under-budgeted, or non-authorizing configuration performs no structure inference and enables no certified materialization. |
 | `FILLER_FETCH_EVERY` | `6h` (§10 V38b). How often each registered source is polled for new items. ⚠ **`0` disables auto-fetch entirely** — the escape hatch for an operator who wants acquisition to stay manual, and the value to reach for before disabling sources one by one. ⚠ **V38c: this is now the DEFAULT, not the only value** — a source may override it, and `0` on one row means *that* source never auto-fetches. Inherit is NULL, never 0 |
 | `FILLER_FETCH_MAX_PER_RUN` | `10` (§10 V38b). Items ONE source may pull per poll. ⚠ The bound that stops "add a source" meaning "download 8,000 files tonight" — an archive.org collection is thousands of items, and this is what makes it trickle rather than flood |
 | `FILLER_FETCH_MAX_CATALOG_CLIPS` | `2000` (§10 V38b). Auto-fetch stops when the catalog reaches this. ⚠ Manual queueing and approved pulls still work at the limit: a ceiling on what happens UNATTENDED is not a ceiling on what an operator may deliberately do |

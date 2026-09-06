@@ -237,7 +237,7 @@ func buildFillerMediaTools(set resolved, recorder *metrics.Recorder) *mediatools
 	})
 }
 
-// buildPipeline constructs the ingest pipeline: one driver over nine rungs (§10 V51b/V61).
+// buildPipeline constructs the ingest pipeline: one driver over ten rungs (§10 V51b/V61).
 //
 // ⚠ **This block was measured as an 11-input seam and skipped on that basis. The measurement
 // was wrong, and the way it was wrong is worth keeping.** The window had been drawn at the
@@ -331,7 +331,7 @@ func buildPipeline(st store.Store, set resolved, layout filler.Layout, log *slog
 	}
 	// ── The ingest pipeline (§10 V51b) ────────────────────────────────────────────────────
 	//
-	// One driver over nine rungs, replacing `filler-language`, `filler-split`,
+	// One driver over ten rungs, replacing `filler-language`, `filler-split`,
 	// `filler-transcribe` and `filler-vision`.
 	//
 	// ⚠ **Every rung is registered unconditionally, even when the thing it needs is absent.**
@@ -341,6 +341,10 @@ func buildPipeline(st store.Store, set resolved, layout filler.Layout, log *slog
 	// and letting `Applies` answer is what makes the ladder explain an install rather than
 	// merely show gaps in it — the same visible-but-idle contract the Tasks page rows use.
 	clipDir := layout.ClipDir()
+	screeningRuntime, screeningErr := buildQualificationSegmentScreeningRuntime(st, layout)
+	if screeningErr != nil {
+		log.Error("rendered-child screening qualification runtime was not activated", "err", screeningErr)
+	}
 	pipelineStages := []filler.Stage{
 		filler.NewProbeStage(
 			filler.FFprobeNextTo(set.str("playout.ffmpeg_path")), fillerPipelineClipAdapter{st}, clipDir,
@@ -370,6 +374,11 @@ func buildPipeline(st store.Store, set resolved, layout filler.Layout, log *slog
 				}
 				return lufs
 			}, time.Now).WithMediaDerivatives().WithConditioning(fillerTools.MeasureConditioning).WithDiagnostics(processDiagnostics),
+		// Rendered compilation children must not reach enrichment or the compatibility score gate
+		// until the five certified authorities are wired. The qualification runtime records the
+		// exact rights and playback answers plus explicit holds for the three uncertified safety
+		// axes. Terminal release remains nil, so no qualification aggregate can authorize airplay.
+		filler.NewSegmentScreeningStage(screeningRuntime, nil, clipDir),
 		filler.NewLanguageStage(langDetect, fillerLanguageStoreAdapter{st}, clipDir,
 			func() string { return set.str("filler.language") }, time.Now),
 		filler.NewTranscribeStage(fillerTools, fillerTranscribeStoreAdapter{st}, clipDir, fillerDrop,
@@ -392,37 +401,76 @@ func buildPipeline(st store.Store, set resolved, layout filler.Layout, log *slog
 		}, func() bool { return set.boolv("filler.reject.unidentified") }, time.Now),
 	}
 	if splitter != nil {
+		autoSplitPolicy := &filler.AutoSplitPolicy{
+			Enabled:       func() bool { return set.boolv("filler.autosplit.enabled") },
+			MinConfidence: func() int { return set.intv("filler.autosplit.min_confidence") },
+			MaxDuration:   func() time.Duration { return set.dur("filler.autosplit.max_duration") },
+		}
+		minClipDuration := func() time.Duration { return set.dur("filler.min_duration") }
+		materialization := &filler.StructureMaterializationPolicy{}
+		policyVersion := "production-shadow-no-certified-slices-v1"
+		windowAuthority, authorityErr := loadWindowStructureAuthority(set.str("filler.structure_window_authority_path"))
+		if authorityErr != nil {
+			log.Error("long-reel materialization authority was not loaded; certified splitting remains disabled", "err", authorityErr)
+		}
+		windowDeployment, deploymentErr := loadWindowStructureDeployment(set.str("filler.structure_window_deployment_path"), windowAuthority)
+		if deploymentErr != nil {
+			log.Error("long-reel deployment was not loaded; structure inference and certified splitting remain disabled", "err", deploymentErr)
+		}
+		windowRuntime, runtimeErr := buildCertifiedWindowStructureRuntime(st, set, layout, windowAuthority, windowDeployment)
+		if runtimeErr != nil {
+			log.Error("long-reel runtime was not activated; structure inference and certified splitting remain disabled", "err", runtimeErr)
+		} else if windowRuntime != nil {
+			materialization.WindowAuthority = windowAuthority
+			policyVersion = "production-window-authority-" + windowAuthority.SHA256[:12] + "-deployment-" + windowDeployment.SHA256[:12]
+			log.Info("certified long-reel runtime activated", "authority_sha256", windowAuthority.SHA256,
+				"deployment_sha256", windowDeployment.SHA256, "minimum_source_ms", windowAuthority.MinimumSourceDurationMS,
+				"maximum_source_ms", windowAuthority.MaximumSourceDurationMS)
+		}
+		// The observer records compatibility beside the complete-plan answer for measurement only.
+		// Missing or malformed authority leaves application proposals held; it never restores
+		// compatibility as application authority.
+		structureShadow, shadowErr := filler.NewStructureSplitShadow(st, autoSplitPolicy, materialization, minClipDuration, policyVersion)
+		if shadowErr != nil {
+			log.Error("could not construct filler structure split shadow", "err", shadowErr)
+		}
 		// ⚠ Appended rather than placed in order — `NewPipeline` indexes the slice by stage id
 		// and `StageOrder` is the ONE definition of the sequence, so the order here is
 		// irrelevant. Stating that is worth a line, because a slice that looks like a pipeline
 		// invites someone to "fix" its order.
-		pipelineStages = append(pipelineStages,
-			filler.NewSplitStage(splitter, fillerSplitStoreAdapter{st: st, wake: wake}).
-				WithLogger(log).
-				WithAutoConfirm(filler.AutoSplitPolicy{
-					Enabled:       func() bool { return set.boolv("filler.autosplit.enabled") },
-					MinConfidence: func() int { return set.intv("filler.autosplit.min_confidence") },
-					MaxDuration:   func() time.Duration { return set.dur("filler.autosplit.max_duration") },
-				}, func() time.Duration { return set.dur("filler.min_duration") }).
-				// The split-time grounder (§10 V54). Without it the auto-confirm gate has no data
-				// and `filler.autosplit.enabled` — default ON — can never fire.
-				//
-				// ⚠ Gated on the SAME `filler.vision.enabled` the vision rung uses, via a zero
-				// budget rather than a nil grounder: an operator who turned vision off did not
-				// ask for it back on a different rung, and one switch governing both is what
-				// keeps "is Loomarr sending my frames to a model" answerable in one place.
-				WithSegmentVision(&filler.SegmentVision{
-					Tools:    fillerTools,
-					Provider: visionProvider,
-					Taxa:     fillerVisionStoreAdapter{st},
-					ClipDir:  clipDir,
-					Budget: func() int {
-						if !set.boolv("filler.vision.enabled") {
-							return 0
-						}
-						return set.intv("filler.pipeline.max_split_vision")
-					},
-				}))
+		splitStage := filler.NewSplitStage(splitter, fillerSplitStoreAdapter{st: st, wake: wake}).
+			WithLogger(log).
+			WithAutoConfirm(*autoSplitPolicy, minClipDuration).
+			// The split-time grounder (§10 V54). Without it the auto-confirm gate has no data
+			// and `filler.autosplit.enabled` — default ON — can never fire.
+			//
+			// ⚠ Gated on the SAME `filler.vision.enabled` the vision rung uses, via a zero
+			// budget rather than a nil grounder: an operator who turned vision off did not
+			// ask for it back on a different rung, and one switch governing both is what
+			// keeps "is Loomarr sending my frames to a model" answerable in one place.
+			WithSegmentVision(&filler.SegmentVision{
+				Tools:    fillerTools,
+				Provider: visionProvider,
+				Taxa:     fillerVisionStoreAdapter{st},
+				ClipDir:  clipDir,
+				Budget: func() int {
+					if !set.boolv("filler.vision.enabled") {
+						return 0
+					}
+					return set.intv("filler.pipeline.max_split_vision")
+				},
+			})
+		if windowRuntime != nil {
+			splitStage.WithCompleteTimelineStructureAssessment(windowRuntime)
+		}
+		// Attach the gate even without a runtime. An empty policy then produces an attributable
+		// hold instead of allowing the diagnostic compatibility outcome to create children.
+		splitStage.WithStructureMaterialization(materialization)
+		// Attach even when construction returned a nil typed pointer. Its observer methods fail
+		// closed, preserving the rule that an internal wiring fault cannot silently restore
+		// unattended compatibility publication.
+		splitStage.WithStructureShadow(structureShadow)
+		pipelineStages = append(pipelineStages, splitStage)
 	}
 	fillerPipeline := filler.NewPipeline(st, fillerPipelineClipAdapter{st}, pipelineStages,
 		filler.Budget{

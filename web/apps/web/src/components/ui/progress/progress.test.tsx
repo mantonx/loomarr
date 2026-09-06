@@ -44,7 +44,7 @@ describe("Progress", () => {
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
   });
 
-  // ⚠ Never an `aria-live` region. Forty clips × nine rungs would mount a chorus of them; the
+  // ⚠ Never an `aria-live` region. Forty clips × ten rungs would mount a chorus of them; the
   // surface owns exactly one `role="status"` instead (frontend-design §5.3).
   it("is not a live region", () => {
     render(<Progress value={50} label="x" />);

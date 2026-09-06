@@ -220,6 +220,7 @@ describe("IncomingPanel — being prepared", () => {
     "probe",
     "transcode",
     "split",
+    "screen",
     "language",
     "transcribe",
     "tag",
@@ -297,7 +298,7 @@ describe("IncomingPanel — being prepared", () => {
     expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
-  // Collapsed by default: forty clips × nine rungs is 360 lines of moving text.
+  // Collapsed by default: forty clips × ten rungs is 400 lines of moving text.
   //
   // ⚠ Asserted through the ACCESSIBILITY TREE, not `queryByText`. `hiddenUntilFound` leaves the
   // panel in the DOM on purpose — that is what lets find-in-page reach a collapsed row and open

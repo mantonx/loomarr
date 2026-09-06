@@ -3,6 +3,8 @@ package fillerbakeoff
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,9 +20,11 @@ import (
 )
 
 const (
-	OpenRouterSnapshotSchemaVersion = openroutermedia.CapabilitySnapshotSchemaVersion
+	OpenRouterSnapshotSchemaVersion = 3
+	legacyOpenRouterSnapshotSchema  = 2
 	maxSnapshotModels               = 16
 	maxSnapshotEndpoints            = 256
+	maxSnapshotPricingOverrides     = 4
 	maxSnapshotResponseBytes        = 8 << 20
 	maxSnapshotTotalBytes           = 32 << 20
 	maxSnapshotAge                  = 24 * time.Hour
@@ -31,6 +35,7 @@ const (
 type OpenRouterSnapshot = openroutermedia.CapabilitySnapshot
 type OpenRouterModelSnapshot = openroutermedia.CapabilityModelSnapshot
 type OpenRouterEndpointSnapshot = openroutermedia.CapabilityEndpointSnapshot
+type OpenRouterPricingOverride = openroutermedia.PricingOverride
 
 type OpenRouterSnapshotConfig struct {
 	BaseURL              string
@@ -169,7 +174,7 @@ func FetchOpenRouterSnapshot(ctx context.Context, config OpenRouterSnapshotConfi
 			return OpenRouterSnapshot{}, fmt.Errorf("OpenRouter model %q returned an invalid endpoint count", modelID)
 		}
 		for _, wire := range response.Data.Endpoints {
-			pricing, err := normalizeOpenRouterPricing(wire.Pricing)
+			pricing, pricingOverrides, err := normalizeOpenRouterEndpointPricing(wire.Pricing)
 			if err != nil {
 				return OpenRouterSnapshot{}, fmt.Errorf("OpenRouter model %q endpoint %q pricing: %w", modelID, wire.Tag, err)
 			}
@@ -178,7 +183,7 @@ func FetchOpenRouterSnapshot(ctx context.Context, config OpenRouterSnapshotConfi
 				Name: wire.Name, ModelID: wire.ModelID, ProviderName: wire.ProviderName, ProviderSlug: wire.Tag,
 				Quantization: wire.Quantization, ContextLength: wire.ContextLength,
 				MaxCompletionTokens: wire.MaxCompletionTokens, MaxPromptTokens: wire.MaxPromptTokens,
-				SupportedParameters: sortedUnique(wire.SupportedParameters), Pricing: pricing,
+				SupportedParameters: sortedUnique(wire.SupportedParameters), Pricing: pricing, PricingOverrides: pricingOverrides,
 				Status: wire.Status, ZDR: isZDR, SupportsImplicitCache: wire.SupportsImplicitCaching,
 			})
 		}
@@ -288,6 +293,9 @@ func openRouterEndpointKey(endpoint openRouterEndpointWire) string {
 func normalizeOpenRouterPricing(raw map[string]json.RawMessage) (map[string]string, error) {
 	pricing := make(map[string]string, len(raw))
 	for name, value := range raw {
+		if name == "overrides" {
+			continue
+		}
 		if len(name) > maxFieldBytes {
 			return nil, fmt.Errorf("price key is too long")
 		}
@@ -310,6 +318,66 @@ func normalizeOpenRouterPricing(raw map[string]json.RawMessage) (map[string]stri
 	return pricing, nil
 }
 
+func normalizeOpenRouterEndpointPricing(raw map[string]json.RawMessage) (map[string]string, []OpenRouterPricingOverride, error) {
+	pricing, err := normalizeOpenRouterPricing(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	rawOverrides, ok := raw["overrides"]
+	if !ok || bytes.Equal(bytes.TrimSpace(rawOverrides), []byte("null")) {
+		return pricing, nil, nil
+	}
+	var wireOverrides []map[string]json.RawMessage
+	if err := json.Unmarshal(rawOverrides, &wireOverrides); err != nil {
+		return nil, nil, fmt.Errorf("price overrides are not an array: %w", err)
+	}
+	if len(wireOverrides) == 0 || len(wireOverrides) > maxSnapshotPricingOverrides {
+		return nil, nil, fmt.Errorf("price overrides require between one and %d tiers", maxSnapshotPricingOverrides)
+	}
+	overrides := make([]OpenRouterPricingOverride, 0, len(wireOverrides))
+	for _, wire := range wireOverrides {
+		rawThreshold, ok := wire["min_prompt_tokens"]
+		if !ok {
+			return nil, nil, fmt.Errorf("price override lacks min_prompt_tokens")
+		}
+		delete(wire, "min_prompt_tokens")
+		var threshold json.Number
+		decoder := json.NewDecoder(bytes.NewReader(rawThreshold))
+		decoder.UseNumber()
+		if err := decoder.Decode(&threshold); err != nil {
+			return nil, nil, fmt.Errorf("price override min_prompt_tokens is not an exact integer")
+		}
+		minimumPromptTokens, err := threshold.Int64()
+		if err != nil || minimumPromptTokens <= 0 {
+			return nil, nil, fmt.Errorf("price override min_prompt_tokens must be a positive integer")
+		}
+		tierPricing, err := normalizeOpenRouterPricing(wire)
+		if err != nil {
+			return nil, nil, fmt.Errorf("price override at %d prompt tokens: %w", minimumPromptTokens, err)
+		}
+		if len(tierPricing) == 0 {
+			return nil, nil, fmt.Errorf("price override at %d prompt tokens is empty", minimumPromptTokens)
+		}
+		overrides = append(overrides, OpenRouterPricingOverride{MinimumPromptTokens: minimumPromptTokens, Pricing: tierPricing})
+	}
+	slices.SortFunc(overrides, func(left, right OpenRouterPricingOverride) int {
+		switch {
+		case left.MinimumPromptTokens < right.MinimumPromptTokens:
+			return -1
+		case left.MinimumPromptTokens > right.MinimumPromptTokens:
+			return 1
+		default:
+			return 0
+		}
+	})
+	for index := 1; index < len(overrides); index++ {
+		if overrides[index-1].MinimumPromptTokens == overrides[index].MinimumPromptTokens {
+			return nil, nil, fmt.Errorf("price overrides repeat min_prompt_tokens %d", overrides[index].MinimumPromptTokens)
+		}
+	}
+	return pricing, overrides, nil
+}
+
 func sortedUnique(values []string) []string {
 	result := append([]string(nil), values...)
 	slices.Sort(result)
@@ -317,7 +385,12 @@ func sortedUnique(values []string) []string {
 }
 
 func OpenRouterSnapshotSHA256(snapshot OpenRouterSnapshot) string {
-	return openroutermedia.CapabilitySnapshotSHA256(snapshot)
+	data, err := json.Marshal(snapshot)
+	if err != nil {
+		panic(err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func ValidateOpenRouterSnapshot(snapshot OpenRouterSnapshot) error {
@@ -367,6 +440,18 @@ func ValidateOpenRouterRunSnapshot(run fillereval.RunIdentity, routes []Route, s
 		}
 	}
 	return nil
+}
+
+func canonicalStrings(values []string) bool {
+	if len(values) == 0 || !slices.IsSorted(values) {
+		return false
+	}
+	for index, value := range values {
+		if value == "" || len(value) > maxFieldBytes || (index > 0 && values[index-1] == value) {
+			return false
+		}
+	}
+	return true
 }
 
 func snapshotModel(snapshot OpenRouterSnapshot, id string) (OpenRouterModelSnapshot, bool) {

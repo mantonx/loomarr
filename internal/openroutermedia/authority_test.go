@@ -129,5 +129,5 @@ func authorityTestRequirements(now time.Time) RouteRequirements {
 }
 
 func authorityTestConfig() Config {
-	return Config{APIKey: "secret", Model: "vendor/model", ResolvedModel: "vendor/model-2026", UpstreamProvider: "Pinned Provider", ProviderSlug: "pinned/provider", SchemaName: "contract", Schema: map[string]any{"type": "object"}, SystemPrompt: "system", Content: "content", MaxTokens: 32, MaxChargeNanoUSD: 1}
+	return Config{APIKey: "secret", Model: "vendor/model", ResolvedModel: "vendor/model-2026", UpstreamProvider: "Pinned Provider", ProviderSlug: "pinned/provider", SchemaName: "contract", Schema: map[string]any{"type": "object"}, SystemPrompt: "system", Content: "content", MaxTokens: 32, ReservationNanoUSD: 1}
 }

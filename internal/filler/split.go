@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/loomarr/loomarr/internal/fillerstructure"
 )
 
 // Compilation splitting (§10, V34) — domain types and the PURE segment logic.
@@ -197,11 +199,13 @@ func scoreBoundaries(segs []SplitSegment) {
 type dropTally struct {
 	Count int
 	Ms    int64
+	Spans []Interval
 }
 
 func (d *dropTally) add(startMs, endMs int64) {
 	d.Count++
 	d.Ms += endMs - startMs
+	d.Spans = append(d.Spans, Interval{StartMs: startMs, EndMs: endMs})
 }
 
 // SplitSegment is one proposed clip inside a compilation (§10 V34). The detector
@@ -266,6 +270,11 @@ type SplitSegment struct {
 	// provider-error path does NOT set it, because a failing backend fails for every segment and
 	// should be retried next pass rather than poisoning the reel.
 	Looked bool `json:"looked,omitempty"`
+	// RoleEvidence is the exact, independently attributable frame judgement for THIS span. It is
+	// intentionally not flattened into Category or copied from the parent: the source-structure
+	// reducer consumes it as a segment_role observation and decides whether the span is keepable.
+	// nil means no valid role evidence was produced, even when Looked is true.
+	RoleEvidence *StructureRoleEvidence `json:"-"`
 	// DupOf is the path of an existing catalog clip this segment duplicates
 	// (dHash, measured 25× separation). Propose records the detection fact; the automated split
 	// stage then discards it before classification because it cannot add a new catalog clip.
@@ -288,6 +297,12 @@ type SplitDetectionProgress struct {
 	ScannedThroughMs int64      `json:"scannedThroughMs"`
 	Black            []Interval `json:"black,omitempty"`
 	Silence          []Interval `json:"silence,omitempty"`
+	// ChapterEdges retains every declared edge, including the bounds of a below-floor chapter
+	// omitted from CoarseSegments. V67 needs those facts to account for the omitted interval.
+	ChapterEdges []int64 `json:"chapterEdges,omitempty"`
+	// Discarded retains exact below-floor spans across the durable detection checkpoint. The old
+	// in-memory aggregate remains display data; these intervals are structure authority.
+	Discarded []Interval `json:"discarded,omitempty"`
 	// Chapters says CoarseSegments came from container-authored chapter boundaries. It is private
 	// checkpoint provenance, not review data, and lets a resume restore scoring evidence even when
 	// a source supplied one untitled chapter (otherwise indistinguishable from a whole-reel
@@ -331,6 +346,12 @@ type SplitProposal struct {
 	// Source binds detection and confirmation to one exact derivative. It is internal durable
 	// state rather than review UI; zero is a pre-V66 proposal that resolves through legacy rules.
 	Source SplitSourceAsset `json:"-"`
+	// Structure is the V67 exact-source, complete-timeline assessment. nil is a legacy proposal or
+	// a V34 shadow proposal that has not reached structure reduction yet.
+	Structure *SourceStructureAssessment `json:"-"`
+	// StructureDecision retains the independent complete-video assessments and their replayable
+	// provider-neutral reduction. It cannot authorize publication by itself.
+	StructureDecision *fillerstructure.Artifact `json:"-"`
 	// Spawned remembers children already produced by partial auto-confirm. It is private durable
 	// state, not review UI: final confirmation needs the whole new generation so it can retire
 	// superseded children without also retiring cuts produced on an earlier pass.

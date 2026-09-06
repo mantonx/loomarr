@@ -114,6 +114,34 @@ func TestLockTemporalStructureAssessmentRejectsSnapshotRouteDrift(t *testing.T) 
 	}
 }
 
+func TestLockTemporalStructureAssessmentReproducesSnapshotPriceBound(t *testing.T) {
+	now := time.Date(2026, 9, 2, 4, 0, 0, 0, time.UTC)
+	fixture := newTemporalStructureFixture(t)
+	root, _ := fixture.build(t, "lock-price-drift")
+	manifestPath := filepath.Join(root, "public", "manifest.json")
+	authorityPath := filepath.Join(root, "private", "authority.json")
+	manifest := readStrictTestJSON[TemporalStructureChallengeManifest](t, manifestPath)
+	aliases := temporalStructureAliases(manifest)
+	resultPath := filepath.Join(t.TempDir(), "result.json")
+	server := newTemporalSuitabilityServer(t, nil, temporalStructureStandaloneResponse)
+	defer server.Close()
+	config := temporalStructureOpenRouterTestConfig(manifestPath, resultPath+".private", aliases, server, now)
+	result, err := RunOpenRouterTemporalStructure(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.EstimatedMaximumChargeNanoUSD++
+	writeTemporalStructureResult(t, resultPath, result)
+	_, err = LockTemporalStructureAssessment(TemporalStructureAssessmentLockConfig{
+		PublicManifestPath: manifestPath, PrivateAuthorityPath: authorityPath, ResultPath: resultPath,
+		SnapshotPath: writeTemporalStructureSnapshot(t, config.Snapshot), ExpectedCases: len(aliases),
+		LockedAt: now.Add(time.Hour), OutputPath: filepath.Join(t.TempDir(), "lock.json"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "price bound") {
+		t.Fatalf("price drift error=%v", err)
+	}
+}
+
 func writeTemporalStructureSnapshot(t *testing.T, snapshot fillerbakeoff.OpenRouterSnapshot) string {
 	t.Helper()
 	raw, err := json.MarshalIndent(snapshot, "", "  ")

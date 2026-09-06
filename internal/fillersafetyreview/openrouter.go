@@ -34,7 +34,7 @@ func reviewOne(
 		SchemaName: "spoken_safety_independent_review", Schema: reviewSchema(loaded.policy),
 		SystemPrompt: reviewSystemPrompt, Content: content,
 		Audios:    []openroutermedia.Audio{{Format: "wav", Base64: base64.StdEncoding.EncodeToString(wav)}},
-		MaxTokens: reviewMaxTokens, MaxChargeNanoUSD: loaded.plan.MaximumChargeNanoUSD,
+		MaxTokens: reviewMaxTokens, ReservationNanoUSD: loaded.plan.MaximumChargeNanoUSD,
 		DisableReasoning: loaded.plan.DisableReasoning, Title: "Loomarr spoken-safety independent review",
 		Reserve: reserve,
 	})

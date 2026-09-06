@@ -28,7 +28,7 @@ type pipeMemStore struct {
 	holdErr   error
 }
 
-func (m *pipeMemStore) SetClipsHeld(_ context.Context, paths []string, held, _ bool, _ time.Time) (int, error) {
+func (m *pipeMemStore) SetClipsHeld(_ context.Context, paths []string, held, autoFiled bool, _ time.Time) (int, error) {
 	if m.holdErr != nil {
 		return 0, m.holdErr
 	}
@@ -36,7 +36,7 @@ func (m *pipeMemStore) SetClipsHeld(_ context.Context, paths []string, held, _ b
 	for _, p := range paths {
 		for hash, c := range m.clips {
 			if c.Path == p {
-				c.Held = held
+				c.Held, c.AutoFiled = held, autoFiled
 				m.clips[hash] = c
 				n++
 			}
@@ -235,27 +235,31 @@ func TestPipeline_StagePanicBecomesARecoverableClipFailure(t *testing.T) {
 	}
 }
 
-func TestPipeline_AdmissionAuditFailureNeverFallsThroughToLegacyFiling(t *testing.T) {
-	st := newPipeMemStore()
-	seedEnrolled(st, "c1")
-	stages := allStages()
-	stages[filler.StageAdmission].err = errors.New("decision store unavailable")
+func TestPipeline_AuthorityFailureNeverFallsThroughToLegacyFiling(t *testing.T) {
+	for _, blockedStage := range []filler.StageID{filler.StageScreen, filler.StageAdmission} {
+		t.Run(string(blockedStage), func(t *testing.T) {
+			st := newPipeMemStore()
+			seedEnrolled(st, "c1")
+			stages := allStages()
+			stages[blockedStage].err = errors.New("authority store unavailable")
 
-	p := newPipe(st, asSlice(stages), filler.DefaultBudget())
-	for range filler.MaxAttempts + 1 {
-		if err := p.Advance(context.Background(), "c1"); err != nil {
-			t.Fatal(err)
-		}
-	}
+			p := newPipe(st, asSlice(stages), filler.DefaultBudget())
+			for range filler.MaxAttempts + 1 {
+				if err := p.Advance(context.Background(), "c1"); err != nil {
+					t.Fatal(err)
+				}
+			}
 
-	row := st.rows["c1"]
-	if row.Stage != filler.StageAdmission || row.Status != filler.StatusFailed ||
-		row.Disposition != filler.DispositionRunning || row.Attempts != filler.MaxAttempts {
-		t.Fatalf("admission failure = %q/%q disposition=%q attempts=%d",
-			row.Stage, row.Status, row.Disposition, row.Attempts)
-	}
-	if stages[filler.StageScore].runs != 0 {
-		t.Fatalf("legacy score ran %d times without a durable shadow decision", stages[filler.StageScore].runs)
+			row := st.rows["c1"]
+			if row.Stage != blockedStage || row.Status != filler.StatusFailed ||
+				row.Disposition != filler.DispositionRunning || row.Attempts != filler.MaxAttempts {
+				t.Fatalf("authority failure = %q/%q disposition=%q attempts=%d",
+					row.Stage, row.Status, row.Disposition, row.Attempts)
+			}
+			if stages[filler.StageScore].runs != 0 {
+				t.Fatalf("legacy score ran %d times without stage %q authority", stages[filler.StageScore].runs, blockedStage)
+			}
+		})
 	}
 }
 

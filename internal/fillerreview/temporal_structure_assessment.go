@@ -7,12 +7,13 @@ import (
 	"time"
 
 	"github.com/loomarr/loomarr/internal/fillereval"
+	"github.com/loomarr/loomarr/internal/fillerstructure"
 )
 
 const (
-	TemporalStructureAssessmentSchemaVersion   = 2
-	TemporalStructureAssessmentContractVersion = "filler-temporal-structure-assessment-v2"
-	temporalStructureMaximumDecisiveTimes      = 8
+	TemporalStructureAssessmentSchemaVersion   = 4
+	TemporalStructureAssessmentContractVersion = "filler-temporal-structure-assessment-v4"
+	temporalStructureMaximumDecisiveTimes      = fillerstructure.DirectVideoMaximumDecisiveTime
 )
 
 // TemporalStructureAssessmentSet is the immutable, full-video assessor
@@ -38,8 +39,19 @@ type TemporalStructureAssessment struct {
 	Alias              string                                 `json:"alias"`
 	Unit               *TemporalStructureUnitClaim            `json:"unit,omitempty"`
 	Role               *TemporalStructureRoleClaim            `json:"role,omitempty"`
+	Segments           []TemporalStructureSegmentClaim        `json:"segments,omitempty"`
 	OperationalFailure *fillereval.TemporalOperationalFailure `json:"operationalFailure,omitempty"`
 	Inference          fillereval.TemporalInference           `json:"inference"`
+}
+
+// TemporalStructureSegmentClaim is one interval in a complete coverage-preserving prediction.
+// Roles are independent per interval; a compilation never inherits one reel-wide role.
+type TemporalStructureSegmentClaim struct {
+	StartMS      int64                          `json:"startMs"`
+	EndMS        int64                          `json:"endMs"`
+	Role         fillereval.TemporalSegmentRole `json:"role"`
+	DecisiveAtMS []int64                        `json:"decisiveAtMs,omitempty"`
+	Reason       string                         `json:"reason"`
 }
 
 type TemporalStructureUnitClaim struct {
@@ -113,12 +125,12 @@ func validateTemporalStructureAssessment(assessment TemporalStructureAssessment,
 		return err
 	}
 	if assessment.OperationalFailure != nil {
-		if assessment.Unit != nil || assessment.Role != nil || !validTemporalStructureFailure(assessment.OperationalFailure.Code) || strings.TrimSpace(assessment.OperationalFailure.Detail) == "" || assessment.Inference.Calls[len(assessment.Inference.Calls)-1].OperationalFailure != assessment.OperationalFailure.Code {
+		if assessment.Unit != nil || assessment.Role != nil || len(assessment.Segments) != 0 || !validTemporalStructureFailure(assessment.OperationalFailure.Code) || strings.TrimSpace(assessment.OperationalFailure.Detail) == "" || assessment.Inference.Calls[len(assessment.Inference.Calls)-1].OperationalFailure != assessment.OperationalFailure.Code {
 			return fmt.Errorf("operational failure is invalid or mixed with semantic claims")
 		}
 		return nil
 	}
-	if assessment.Unit == nil || !validHumanUnit(assessment.Unit.Kind) || strings.TrimSpace(assessment.Unit.Reason) == "" || !validTemporalStructureTimes(assessment.Unit.DecisiveAtMS, durationMS, assessment.Unit.Kind == fillereval.UnitUnclear) {
+	if assessment.Unit == nil || !validTemporalStructureUnit(assessment.Unit.Kind) || strings.TrimSpace(assessment.Unit.Reason) == "" || !validTemporalStructureTimes(assessment.Unit.DecisiveAtMS, durationMS, temporalStructureUnitMayLackDecisiveEvidence(assessment.Unit.Kind)) {
 		return fmt.Errorf("unit claim or decisive timestamps are invalid")
 	}
 	if assessment.Unit.Kind == fillereval.UnitStandalone {
@@ -128,10 +140,78 @@ func validateTemporalStructureAssessment(assessment TemporalStructureAssessment,
 	} else if assessment.Role != nil {
 		return fmt.Errorf("non-standalone assessment carries a role claim")
 	}
+	if err := validateTemporalStructureSegments(assessment, durationMS); err != nil {
+		return err
+	}
 	if len(assessment.Inference.Calls) != 1 || assessment.Inference.Calls[0].Axis != "structure" || assessment.Inference.Calls[0].OperationalFailure != "" {
 		return fmt.Errorf("successful assessment requires one atomic structure call")
 	}
 	return nil
+}
+
+func validateTemporalStructureSegments(assessment TemporalStructureAssessment, durationMS int64) error {
+	if len(assessment.Segments) == 0 || assessment.Segments[0].StartMS != 0 || assessment.Segments[len(assessment.Segments)-1].EndMS != durationMS {
+		return fmt.Errorf("segment plan must cover the complete video")
+	}
+	programmeSegments := 0
+	for index, segment := range assessment.Segments {
+		mayLackDecisiveEvidence := segment.Role == fillereval.TemporalSegmentAmbiguous || segment.Role == fillereval.TemporalSegmentUnusable
+		if segment.StartMS < 0 || segment.EndMS <= segment.StartMS || index > 0 && segment.StartMS != assessment.Segments[index-1].EndMS || !validTemporalSegmentRole(segment.Role) || strings.TrimSpace(segment.Reason) == "" || !validTemporalStructureTimes(segment.DecisiveAtMS, durationMS, mayLackDecisiveEvidence) {
+			return fmt.Errorf("segment %d is invalid or breaks complete coverage", index)
+		}
+		for _, atMS := range segment.DecisiveAtMS {
+			if atMS < segment.StartMS || atMS > segment.EndMS {
+				return fmt.Errorf("segment %d decisive timestamp is outside its interval", index)
+			}
+		}
+		if segment.Role == fillereval.TemporalSegmentProgrammeFragment {
+			programmeSegments++
+		}
+	}
+	switch assessment.Unit.Kind {
+	case fillereval.UnitStandalone:
+		if len(assessment.Segments) != 1 || string(assessment.Segments[0].Role) != string(assessment.Role.Kind) {
+			return fmt.Errorf("standalone assessment requires one whole-video segment matching its role")
+		}
+	case fillereval.UnitCompilation:
+		if len(assessment.Segments) < 2 || programmeSegments > 0 {
+			return fmt.Errorf("compilation assessment requires at least two covered segments")
+		}
+	case fillereval.UnitProgrammeExcerpt:
+		if len(assessment.Segments) != 1 || programmeSegments != 1 {
+			return fmt.Errorf("programme excerpt requires an explicit programme_fragment segment")
+		}
+	case fillereval.UnitProgrammeSpots:
+		fillerSegments := 0
+		for _, segment := range assessment.Segments {
+			if temporalStructureFillerSegmentRole(segment.Role) {
+				fillerSegments++
+			}
+		}
+		if programmeSegments < 2 || fillerSegments < 1 {
+			return fmt.Errorf("programme with spots requires programme fragments around at least one filler segment")
+		}
+	}
+	return nil
+}
+
+func validTemporalStructureUnit(unit fillereval.UnitKind) bool {
+	return unit == fillereval.UnitStandalone || unit == fillereval.UnitCompilation || unit == fillereval.UnitProgrammeExcerpt || unit == fillereval.UnitProgrammeSpots || unit == fillereval.UnitUnusable || unit == fillereval.UnitUnclear
+}
+
+func temporalStructureUnitMayLackDecisiveEvidence(unit fillereval.UnitKind) bool {
+	return unit == fillereval.UnitUnclear || unit == fillereval.UnitUnusable
+}
+
+func temporalStructureFillerSegmentRole(role fillereval.TemporalSegmentRole) bool {
+	switch role {
+	case fillereval.TemporalSegmentCommercial, fillereval.TemporalSegmentPromo, fillereval.TemporalSegmentBumper,
+		fillereval.TemporalSegmentPSA, fillereval.TemporalSegmentStationID, fillereval.TemporalSegmentTrailer,
+		fillereval.TemporalSegmentInterstitial:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateTemporalStructureInference(inference fillereval.TemporalInference, generatedAt, completedAt time.Time) error {
@@ -176,6 +256,18 @@ func validTemporalStructureTimes(values []int64, durationMS int64, mayBeEmpty bo
 func validTemporalStructureFailure(code fillereval.TemporalFailureCode) bool {
 	switch code {
 	case fillereval.TemporalFailureTimeout, fillereval.TemporalFailureProvider, fillereval.TemporalFailureInvalidResponse, fillereval.TemporalFailureEvidence, fillereval.TemporalFailureContextExhausted:
+		return true
+	default:
+		return false
+	}
+}
+
+func validTemporalSegmentRole(role fillereval.TemporalSegmentRole) bool {
+	switch role {
+	case fillereval.TemporalSegmentCommercial, fillereval.TemporalSegmentPromo, fillereval.TemporalSegmentBumper,
+		fillereval.TemporalSegmentPSA, fillereval.TemporalSegmentStationID, fillereval.TemporalSegmentTrailer,
+		fillereval.TemporalSegmentInterstitial, fillereval.TemporalSegmentProgrammeFragment,
+		fillereval.TemporalSegmentNonFiller, fillereval.TemporalSegmentAmbiguous, fillereval.TemporalSegmentUnusable:
 		return true
 	default:
 		return false

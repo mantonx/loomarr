@@ -190,6 +190,8 @@ Air run at pinned versions from the harness.
 - `cmd/loomarr` is the entrypoint; `internal/app` is the composition root; `internal/api` owns Huma
   routes.
 - Domain packages under `internal/` map to the ports documented in design §2.
+- `internal/fillerstructure` is the provider-neutral complete-timeline reducer shared by filler
+  certification and production; challenge truth and provider clients do not belong there.
 - `internal/testkit` is the shared mock and pinned-fixture module.
 - `web/` is a pnpm workspace: `apps/web` plus `packages/{api,core,tokens,fixtures}`. Frontend request
   types come from orval and are never handwritten.

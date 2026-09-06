@@ -2934,6 +2934,7 @@ components:
             - probe
             - transcode
             - split
+            - screen
             - language
             - transcribe
             - tag
@@ -3424,6 +3425,135 @@ components:
         - pool
         - acquisitions
         - repairs
+      type: object
+    FillerRightsGrantDTO:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/v1/schemas/FillerRightsGrantDTO.json
+          format: uri
+          readOnly: true
+          type: string
+        acquisitionId:
+          type: string
+        actorId:
+          type: string
+        effectiveAt:
+          format: date-time
+          type: string
+        evidenceSha256:
+          type: string
+        policySha256:
+          type: string
+        recordedAt:
+          format: date-time
+          type: string
+        sha256:
+          type: string
+        sourceId:
+          type: string
+        sourceMasterSha256:
+          type: string
+        status:
+          enum:
+            - authorized
+            - prohibited
+            - unknown
+          type: string
+        supersedesSha256:
+          type: string
+        use:
+          type: string
+        validUntil:
+          format: date-time
+          type: string
+        withdrawal:
+          enum:
+            - clear
+            - withdrawn
+            - unknown
+          type: string
+        withdrawnAt:
+          format: date-time
+          type: string
+      required:
+        - sha256
+        - sourceId
+        - acquisitionId
+        - sourceMasterSha256
+        - policySha256
+        - use
+        - status
+        - withdrawal
+        - evidenceSha256
+        - actorId
+        - effectiveAt
+        - recordedAt
+      type: object
+    FillerRightsGrantInputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/v1/schemas/FillerRightsGrantInputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        acquisitionId:
+          maxLength: 256
+          type: string
+        effectiveAt:
+          description: UTC instant; defaults to the recording instant
+          format: date-time
+          type: string
+        evidenceSha256:
+          maxLength: 64
+          minLength: 64
+          type: string
+        policySha256:
+          maxLength: 64
+          minLength: 64
+          type: string
+        sourceId:
+          maxLength: 256
+          type: string
+        sourceMasterSha256:
+          maxLength: 64
+          minLength: 64
+          type: string
+        status:
+          enum:
+            - authorized
+            - prohibited
+            - unknown
+          type: string
+        supersedesSha256:
+          description: Exact current grant digest required when replacing an authority
+          maxLength: 64
+          type: string
+        validUntil:
+          format: date-time
+          type: string
+        withdrawal:
+          enum:
+            - clear
+            - withdrawn
+            - unknown
+          type: string
+        withdrawnAt:
+          format: date-time
+          type: string
+      required:
+        - sourceId
+        - acquisitionId
+        - sourceMasterSha256
+        - policySha256
+        - status
+        - withdrawal
+        - evidenceSha256
       type: object
     FillerSelection:
       additionalProperties: false
@@ -7291,6 +7421,7 @@ components:
             - probe
             - transcode
             - split
+            - screen
             - language
             - transcribe
             - tag
@@ -12000,7 +12131,7 @@ paths:
         - filler
   /v1/filler/file:
     post:
-      description: "Admin only (§10 V38). Admits held clips to the playable catalog — they become matchable into pods. With `asSuggested`, each clip's OWN ungrounded era guess is confirmed as it files (the mock's \"File all as suggested\"), which `bulk/tag` cannot express because it applies one era to the whole selection. Filing by hand CLEARS the auto-filed marker: a human looked."
+      description: "Admin only (§10 V38). Admits held clips to the playable catalog — they become matchable into pods. With `asSuggested`, each clip's OWN ungrounded era guess is confirmed as it files (the mock's \"File all as suggested\"), which `bulk/tag` cannot express because it applies one era to the whole selection. Filing by hand CLEARS the auto-filed marker: a human looked. A materialized compilation child cannot be filed until its rendered-child screening rung completed."
       operationId: file-filler-clips
       requestBody:
         content:
@@ -12364,6 +12495,83 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Re-run a clip's ingest pipeline from one stage
+      tags:
+        - filler
+  /v1/filler/rights/current:
+    get:
+      description: Admin-only exact-scope read of the immutable grant currently used by rendered-child screening and terminal release (§10 V67).
+      operationId: current-filler-rights-grant
+      parameters:
+        - explode: false
+          in: query
+          name: sourceId
+          required: true
+          schema:
+            maxLength: 256
+            type: string
+        - explode: false
+          in: query
+          name: acquisitionId
+          required: true
+          schema:
+            maxLength: 256
+            type: string
+        - explode: false
+          in: query
+          name: sourceMasterSha256
+          required: true
+          schema:
+            maxLength: 64
+            minLength: 64
+            type: string
+        - explode: false
+          in: query
+          name: policySha256
+          required: true
+          schema:
+            maxLength: 64
+            minLength: 64
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FillerRightsGrantDTO"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Read current filler rights authority
+      tags:
+        - filler
+  /v1/filler/rights/grants:
+    post:
+      description: Admin-only append of one immutable reviewed grant. Replacing a current grant requires its exact digest; history cannot be edited or deleted (§10 V67).
+      operationId: record-filler-rights-grant
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FillerRightsGrantInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FillerRightsGrantDTO"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Record current-use filler rights authority
       tags:
         - filler
   /v1/filler/sources:

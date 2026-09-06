@@ -65,6 +65,58 @@ func TestFileFillerClips_TakesTheClipOffTheQueueForGood(t *testing.T) {
 	}
 }
 
+func TestFileFillerClips_DoesNotBypassRenderedChildScreening(t *testing.T) {
+	srv, st, _ := newFillerServer(t)
+	const hash, path = "screening-child", "children/screening-child.mp4"
+	putClip(t, st, filler.Clip{
+		Hash: hash, Path: path, Name: "Compilation child", Kind: filler.Commercial,
+		DurationMs: 30_000, Held: true, ParentHash: "compilation-parent",
+	})
+	if err := st.UpsertClipPipeline(context.Background(), filler.ClipPipeline{
+		ClipHash: hash, Stage: filler.StageScreen, Status: filler.StatusDone,
+		Disposition: filler.DispositionReview,
+		Stages:      []filler.StageRecord{{Stage: filler.StageScreen, Status: filler.StatusDone}},
+		UpdatedAt:   time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if res := sourceReq(t, http.MethodPost, srv.URL+"/v1/filler/file",
+		`{"paths":["`+path+`"]}`, adminToken); res.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 for unresolved child screening", res.StatusCode)
+	}
+	clip, err := st.GetClip(context.Background(), hash)
+	if err != nil || !clip.Held {
+		t.Fatalf("screening review became airable: clip=%+v err=%v", clip, err)
+	}
+}
+
+func TestFileFillerClips_AllowsHumanDecisionAfterChildScreeningCompleted(t *testing.T) {
+	srv, st, _ := newFillerServer(t)
+	const hash, path = "screened-child", "children/screened-child.mp4"
+	putClip(t, st, filler.Clip{
+		Hash: hash, Path: path, Name: "Screened compilation child", Kind: filler.Commercial,
+		DurationMs: 30_000, Held: true, ParentHash: "compilation-parent",
+	})
+	if err := st.UpsertClipPipeline(context.Background(), filler.ClipPipeline{
+		ClipHash: hash, Stage: filler.StageLanguage, Status: filler.StatusDone,
+		Disposition: filler.DispositionReview,
+		Stages:      []filler.StageRecord{{Stage: filler.StageScreen, Status: filler.StatusDone}},
+		UpdatedAt:   time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if res := sourceReq(t, http.MethodPost, srv.URL+"/v1/filler/file",
+		`{"paths":["`+path+`"]}`, adminToken); res.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want later human review to remain fileable", res.StatusCode)
+	}
+	clip, err := st.GetClip(context.Background(), hash)
+	if err != nil || clip.Held {
+		t.Fatalf("completed screening did not permit later human decision: clip=%+v err=%v", clip, err)
+	}
+}
+
 // A clip the machine is still working on is NOT settled by an operator verb: it finishes its
 // ladder and settles itself. Filing early must not abandon the transcribe and tag rungs.
 func TestFileFillerClips_LeavesARunningRowToFinishItsLadder(t *testing.T) {

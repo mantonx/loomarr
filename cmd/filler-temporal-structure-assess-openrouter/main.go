@@ -46,14 +46,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	perCaseTimeout := flags.Duration("per-case-timeout", 10*time.Minute, "hard timeout for each serial video")
 	maxRequests := flags.Int("max-requests", 0, "hard paid request ceiling; must equal expected cases")
 	maxSpendNanoUSD := flags.Int64("max-spend-nanousd", 0, "hard total paid spend ceiling in nano-USD")
-	maxChargeNanoUSD := flags.Int64("max-charge-nanousd", 0, "hard reserved per-request charge ceiling in nano-USD")
+	reservationNanoUSD := flags.Int64("reservation-nanousd", 0, "per-request accounting reservation in nano-USD; not a provider-enforced cap")
+	maximumInputTokens := flags.Int64("maximum-input-tokens", 0, "declared worst-case provider input-token allowance used for price preflight")
 	baseURL := flags.String("base-url", fillerbakeoff.OpenRouterBaseURL, "OpenRouter API base URL")
 	output := flags.String("out", "", "new immutable raw result JSON path")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	apiKey := os.Getenv("OPENROUTER_API_KEY")
-	if apiKey == "" || *manifest == "" || *snapshotPath == "" || *model == "" || *modelFamily == "" || *provider == "" || *providerSlug == "" || *assessorID == "" || *reasoningMode == "" || *expectedCases <= 0 || *maxRequests <= 0 || *maxSpendNanoUSD <= 0 || *maxChargeNanoUSD <= 0 || *output == "" {
+	if apiKey == "" || *manifest == "" || *snapshotPath == "" || *model == "" || *modelFamily == "" || *provider == "" || *providerSlug == "" || *assessorID == "" || *reasoningMode == "" || *expectedCases <= 0 || *maxRequests <= 0 || *maxSpendNanoUSD <= 0 || *reservationNanoUSD <= 0 || *maximumInputTokens <= 0 || *output == "" {
 		_, _ = fmt.Fprintln(stderr, "filler-temporal-structure-assess-openrouter: credential, public challenge, snapshot, exact route/model identity, positive case/request/cost ceilings, assessor, and output are required")
 		return 2
 	}
@@ -67,7 +68,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		BaseURL: *baseURL, APIKey: apiKey, Snapshot: snapshot, Model: *model, ModelFamily: *modelFamily,
 		UpstreamProvider: *provider, UpstreamProviderSlug: *providerSlug, AssessorID: *assessorID,
 		ReasoningMode: *reasoningMode, ExpectedCases: *expectedCases, PerCaseTimeout: *perCaseTimeout,
-		MaxRequests: *maxRequests, MaxSpendNanoUSD: *maxSpendNanoUSD, MaxChargeNanoUSD: *maxChargeNanoUSD,
+		MaxRequests: *maxRequests, MaxSpendNanoUSD: *maxSpendNanoUSD, ReservationNanoUSD: *reservationNanoUSD,
+		MaximumInputTokens: *maximumInputTokens,
 	})
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "filler-temporal-structure-assess-openrouter: assess:", err)

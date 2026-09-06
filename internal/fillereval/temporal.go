@@ -24,6 +24,7 @@ const (
 	UnitStandalone       UnitKind = "standalone"
 	UnitCompilation      UnitKind = "compilation"
 	UnitProgrammeExcerpt UnitKind = "programme_excerpt"
+	UnitProgrammeSpots   UnitKind = "programme_with_spots"
 	UnitUnusable         UnitKind = "unusable"
 	UnitUnclear          UnitKind = "unclear"
 )
@@ -39,6 +40,24 @@ const (
 	TemporalRoleTrailer      TemporalRole = "trailer"
 	TemporalRoleInterstitial TemporalRole = "interstitial"
 	TemporalRoleUnclear      TemporalRole = "unclear"
+)
+
+// TemporalSegmentRole classifies every interval in a complete source plan. It is deliberately
+// wider than TemporalRole, which applies only after a whole source is known to be standalone.
+type TemporalSegmentRole string
+
+const (
+	TemporalSegmentCommercial        TemporalSegmentRole = "commercial"
+	TemporalSegmentPromo             TemporalSegmentRole = "promo"
+	TemporalSegmentBumper            TemporalSegmentRole = "bumper"
+	TemporalSegmentPSA               TemporalSegmentRole = "psa"
+	TemporalSegmentStationID         TemporalSegmentRole = "station_id"
+	TemporalSegmentTrailer           TemporalSegmentRole = "trailer"
+	TemporalSegmentInterstitial      TemporalSegmentRole = "interstitial"
+	TemporalSegmentProgrammeFragment TemporalSegmentRole = "programme_fragment"
+	TemporalSegmentNonFiller         TemporalSegmentRole = "non_filler"
+	TemporalSegmentAmbiguous         TemporalSegmentRole = "ambiguous"
+	TemporalSegmentUnusable          TemporalSegmentRole = "unusable"
 )
 
 type TemporalFailureCode string

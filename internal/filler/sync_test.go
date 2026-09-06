@@ -888,6 +888,7 @@ func TestSync_UnreadableOrWrongTypedConditioningStateRemainsHeld(t *testing.T) {
 		{name: "conditioned mezzanine malformed lineage", sidecar: `{"loomarr":{"mezzanine":"h264-crf20-aac192","conditioningLineage":"not-lineage","conditioning":{"beforeRewriteHash":"before","afterRewriteHash":"after"}}}`, wantHeld: true, wantState: filler.SidecarInvalid},
 		{name: "wrong typed lineage", sidecar: `{"loomarr":{"conditioningLineage":"not-lineage"}}`, wantHeld: true, wantState: filler.SidecarInvalid},
 		{name: "wrong typed conditioning evidence", sidecar: `{"loomarr":{"conditioning":[]}}`, wantHeld: true, wantState: filler.SidecarInvalid},
+		{name: "unknown catalog kind", sidecar: `{"loomarr":{"kind":"programme"}}`, wantHeld: true, wantState: filler.SidecarInvalid},
 		{name: "valid ordinary top-level tags", sidecar: `{"loomarr":{"originalName":"ordinary.mp4"}}`, wantHeld: false, wantState: filler.SidecarValid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1038,6 +1039,29 @@ func TestReadSidecarTagsState_ConditioningLineageRequiresExactPrimitiveTypes(t *
 				t.Fatalf("sidecar state = %v, want structurally valid explicit zero", state)
 			}
 		})
+	}
+}
+
+func TestReadSidecarTagsState_ConditioningDecisionIdentityRequiresAString(t *testing.T) {
+	dir := t.TempDir()
+	media := filepath.Join(dir, "conditioned.mp4")
+	if err := os.WriteFile(media, []byte("conditioned bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]any{"loomarr": map[string]any{"conditioningLineage": map[string]any{
+		"childHash": "reviewed-child", "parentHash": "retained-parent",
+		"intendedStartMs": int64(0), "intendedEndMs": int64(30_000),
+		"structureDecisionSha256": 7,
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidecar := strings.TrimSuffix(media, filepath.Ext(media)) + ".info.json"
+	if err := os.WriteFile(sidecar, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, state := filler.ReadSidecarTagsState(media); state != filler.SidecarInvalid {
+		t.Fatalf("sidecar state = %v, want invalid", state)
 	}
 }
 

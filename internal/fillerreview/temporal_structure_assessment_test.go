@@ -53,6 +53,22 @@ func TestLoadTemporalStructureAssessmentRejectsSemanticAndAccountingDrift(t *tes
 			item := temporalStructureAssessmentByTruth(set, fillereval.UnitCompilation)
 			item.Role = &TemporalStructureRoleClaim{Kind: fillereval.TemporalRolePromo, DecisiveAtMS: []int64{1}, Reason: "wrong"}
 		}, want: "non-standalone"},
+		{name: "segment gap", mutate: func(_ *temporalStructureComparisonFixture, set *TemporalStructureAssessmentSet) {
+			item := temporalStructureAssessmentByTruth(set, fillereval.UnitCompilation)
+			item.Segments[1].StartMS++
+		}, want: "breaks complete coverage"},
+		{name: "segment overlap", mutate: func(_ *temporalStructureComparisonFixture, set *TemporalStructureAssessmentSet) {
+			item := temporalStructureAssessmentByTruth(set, fillereval.UnitCompilation)
+			item.Segments[1].StartMS--
+		}, want: "breaks complete coverage"},
+		{name: "segment evidence outside interval", mutate: func(_ *temporalStructureComparisonFixture, set *TemporalStructureAssessmentSet) {
+			item := temporalStructureAssessmentByTruth(set, fillereval.UnitCompilation)
+			item.Segments[0].DecisiveAtMS = []int64{item.Segments[0].EndMS + 1}
+		}, want: "outside its interval"},
+		{name: "programme segment not explicit", mutate: func(_ *temporalStructureComparisonFixture, set *TemporalStructureAssessmentSet) {
+			item := temporalStructureAssessmentByTruth(set, fillereval.UnitProgrammeExcerpt)
+			item.Segments[0].Role = fillereval.TemporalSegmentNonFiller
+		}, want: "explicit programme_fragment"},
 		{name: "failure mixed with label", mutate: func(_ *temporalStructureComparisonFixture, set *TemporalStructureAssessmentSet) {
 			item := &set.Assessments[0]
 			item.OperationalFailure = &fillereval.TemporalOperationalFailure{Code: fillereval.TemporalFailureTimeout, Detail: "timeout", Retryable: true}
@@ -75,6 +91,18 @@ func TestLoadTemporalStructureAssessmentRejectsSemanticAndAccountingDrift(t *tes
 				t.Fatalf("error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestLoadTemporalStructureAssessmentAllowsUnusableSegmentWithoutDecisiveEvidence(t *testing.T) {
+	challenge := newTemporalStructureComparisonFixture(t)
+	set := challenge.assessmentSet("assessor-a", "qwen", "qwen/model")
+	item := temporalStructureAssessmentByTruth(&set, fillereval.UnitCompilation)
+	item.Segments[0].Role = fillereval.TemporalSegmentUnusable
+	item.Segments[0].DecisiveAtMS = nil
+	path := writeTemporalHumanJSON(t, t.TempDir(), "assessment.json", set)
+	if _, err := loadTemporalStructureAssessment(path, challenge.manifest, challenge.publicSHA, challenge.authoritySHA); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -149,8 +177,20 @@ func (fixture temporalStructureComparisonFixture) assessmentSet(id, family, mode
 			Alias: truth.Alias, Unit: &TemporalStructureUnitClaim{Kind: truth.Unit, DecisiveAtMS: decisive, Reason: "closed unit"},
 			Inference: temporalStructureTestInference(completedAt.Add(-time.Minute), false),
 		}
-		if truth.Unit == fillereval.UnitStandalone {
+		switch truth.Unit {
+		case fillereval.UnitStandalone:
 			assessment.Role = &TemporalStructureRoleClaim{Kind: truth.Role, DecisiveAtMS: []int64{1_500}, Reason: "closed role"}
+			assessment.Segments = []TemporalStructureSegmentClaim{{StartMS: 0, EndMS: duration, Role: fillereval.TemporalSegmentRole(truth.Role), DecisiveAtMS: []int64{1_500}, Reason: "closed role"}}
+		case fillereval.UnitCompilation:
+			for _, part := range truth.Segments {
+				assessment.Segments = append(assessment.Segments, TemporalStructureSegmentClaim{
+					StartMS: part.OutputStartMS, EndMS: part.OutputEndMS,
+					Role:         fillereval.TemporalSegmentRole(part.SourceRole),
+					DecisiveAtMS: []int64{part.OutputStartMS + min(int64(1_000), part.RenderedMS/2)}, Reason: "constructed bounded item",
+				})
+			}
+		default:
+			assessment.Segments = []TemporalStructureSegmentClaim{{StartMS: 0, EndMS: duration, Role: fillereval.TemporalSegmentProgrammeFragment, DecisiveAtMS: []int64{100}, Reason: "programme dependency"}}
 		}
 		set.Assessments = append(set.Assessments, assessment)
 	}

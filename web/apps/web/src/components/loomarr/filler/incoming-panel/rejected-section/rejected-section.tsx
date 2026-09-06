@@ -30,6 +30,7 @@ const REASON: Record<string, string> = {
   language: "the speech is in another language",
   no_audio: "it has no sound",
   no_video: "it has no picture",
+  screening: "a broadcast-safety check refused it",
   silent_content: "the audio track is almost entirely silent",
   sliver: "it's a fragment, too short to be an advert",
   too_short: "it's shorter than the floor",

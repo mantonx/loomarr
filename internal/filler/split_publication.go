@@ -13,6 +13,7 @@ import (
 // Split confirmation owns domain enrollment; splitPublication owns only filesystem visibility.
 type preparedSplitCut struct {
 	segment  SplitSegment
+	kind     Kind
 	hash     string
 	path     string
 	staged   string

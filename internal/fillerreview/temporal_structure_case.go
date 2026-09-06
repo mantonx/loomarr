@@ -28,14 +28,17 @@ func buildTemporalStructureChallengeCase(ctx context.Context, config TemporalStr
 		return TemporalStructureChallengePublicCase{}, TemporalStructureChallengeAuthorityCase{}, err
 	}
 	info, err := os.Stat(videoPath)
-	if err != nil || info.Size() <= 0 || info.Size() > TemporalTruthMaximumVideoBytes {
-		return TemporalStructureChallengePublicCase{}, TemporalStructureChallengeAuthorityCase{}, fmt.Errorf("rendered video has invalid size")
+	if err != nil {
+		return TemporalStructureChallengePublicCase{}, TemporalStructureChallengeAuthorityCase{}, fmt.Errorf("inspect rendered video size: %w", err)
+	}
+	if info.Size() <= 0 || info.Size() > TemporalTruthMaximumVideoBytes {
+		return TemporalStructureChallengePublicCase{}, TemporalStructureChallengeAuthorityCase{}, fmt.Errorf("rendered video size %d exceeds allowed range 1..%d bytes", info.Size(), TemporalTruthMaximumVideoBytes)
 	}
 	publicCase := TemporalStructureChallengePublicCase{Alias: item.alias, Video: TemporalTruthEvidenceFile{
 		Path: filepath.ToSlash(filepath.Join("cases", item.alias, "video.mp4")), SHA256: digest, Bytes: info.Size(),
 		DurationMS: rendered.Video.DurationMS, Width: rendered.Video.Width, Height: rendered.Video.Height,
 	}, Profile: rendered.Video.Profile}
-	authorityCase := TemporalStructureChallengeAuthorityCase{Alias: item.alias, CaseID: item.spec.ID, Unit: item.spec.Unit, Role: item.spec.Role, VideoSHA256: digest}
+	authorityCase := TemporalStructureChallengeAuthorityCase{Alias: item.alias, CaseID: item.spec.ID, Unit: item.spec.Unit, Role: item.spec.Role, Slices: append([]string(nil), item.spec.Slices...), VideoSHA256: digest}
 	outputStart := int64(0)
 	for index, part := range rendered.Parts {
 		if part.DurationMS <= 0 || absoluteInt64(part.DurationMS-item.segments[index].DurationMS) > 1_000 {

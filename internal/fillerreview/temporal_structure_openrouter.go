@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	TemporalStructureOpenRouterResultSchemaVersion = 1
-	TemporalStructureOpenRouterResultContract      = "filler-temporal-structure-openrouter-v1"
+	TemporalStructureOpenRouterResultSchemaVersion = 4
+	TemporalStructureOpenRouterResultContract      = "filler-temporal-structure-openrouter-v4"
 	TemporalStructureOpenRouterMaximumVideoBytes   = int64(64 << 20)
 	TemporalStructureOpenRouterReasoningDisabled   = "disabled"
 	TemporalStructureOpenRouterReasoningRequired   = "provider_required"
@@ -39,37 +39,41 @@ type TemporalStructureOpenRouterConfig struct {
 	PerCaseTimeout       time.Duration
 	MaxRequests          int
 	MaxSpendNanoUSD      int64
-	MaxChargeNanoUSD     int64
+	ReservationNanoUSD   int64
+	MaximumInputTokens   int64
 	AllowInsecureTestURL bool
 	Client               *http.Client
 	Now                  func() time.Time
 }
 
 type TemporalStructureOpenRouterResult struct {
-	SchemaVersion              int                                  `json:"schemaVersion"`
-	ContractVersion            string                               `json:"contractVersion"`
-	ChallengeID                string                               `json:"challengeId"`
-	PublicManifestSHA256       string                               `json:"publicManifestSha256"`
-	SelectionSHA256            string                               `json:"selectionSha256"`
-	CapabilitySnapshotSHA256   string                               `json:"capabilitySnapshotSha256"`
-	ResolvedModel              string                               `json:"resolvedModel"`
-	UpstreamProvider           string                               `json:"upstreamProvider"`
-	UpstreamProviderSlug       string                               `json:"upstreamProviderSlug"`
-	ReasoningMode              string                               `json:"reasoningMode"`
-	PromptSHA256               string                               `json:"promptSha256"`
-	Assessor                   fillereval.TemporalAssessorIdentity  `json:"assessor"`
-	SelectionAliases           []string                             `json:"selectionAliases"`
-	MaxRequests                int                                  `json:"maxRequests"`
-	MaxSpendNanoUSD            int64                                `json:"maxSpendNanoUsd"`
-	MaxChargeNanoUSD           int64                                `json:"maxChargeNanoUsd"`
-	Requests                   int                                  `json:"requests"`
-	ChargedNanoUSD             int64                                `json:"chargedNanoUsd"`
-	ConsumedNanoUSD            int64                                `json:"consumedNanoUsd"`
-	UnknownChargeReservations  int                                  `json:"unknownChargeReservations"`
-	CompletedAt                time.Time                            `json:"completedAt"`
-	ProductionAdmissionAllowed bool                                 `json:"productionAdmissionAllowed"`
-	Assessments                []TemporalStructureAssessment        `json:"assessments"`
-	Attempts                   []TemporalStructureOpenRouterAttempt `json:"attempts"`
+	SchemaVersion                 int                                  `json:"schemaVersion"`
+	ContractVersion               string                               `json:"contractVersion"`
+	ChallengeID                   string                               `json:"challengeId"`
+	PublicManifestSHA256          string                               `json:"publicManifestSha256"`
+	SelectionSHA256               string                               `json:"selectionSha256"`
+	CapabilitySnapshotSHA256      string                               `json:"capabilitySnapshotSha256"`
+	ResolvedModel                 string                               `json:"resolvedModel"`
+	UpstreamProvider              string                               `json:"upstreamProvider"`
+	UpstreamProviderSlug          string                               `json:"upstreamProviderSlug"`
+	ReasoningMode                 string                               `json:"reasoningMode"`
+	PromptSHA256                  string                               `json:"promptSha256"`
+	Assessor                      fillereval.TemporalAssessorIdentity  `json:"assessor"`
+	SelectionAliases              []string                             `json:"selectionAliases"`
+	MaxRequests                   int                                  `json:"maxRequests"`
+	MaxSpendNanoUSD               int64                                `json:"maxSpendNanoUsd"`
+	ReservationNanoUSD            int64                                `json:"reservationNanoUsd"`
+	MaximumInputTokens            int64                                `json:"maximumInputTokens"`
+	EstimatedMaximumChargeNanoUSD int64                                `json:"estimatedMaximumChargeNanoUsd"`
+	Requests                      int                                  `json:"requests"`
+	ChargedNanoUSD                int64                                `json:"chargedNanoUsd"`
+	ConsumedNanoUSD               int64                                `json:"consumedNanoUsd"`
+	UnknownChargeReservations     int                                  `json:"unknownChargeReservations"`
+	OverReservationNanoUSD        int64                                `json:"overReservationNanoUsd"`
+	CompletedAt                   time.Time                            `json:"completedAt"`
+	ProductionAdmissionAllowed    bool                                 `json:"productionAdmissionAllowed"`
+	Assessments                   []TemporalStructureAssessment        `json:"assessments"`
+	Attempts                      []TemporalStructureOpenRouterAttempt `json:"attempts"`
 }
 
 // RunOpenRouterTemporalStructure performs one serial, full-video atomic
@@ -87,6 +91,9 @@ func RunOpenRouterTemporalStructure(ctx context.Context, config TemporalStructur
 	manifest, manifestSHA, err := LoadTemporalStructureChallengePublic(config.PublicManifestPath, len(publicHeader.Cases))
 	if err != nil {
 		return TemporalStructureOpenRouterResult{}, err
+	}
+	if now().UTC().Before(manifest.GeneratedAt) {
+		return TemporalStructureOpenRouterResult{}, fmt.Errorf("OpenRouter structure assessment clock predates the challenge")
 	}
 	selected, aliases, selectionSHA, err := selectTemporalStructureOpenRouterCases(manifest, config.CaseAliases, config.ExpectedCases)
 	if err != nil {
@@ -109,6 +116,9 @@ func RunOpenRouterTemporalStructure(ctx context.Context, config TemporalStructur
 	}
 	if len(checkpoint.Attempts) > len(checkpoint.Assessments) {
 		return TemporalStructureOpenRouterResult{}, fmt.Errorf("OpenRouter structure checkpoint has an unsettled crash reservation for alias %q", checkpoint.Attempts[len(checkpoint.Attempts)-1].Alias)
+	}
+	if len(checkpoint.Attempts) > 0 && checkpoint.Attempts[len(checkpoint.Attempts)-1].State == temporalOpenRouterAttemptOverReservation {
+		return TemporalStructureOpenRouterResult{}, fmt.Errorf("OpenRouter structure checkpoint ended with an over-reservation charge")
 	}
 	root := filepath.Dir(config.PublicManifestPath)
 	for index := len(checkpoint.Assessments); index < len(selected); index++ {
@@ -137,7 +147,9 @@ func RunOpenRouterTemporalStructure(ctx context.Context, config TemporalStructur
 			ModelDigest: identity.CapabilitySnapshotSHA256, PromptVersion: TemporalStructureOpenRouterPromptVersion,
 		},
 		SelectionAliases: aliases, MaxRequests: config.MaxRequests, MaxSpendNanoUSD: config.MaxSpendNanoUSD,
-		MaxChargeNanoUSD: config.MaxChargeNanoUSD, Requests: len(checkpoint.Attempts), ConsumedNanoUSD: consumed,
+		ReservationNanoUSD: config.ReservationNanoUSD, MaximumInputTokens: config.MaximumInputTokens,
+		EstimatedMaximumChargeNanoUSD: identity.EstimatedMaximumChargeNanoUSD,
+		Requests:                      len(checkpoint.Attempts), ConsumedNanoUSD: consumed,
 		CompletedAt: now().UTC(), ProductionAdmissionAllowed: false,
 		Assessments: slices.Clone(checkpoint.Assessments), Attempts: slices.Clone(checkpoint.Attempts),
 	}
@@ -145,6 +157,9 @@ func RunOpenRouterTemporalStructure(ctx context.Context, config TemporalStructur
 		result.ChargedNanoUSD += attempt.ChargedNanoUSD
 		if attempt.State == temporalOpenRouterAttemptUnsettled {
 			result.UnknownChargeReservations++
+		}
+		if attempt.State == temporalOpenRouterAttemptOverReservation {
+			result.OverReservationNanoUSD += attempt.ChargedNanoUSD - attempt.ReservedNanoUSD
 		}
 	}
 	if err := validateTemporalStructureOpenRouterResult(result, manifest, selected); err != nil {
