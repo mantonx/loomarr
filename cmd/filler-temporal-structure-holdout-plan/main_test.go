@@ -13,7 +13,7 @@ func TestRunRequiresEveryFrozenAuthority(t *testing.T) {
 	}
 	for _, required := range []string{
 		"selection", "evidence", "evidence map", "human assessment", "human attestation", "media quality",
-		"suitability", "reference audit", "families", "transitions", "programmes", "source root", "private seed", "fixed planning time", "output",
+		"suitability", "reference audit", "reference download ledger", "families", "transitions", "programmes", "source root", "private seed", "fixed planning time", "output",
 	} {
 		if !strings.Contains(stderr.String(), required) {
 			t.Fatalf("usage error omits %q: %s", required, stderr.String())

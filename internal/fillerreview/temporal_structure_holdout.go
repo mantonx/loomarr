@@ -12,28 +12,29 @@ import (
 
 const (
 	TemporalStructureHoldoutSchemaVersion   = 1
-	TemporalStructureHoldoutContractVersion = "filler-temporal-structure-holdout-plan-v5"
+	TemporalStructureHoldoutContractVersion = "filler-temporal-structure-holdout-plan-v6"
 	TemporalStructureHoldoutCases           = 36
 	temporalStructureHoldoutClassCases      = 12
 	temporalStructureHoldoutParentSources   = 6
 )
 
 type TemporalStructureHoldoutConfig struct {
-	SelectionPath           string
-	EvidenceManifestPath    string
-	EvidencePrivateMapPath  string
-	HumanAssessmentPath     string
-	HumanAttestationPath    string
-	MediaQualityPath        string
-	SuitabilityPath         string
-	ReferenceAuditPath      string
-	FamilyAuditPath         string
-	TransitionAuthorityPath string
-	ProgrammeInventoryPath  string
-	SourceRoot              string
-	Seed                    string
-	PlannedAt               time.Time
-	OutputDir               string
+	SelectionPath               string
+	EvidenceManifestPath        string
+	EvidencePrivateMapPath      string
+	HumanAssessmentPath         string
+	HumanAttestationPath        string
+	MediaQualityPath            string
+	SuitabilityPath             string
+	ReferenceAuditPath          string
+	ReferenceDownloadLedgerPath string
+	FamilyAuditPath             string
+	TransitionAuthorityPath     string
+	ProgrammeInventoryPath      string
+	SourceRoot                  string
+	Seed                        string
+	PlannedAt                   time.Time
+	OutputDir                   string
 }
 
 type TemporalStructureHoldoutProgrammeInventory struct {
@@ -177,7 +178,7 @@ func validateTemporalStructureHoldoutConfig(config TemporalStructureHoldoutConfi
 	paths := []string{
 		config.SelectionPath, config.EvidenceManifestPath, config.EvidencePrivateMapPath,
 		config.HumanAssessmentPath, config.HumanAttestationPath, config.MediaQualityPath,
-		config.SuitabilityPath, config.ReferenceAuditPath, config.FamilyAuditPath, config.TransitionAuthorityPath, config.ProgrammeInventoryPath,
+		config.SuitabilityPath, config.ReferenceAuditPath, config.ReferenceDownloadLedgerPath, config.FamilyAuditPath, config.TransitionAuthorityPath, config.ProgrammeInventoryPath,
 		config.SourceRoot, config.OutputDir,
 	}
 	for _, path := range paths {

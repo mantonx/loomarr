@@ -1,6 +1,7 @@
 package fillerreview
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,9 +14,53 @@ import (
 
 func TestLoadTemporalStructureHoldoutProgrammeInventoryAcceptsBoundSourceRecord(t *testing.T) {
 	fixture := newTemporalStructureHoldoutFixture(t)
-	reference := readStrictTestJSON[fillerreference.Audit](t, fixture.referenceAudit)
-	if _, digest, err := loadTemporalStructureHoldoutProgrammeInventory(fixture.inventory, fixture.root, reference, fixture.plannedAt); err != nil || !reviewSHA256(digest) {
+	ledger := fixture.downloadLedger(t)
+	if _, digest, err := loadTemporalStructureHoldoutProgrammeInventory(fixture.inventory, fixture.root, ledger, fixture.plannedAt); err != nil || !reviewSHA256(digest) {
 		t.Fatalf("load valid programme inventory = digest %q, error %v", digest, err)
+	}
+}
+
+func TestLoadTemporalStructureHoldoutProgrammeInventoryNormalizesSourceRecordReference(t *testing.T) {
+	fixture := newTemporalStructureHoldoutFixture(t)
+	inventory := readStrictTestJSON[TemporalStructureHoldoutProgrammeInventory](t, fixture.inventory)
+	mutateTemporalStructureProgrammeRecord(t, fixture, &inventory, func(record *fillercorpus.Inventory) {
+		record.Cases[0].ItemURL = "https://EXAMPLE.invalid/items/test-programme-a"
+	})
+	inventoryPath := writeTemporalHumanJSON(t, t.TempDir(), "programme-inventory.json", inventory)
+	if _, _, err := loadTemporalStructureHoldoutProgrammeInventory(inventoryPath, fixture.root, fixture.downloadLedger(t), fixture.plannedAt); err != nil {
+		t.Fatalf("normalized source-record reference rejected: %v", err)
+	}
+}
+
+func TestLoadTemporalStructureHoldoutProgrammeInventoryRejectsUppercaseHostParentReference(t *testing.T) {
+	fixture := newTemporalStructureHoldoutFixture(t)
+	inventory := readStrictTestJSON[TemporalStructureHoldoutProgrammeInventory](t, fixture.inventory)
+	inventory.Sources[0].Provenance.Reference = strings.Replace(inventory.Sources[0].Provenance.Reference, "example.invalid", "EXAMPLE.INVALID", 1)
+	assertProgrammeInventoryRejected(t, fixture, inventory)
+}
+
+func TestLoadTemporalStructureHoldoutProgrammeInventoryRejectsNormalizedLedgerParentCollision(t *testing.T) {
+	fixture := newTemporalStructureHoldoutFixture(t)
+	ledger := fixture.downloadLedger(t)
+	parent := readStrictTestJSON[TemporalStructureHoldoutProgrammeInventory](t, fixture.inventory).Sources[0]
+	ledger.Cases[0].Authority = parent.Provenance.Authority
+	ledger.Cases[0].ItemURL = strings.Replace(parent.Provenance.Reference, "example.invalid", "EXAMPLE.INVALID", 1)
+	raw, err := json.Marshal(ledger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerPath := filepath.Join(t.TempDir(), "ledger.json")
+	if err := os.WriteFile(ledgerPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	audit := readStrictTestJSON[fillerreference.Audit](t, fixture.referenceAudit)
+	audit.Inputs.DownloadLedgerSHA256 = hashBytes(raw)
+	_, normalized, err := loadTemporalStructureHoldoutReferenceDownloadLedger(ledgerPath, audit)
+	if err != nil {
+		t.Fatalf("uppercase-host ledger rejected: %v", err)
+	}
+	if _, _, err := loadTemporalStructureHoldoutProgrammeInventory(fixture.inventory, fixture.root, normalized, fixture.plannedAt); err == nil {
+		t.Fatal("programme loader accepted normalized ledger parent collision")
 	}
 }
 
@@ -220,11 +265,51 @@ func TestLoadTemporalStructureHoldoutProgrammeInventoryRejectsSeventhProgrammeSo
 	})
 	seventh.Provenance.SourceRecordSHA256 = inventory.Sources[0].Provenance.SourceRecordSHA256
 	inventory.Sources = append(inventory.Sources, seventh)
-	reference := readStrictTestJSON[fillerreference.Audit](t, fixture.referenceAudit)
-	reference.Cases[len(reference.Cases)-1].ContentSHA256 = seventh.SHA256
+	ledger := fixture.downloadLedger(t)
+	validInventoryPath := writeTemporalHumanJSON(t, t.TempDir(), "programme-inventory.json", inventory)
+	if _, _, err := loadTemporalStructureHoldoutProgrammeInventory(validInventoryPath, fixture.root, ledger, fixture.plannedAt); err != nil {
+		t.Fatalf("valid seventh programme inventory rejected: %v", err)
+	}
+	ledger.Cases[len(ledger.Cases)-1].Authority = seventh.Provenance.Authority
+	ledger.Cases[len(ledger.Cases)-1].ItemURL = seventh.Provenance.Reference
 	inventoryPath := writeTemporalHumanJSON(t, t.TempDir(), "programme-inventory.json", inventory)
-	if _, _, err := loadTemporalStructureHoldoutProgrammeInventory(inventoryPath, fixture.root, reference, fixture.plannedAt); err == nil || !strings.Contains(err.Error(), "repeats bounded filler lineage") {
+	if _, _, err := loadTemporalStructureHoldoutProgrammeInventory(inventoryPath, fixture.root, ledger, fixture.plannedAt); err == nil || !strings.Contains(err.Error(), "repeats bounded filler lineage") {
 		t.Fatalf("seventh programme source matching unselected filler error = %v", err)
+	}
+	for name, mutate := range map[string]func(*fillerreference.DownloadCase, *TemporalStructureHoldoutProgrammeInventory){
+		"content hash": func(item *fillerreference.DownloadCase, _ *TemporalStructureHoldoutProgrammeInventory) {
+			item.ContentSHA256 = seventh.SHA256
+		},
+		"canonical relative local path": func(item *fillerreference.DownloadCase, _ *TemporalStructureHoldoutProgrammeInventory) {
+			item.LocalFile = seventh.Path
+		},
+		"authority and item ID": func(item *fillerreference.DownloadCase, _ *TemporalStructureHoldoutProgrammeInventory) {
+			item.Authority = seventh.Provenance.Authority
+			item.ItemID = seventh.Provenance.ItemID
+		},
+		"padded parent authority and item ID": func(item *fillerreference.DownloadCase, candidate *TemporalStructureHoldoutProgrammeInventory) {
+			candidate.Sources[len(candidate.Sources)-1].Provenance.Authority = " " + seventh.Provenance.Authority + " "
+			candidate.Sources[len(candidate.Sources)-1].Provenance.ItemID = " " + seventh.Provenance.ItemID + " "
+			item.Authority = seventh.Provenance.Authority
+			item.ItemID = seventh.Provenance.ItemID
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := fixture.downloadLedger(t)
+			candidateInventory := inventory
+			candidateInventory.Sources = append([]TemporalStructureChallengeSource(nil), inventory.Sources...)
+			mutate(&candidate.Cases[len(candidate.Cases)-1], &candidateInventory)
+			candidatePath := inventoryPath
+			if name == "padded parent authority and item ID" {
+				candidatePath = writeTemporalHumanJSON(t, t.TempDir(), "programme-inventory.json", candidateInventory)
+				if _, _, err := loadTemporalStructureHoldoutProgrammeInventory(candidatePath, fixture.root, fixture.downloadLedger(t), fixture.plannedAt); err != nil {
+					t.Fatalf("padded seventh programme inventory rejected with untouched ledger: %v", err)
+				}
+			}
+			if _, _, err := loadTemporalStructureHoldoutProgrammeInventory(candidatePath, fixture.root, candidate, fixture.plannedAt); err == nil || !strings.Contains(err.Error(), "repeats bounded filler lineage") {
+				t.Fatalf("accepted seventh programme collision %q", name)
+			}
+		})
 	}
 }
 
@@ -244,8 +329,8 @@ func TestBuildTemporalStructureHoldoutPlanDoesNotPublishOnProgrammeInventoryFail
 
 func assertProgrammeInventoryRejected(t *testing.T, fixture temporalStructureHoldoutFixture, inventory TemporalStructureHoldoutProgrammeInventory) {
 	t.Helper()
-	reference := readStrictTestJSON[fillerreference.Audit](t, fixture.referenceAudit)
-	if _, _, err := loadTemporalStructureHoldoutProgrammeInventory(writeTemporalHumanJSON(t, t.TempDir(), "programme-inventory.json", inventory), fixture.root, reference, fixture.plannedAt); err == nil {
+	ledger := fixture.downloadLedger(t)
+	if _, _, err := loadTemporalStructureHoldoutProgrammeInventory(writeTemporalHumanJSON(t, t.TempDir(), "programme-inventory.json", inventory), fixture.root, ledger, fixture.plannedAt); err == nil {
 		t.Fatal("hostile programme inventory was accepted")
 	}
 }

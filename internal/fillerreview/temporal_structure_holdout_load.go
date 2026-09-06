@@ -2,10 +2,13 @@ package fillerreview
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/loomarr/loomarr/internal/fillereval"
+	"github.com/loomarr/loomarr/internal/fillerreference"
 )
 
 type temporalStructureHoldoutLoaded struct {
@@ -72,6 +75,10 @@ func loadTemporalStructureHoldout(config TemporalStructureHoldoutConfig) (tempor
 	if err != nil {
 		return temporalStructureHoldoutLoaded{}, err
 	}
+	ledgerSHA, ledger, err := loadTemporalStructureHoldoutReferenceDownloadLedger(config.ReferenceDownloadLedgerPath, referenceAudit)
+	if err != nil {
+		return temporalStructureHoldoutLoaded{}, err
+	}
 	family, familySHA, err := loadTemporalStructureHoldoutFamily(config.FamilyAuditPath, selection, referenceAudit, referenceAuditSHA, config.PlannedAt)
 	if err != nil {
 		return temporalStructureHoldoutLoaded{}, err
@@ -80,7 +87,7 @@ func loadTemporalStructureHoldout(config TemporalStructureHoldoutConfig) (tempor
 	if err != nil {
 		return temporalStructureHoldoutLoaded{}, err
 	}
-	inventory, inventorySHA, err := loadTemporalStructureHoldoutProgrammeInventory(config.ProgrammeInventoryPath, config.SourceRoot, referenceAudit, config.PlannedAt)
+	inventory, inventorySHA, err := loadTemporalStructureHoldoutProgrammeInventory(config.ProgrammeInventoryPath, config.SourceRoot, ledger, config.PlannedAt)
 	if err != nil {
 		return temporalStructureHoldoutLoaded{}, err
 	}
@@ -93,6 +100,7 @@ func loadTemporalStructureHoldout(config TemporalStructureHoldoutConfig) (tempor
 		{Name: "media_quality", SHA256: qualitySHA},
 		{Name: "programme_inventory", SHA256: inventorySHA},
 		{Name: "reference_audit", SHA256: referenceAuditSHA},
+		{Name: "reference_download_ledger", SHA256: ledgerSHA},
 		{Name: "selection", SHA256: hashBytes(selectionRaw)},
 		{Name: "suitability", SHA256: suitabilitySHA},
 		{Name: "transition_authority", SHA256: transitionSHA},
@@ -108,6 +116,69 @@ func loadTemporalStructureHoldout(config TemporalStructureHoldoutConfig) (tempor
 		human: human, humanSHA: humanSHA, quality: quality, suitability: suitability,
 		family: family, transition: transition, programmeInventory: inventory, inputs: inputs,
 	}, nil
+}
+
+func loadTemporalStructureHoldoutReferenceDownloadLedger(path string, audit fillerreference.Audit) (string, fillerreference.DownloadLedger, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fillerreference.DownloadLedger{}, fmt.Errorf("read temporal structure holdout reference download ledger: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	raw, err := io.ReadAll(io.LimitReader(file, temporalStructureProgrammeEvidenceMaxBytes+1))
+	if err != nil {
+		return "", fillerreference.DownloadLedger{}, fmt.Errorf("read temporal structure holdout reference download ledger: %w", err)
+	}
+	if len(raw) > temporalStructureProgrammeEvidenceMaxBytes {
+		return "", fillerreference.DownloadLedger{}, fmt.Errorf("temporal structure holdout reference download ledger exceeds %d bytes", temporalStructureProgrammeEvidenceMaxBytes)
+	}
+	sha := hashBytes(raw)
+	if sha != audit.Inputs.DownloadLedgerSHA256 {
+		return "", fillerreference.DownloadLedger{}, fmt.Errorf("temporal structure holdout reference download ledger does not bind reference audit")
+	}
+	ledger, err := fillerreference.DecodeDownloadLedger(raw)
+	if err != nil {
+		return "", fillerreference.DownloadLedger{}, fmt.Errorf("decode temporal structure holdout reference download ledger: %w", err)
+	}
+	if err := validateTemporalStructureHoldoutReferenceDownloadJoin(audit, ledger); err != nil {
+		return "", fillerreference.DownloadLedger{}, err
+	}
+	return sha, ledger, nil
+}
+
+func validateTemporalStructureHoldoutReferenceDownloadJoin(audit fillerreference.Audit, ledger fillerreference.DownloadLedger) error {
+	if ledger.SchemaVersion != 1 || len(ledger.Cases) != len(audit.Cases) {
+		return fmt.Errorf("temporal structure holdout reference download ledger is incomplete")
+	}
+	byID := make(map[string]fillerreference.DownloadCase, len(ledger.Cases))
+	for _, item := range ledger.Cases {
+		if item.CaseID == "" || item.Authority == "" || item.ItemID == "" || item.ItemURL == "" || !reviewSHA256(item.ContentSHA256) {
+			return fmt.Errorf("temporal structure holdout reference download ledger contains an incomplete case")
+		}
+		if _, err := canonicalProgrammeReference(item.ItemURL); err != nil {
+			return fmt.Errorf("temporal structure holdout reference download ledger contains an invalid item URL")
+		}
+		if _, duplicate := byID[item.CaseID]; duplicate {
+			return fmt.Errorf("temporal structure holdout reference download ledger repeats a case")
+		}
+		byID[item.CaseID] = item
+	}
+	for _, item := range audit.Cases {
+		download, ok := byID[item.CaseID]
+		if !ok || download.ItemID != strings.TrimSpace(item.SourceItemID) || download.ContentSHA256 != item.ContentSHA256 {
+			return fmt.Errorf("temporal structure holdout reference download ledger does not bind audit case %q", item.CaseID)
+		}
+		if path, ok := canonicalRelativeProgrammePath(item.SourceLocalFile); ok {
+			downloadPath, downloadOK := canonicalRelativeProgrammePath(download.LocalFile)
+			if !downloadOK || downloadPath != path {
+				return fmt.Errorf("temporal structure holdout reference download ledger local path does not bind audit case %q", item.CaseID)
+			}
+		}
+		delete(byID, item.CaseID)
+	}
+	if len(byID) != 0 {
+		return fmt.Errorf("temporal structure holdout reference download ledger contains extra cases")
+	}
+	return nil
 }
 
 func validateTemporalStructureHoldoutHuman(set TemporalHumanAssessmentSet, attestation TemporalHumanReviewAttestation, evidence TemporalTruthEvidenceManifest, evidenceSHA string) error {

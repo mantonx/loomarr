@@ -17,15 +17,16 @@ import (
 
 type temporalStructureHoldoutFixture struct {
 	temporalHumanReviewFixture
-	humanAssessment  string
-	humanAttestation string
-	quality          string
-	suitability      string
-	referenceAudit   string
-	family           string
-	transition       string
-	inventory        string
-	plannedAt        time.Time
+	humanAssessment         string
+	humanAttestation        string
+	quality                 string
+	suitability             string
+	referenceAudit          string
+	referenceDownloadLedger string
+	family                  string
+	transition              string
+	inventory               string
+	plannedAt               time.Time
 }
 
 func newTemporalStructureHoldoutFixture(t *testing.T) temporalStructureHoldoutFixture {
@@ -162,12 +163,22 @@ func newTemporalStructureHoldoutFixture(t *testing.T) temporalStructureHoldoutFi
 	for index := len(reference.Cases); index < 300; index++ {
 		caseID := fmt.Sprintf("reference-only-%03d", index)
 		reference.Cases = append(reference.Cases, fillerreference.Case{
-			CaseID: caseID, ContentSHA256: hashBytes([]byte(caseID)), SourceLocalFile: caseID + ".mp4",
+			CaseID: caseID, ContentSHA256: hashBytes([]byte(caseID)), Source: "locked-reference-dataset", SourceItemID: "locked-item-" + caseID, SourceLocalFile: caseID + ".mp4",
 			Disposition: fillerreference.DispositionCandidate,
 		})
 	}
 	reference.Summary.Cases = len(reference.Cases)
 	reference.Summary.Candidates = len(reference.Cases)
+	ledger := fillerreference.DownloadLedger{SchemaVersion: 1, InventorySHA256: strings.Repeat("d", 64), GeneratedAt: reference.GeneratedAt, MaxRequests: 300, MaxItems: len(reference.Cases), MaxBytes: int64(len(reference.Cases)), Bytes: int64(len(reference.Cases))}
+	for _, item := range reference.Cases {
+		ledger.Cases = append(ledger.Cases, fillerreference.DownloadCase{CaseID: item.CaseID, Authority: "known-filler-authority", ItemID: item.SourceItemID, ItemURL: "https://example.invalid/filler/" + item.CaseID, LocalFile: item.SourceLocalFile, ContentSHA256: item.ContentSHA256})
+	}
+	ledgerPath := writeTemporalHumanJSON(t, base.root, "reference-download-ledger.json", ledger)
+	ledgerSHA, err := hashFile(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference.Inputs.DownloadLedgerSHA256 = ledgerSHA
 	referencePath := writeTemporalHumanJSON(t, base.root, "reference-audit.json", reference)
 	referenceRaw, err := os.ReadFile(referencePath)
 	if err != nil {
@@ -286,7 +297,7 @@ func newTemporalStructureHoldoutFixture(t *testing.T) temporalStructureHoldoutFi
 	inventoryPath := writeTemporalHumanJSON(t, base.root, "programme-inventory.json", inventory)
 	return temporalStructureHoldoutFixture{
 		temporalHumanReviewFixture: base, humanAssessment: humanAssessment, humanAttestation: humanAttestation,
-		quality: qualityPath, suitability: suitabilityPath, referenceAudit: referencePath, family: familyPath, transition: transitionPath, inventory: inventoryPath,
+		quality: qualityPath, suitability: suitabilityPath, referenceAudit: referencePath, referenceDownloadLedger: ledgerPath, family: familyPath, transition: transitionPath, inventory: inventoryPath,
 		plannedAt: inventory.GeneratedAt.Add(time.Hour),
 	}
 }
@@ -296,11 +307,24 @@ func (fixture temporalStructureHoldoutFixture) config(output string) TemporalStr
 		SelectionPath: fixture.selection, EvidenceManifestPath: fixture.manifest, EvidencePrivateMapPath: fixture.privateMap,
 		HumanAssessmentPath: fixture.humanAssessment, HumanAttestationPath: fixture.humanAttestation,
 		MediaQualityPath: fixture.quality, SuitabilityPath: fixture.suitability, FamilyAuditPath: fixture.family,
-		ReferenceAuditPath:      fixture.referenceAudit,
+		ReferenceAuditPath: fixture.referenceAudit, ReferenceDownloadLedgerPath: fixture.referenceDownloadLedger,
 		TransitionAuthorityPath: fixture.transition,
 		ProgrammeInventoryPath:  fixture.inventory, SourceRoot: fixture.root, Seed: "holdout-seed",
 		PlannedAt: fixture.plannedAt, OutputDir: output,
 	}
+}
+
+func (fixture temporalStructureHoldoutFixture) downloadLedger(t *testing.T) fillerreference.DownloadLedger {
+	t.Helper()
+	raw, err := os.ReadFile(fixture.referenceDownloadLedger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger, err := fillerreference.DecodeDownloadLedger(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ledger
 }
 
 func rebuildTemporalStructureHoldoutFamily(t *testing.T, referencePath string, audit temporalStructureHoldoutFamilyAudit) string {

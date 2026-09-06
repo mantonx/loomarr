@@ -4636,8 +4636,13 @@ The next temporal-structure gate is a private, mechanically constructed 36-case 
 not require another full blind human viewing pass. Its planner strictly decodes and hashes the exact
 48-case selection, evidence manifest and private map, locked human assessment and attestation,
 full-decode media-quality report, two-family broadcast-suitability comparison, the exact 300-case
-reference audit behind the duplicate-family audit, that recomputed duplicate-family graph, a
-content-bound transition-edge authority, and the programme-parent inventory. It selects 12
+reference audit behind the duplicate-family audit, that audit's exact digest-bound download ledger,
+that recomputed duplicate-family graph, a content-bound transition-edge authority, and the
+programme-parent inventory. The download ledger is bounded to 16 MiB, decoded only by the
+reference-audit hostile-input decoder, and joins every audit case exactly by case ID, item ID,
+content SHA-256, and canonical relative local path where present. An audit case's `Source` is a
+dataset label, not provenance authority: the digest-bound ledger alone supplies the authority and
+canonical HTTPS item URL used for known-filler lineage exclusion. It selects 12
 quality-eligible, non-prohibited standalone anchors with two bumpers, three commercials, two promos,
 two PSAs, and three trailers. Every anchor has distinct source bytes and duplicate-family identity;
 the family authority covers every non-excluded reference case, not merely the later 48-case
@@ -4678,8 +4683,11 @@ source, timing, role-pair, and transition constraints cannot be satisfied simult
 fails.
 
 Six distinct programme parents have unique bytes and unique `(provenance authority, reference)`
-pairs, neither of which may repeat any case in the complete 300-row filler-reference audit
-(including unselected, held, and excluded cases). A programme parent is bound to an immutable local
+pairs. Every submitted parent, including an unselected parent, is rejected if its content hash,
+canonical relative local path, authority/item-ID pair, or canonical authority/reference pair repeats
+an entry in the complete 300-row digest-bound filler download ledger (including unselected, held,
+and excluded cases). A URL-identity collision is rejected even when bytes, local path, and item ID
+differ. A programme parent is bound to an immutable local
 metadata cache and a local `fillercorpus` inventory-v4 source record under the configured source
 root. The loader rejects missing, escaping, symlinked, or over-16-MiB metadata caches and source
 records, and rejects malformed source records. It hashes the raw metadata cache bytes and requires

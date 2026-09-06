@@ -83,7 +83,7 @@ func validateTemporalStructureHoldoutTrainingExclusion(exclusion TemporalStructu
 func validateTemporalStructureHoldoutInputs(inputs []TemporalStructureHoldoutInput) error {
 	want := map[string]struct{}{
 		"evidence_manifest": {}, "evidence_private_map": {}, "family_audit": {}, "human_assessment": {},
-		"human_attestation": {}, "media_quality": {}, "programme_inventory": {}, "reference_audit": {},
+		"human_attestation": {}, "media_quality": {}, "programme_inventory": {}, "reference_audit": {}, "reference_download_ledger": {},
 		"selection": {}, "suitability": {},
 		"transition_authority": {},
 	}

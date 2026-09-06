@@ -17,7 +17,7 @@ const TemporalStructureHoldoutProgrammeInventoryContract = "filler-temporal-stru
 
 const temporalStructureProgrammeEvidenceMaxBytes = 16 << 20
 
-func loadTemporalStructureHoldoutProgrammeInventory(path, sourceRoot string, reference fillerreference.Audit, plannedAt time.Time) (TemporalStructureHoldoutProgrammeInventory, string, error) {
+func loadTemporalStructureHoldoutProgrammeInventory(path, sourceRoot string, ledger fillerreference.DownloadLedger, plannedAt time.Time) (TemporalStructureHoldoutProgrammeInventory, string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return TemporalStructureHoldoutProgrammeInventory{}, "", err
@@ -56,7 +56,7 @@ func loadTemporalStructureHoldoutProgrammeInventory(path, sourceRoot string, ref
 		if err != nil {
 			return TemporalStructureHoldoutProgrammeInventory{}, "", err
 		}
-		if programmeSourceMatchesReference(source, reference) {
+		if programmeSourceMatchesReference(source, ledger) {
 			return TemporalStructureHoldoutProgrammeInventory{}, "", fmt.Errorf("temporal structure holdout programme parent repeats bounded filler lineage")
 		}
 		if _, duplicate := seenProvenance[provenanceID]; duplicate {
@@ -94,7 +94,7 @@ func validateTemporalStructureProgrammeSourceRecord(sourceRoot string, source Te
 	if matched == nil {
 		return "", fmt.Errorf("temporal structure holdout programme source %q is absent from its source record", source.ID)
 	}
-	reference, err := canonicalProgrammeReference(provenance.Reference)
+	reference, err := canonicalProgrammeParentReference(provenance.Reference)
 	if err != nil {
 		return "", fmt.Errorf("temporal structure holdout programme source %q reference: %w", source.ID, err)
 	}
@@ -128,6 +128,14 @@ func canonicalProgrammeReference(value string) (string, error) {
 	}
 	parsed.Host = strings.ToLower(parsed.Host)
 	return parsed.String(), nil
+}
+
+func canonicalProgrammeParentReference(value string) (string, error) {
+	canonical, err := canonicalProgrammeReference(value)
+	if err != nil || canonical != value {
+		return "", fmt.Errorf("must be a canonical HTTPS URL")
+	}
+	return canonical, nil
 }
 
 func readRegularFileWithin(root, relative string) (string, []byte, error) {
@@ -184,13 +192,24 @@ func resolveRegularFileWithin(root, relative string) (string, error) {
 	return joined, nil
 }
 
-func programmeSourceMatchesReference(source TemporalStructureChallengeSource, reference fillerreference.Audit) bool {
-	sourcePath, sourcePathOK := canonicalRelativeProgrammePath(source.Path)
-	for _, item := range reference.Cases {
-		referencePath, referencePathOK := canonicalRelativeProgrammePath(item.SourceLocalFile)
+func programmeSourceMatchesReference(source TemporalStructureChallengeSource, ledger fillerreference.DownloadLedger) bool {
+	parentReference, err := canonicalProgrammeParentReference(source.Provenance.Reference)
+	if err != nil {
+		return true
+	}
+	for _, item := range ledger.Cases {
+		itemReference, err := canonicalProgrammeReference(item.ItemURL)
+		if err != nil {
+			return true
+		}
 		if item.ContentSHA256 == source.SHA256 ||
-			(strings.TrimSpace(item.Source) == strings.TrimSpace(source.Provenance.Authority) && strings.TrimSpace(item.SourceItemID) == strings.TrimSpace(source.Provenance.ItemID)) ||
-			(sourcePathOK && referencePathOK && referencePath == sourcePath) {
+			(strings.TrimSpace(item.Authority) == strings.TrimSpace(source.Provenance.Authority) && strings.TrimSpace(item.ItemID) == strings.TrimSpace(source.Provenance.ItemID)) ||
+			(itemReference == parentReference && strings.TrimSpace(item.Authority) == strings.TrimSpace(source.Provenance.Authority)) {
+			return true
+		}
+		sourcePath, sourcePathOK := canonicalRelativeProgrammePath(source.Path)
+		itemPath, itemPathOK := canonicalRelativeProgrammePath(item.LocalFile)
+		if sourcePathOK && itemPathOK && sourcePath == itemPath {
 			return true
 		}
 	}

@@ -3,6 +3,7 @@ package fillerreview
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +14,78 @@ import (
 	"github.com/loomarr/loomarr/internal/fillereval"
 	"github.com/loomarr/loomarr/internal/fillerreference"
 )
+
+func TestLoadTemporalStructureHoldoutReferenceDownloadLedgerRejectsHostileInputs(t *testing.T) {
+	fixture := newTemporalStructureHoldoutFixture(t)
+	audit := readStrictTestJSON[fillerreference.Audit](t, fixture.referenceAudit)
+	ledger := fixture.downloadLedger(t)
+	marshal := func(t *testing.T, value fillerreference.DownloadLedger) []byte {
+		t.Helper()
+		raw, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	valid := marshal(t, ledger)
+	tests := map[string][]byte{
+		"digest drift":        valid,
+		"unknown field":       []byte(`{"schemaVersion":1,"unknown":true}`),
+		"duplicate key":       []byte(`{"schemaVersion":1,"schemaVersion":1}`),
+		"trailing JSON":       append(append([]byte{}, valid...), []byte(` {}`)...),
+		"oversize":            make([]byte, temporalStructureProgrammeEvidenceMaxBytes+1),
+		"missing ledger path": func() []byte { v := ledger; v.Cases[0].LocalFile = ""; return marshal(t, v) }(),
+	}
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "ledger.json")
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			testAudit := audit
+			if name != "digest drift" {
+				testAudit.Inputs.DownloadLedgerSHA256 = hashBytes(raw)
+			}
+			if _, _, err := loadTemporalStructureHoldoutReferenceDownloadLedger(path, testAudit); err == nil {
+				t.Fatalf("accepted hostile reference download ledger %q", name)
+			}
+		})
+	}
+	for _, name := range []string{"missing", "extra", "duplicate", "distinct CaseID replacement", "item ID", "content hash", "local path", "schema"} {
+		t.Run(name, func(t *testing.T) {
+			testLedger := ledger
+			testLedger.Cases = append([]fillerreference.DownloadCase(nil), ledger.Cases...)
+			switch name {
+			case "missing":
+				testLedger.Cases = testLedger.Cases[:len(testLedger.Cases)-1]
+			case "extra":
+				testLedger.Cases = append(testLedger.Cases, testLedger.Cases[0])
+			case "duplicate":
+				testLedger.Cases[1].CaseID = testLedger.Cases[0].CaseID
+			case "distinct CaseID replacement":
+				testLedger.Cases[0].CaseID = "replacement-case-id"
+			case "item ID":
+				testLedger.Cases[0].ItemID = "wrong-item"
+			case "content hash":
+				testLedger.Cases[0].ContentSHA256 = strings.Repeat("0", 64)
+			case "local path":
+				testLedger.Cases[0].LocalFile = "wrong.mp4"
+			case "schema":
+				testLedger.SchemaVersion = 0
+			}
+			raw := marshal(t, testLedger)
+			path := filepath.Join(t.TempDir(), "ledger.json")
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			testAudit := audit
+			testAudit.Inputs.DownloadLedgerSHA256 = hashBytes(raw)
+			if _, _, err := loadTemporalStructureHoldoutReferenceDownloadLedger(path, testAudit); err == nil {
+				t.Fatalf("accepted invalid reference download ledger join %q", name)
+			}
+		})
+	}
+}
 
 func TestTemporalStructureHoldoutPlanReproducesCompleteBlindedChallenge(t *testing.T) {
 	fixture := newTemporalStructureHoldoutFixture(t)
@@ -82,6 +155,54 @@ func TestBuildTemporalStructureChallengeRejectsReceiptThatDoesNotBindAuthoring(t
 	}
 	if media.probeCalls != 0 {
 		t.Fatalf("receipt tamper reached media probing: calls=%d", media.probeCalls)
+	}
+}
+
+func TestBuildTemporalStructureChallengeRejectsMissingLedgerReceiptAndLegacyV5(t *testing.T) {
+	fixture := newTemporalStructureHoldoutFixture(t)
+	planRoot := filepath.Join(t.TempDir(), "plan")
+	if _, err := BuildTemporalStructureHoldoutPlan(fixture.config(planRoot)); err != nil {
+		t.Fatal(err)
+	}
+	receipt := readStrictTestJSON[TemporalStructureHoldoutReceipt](t, filepath.Join(planRoot, "receipt.json"))
+	validReceipt := readStrictTestJSON[TemporalStructureHoldoutReceipt](t, filepath.Join(planRoot, "receipt.json"))
+	for i, input := range receipt.Inputs {
+		if input.Name == "reference_download_ledger" {
+			receipt.Inputs = append(receipt.Inputs[:i], receipt.Inputs[i+1:]...)
+			break
+		}
+	}
+	missingReceipt := writeTemporalHumanJSON(t, t.TempDir(), "receipt.json", receipt)
+	media := &fakeTemporalStructureMedia{durationByPath: map[string]int64{}}
+	base := TemporalStructureChallengeConfig{AuthoringPath: filepath.Join(planRoot, "authoring.json"), PlanReceiptPath: missingReceipt, SourceRoot: fixture.root, OutputDir: filepath.Join(t.TempDir(), "missing-ledger"), ChallengeID: "missing-ledger", Seed: "seed", GeneratedAt: fixture.plannedAt.Add(time.Hour), Media: media}
+	_, err := BuildTemporalStructureChallenge(context.Background(), base)
+	if err == nil || media.probeCalls != 0 {
+		t.Fatalf("missing ledger input error=%v probes=%d", err, media.probeCalls)
+	}
+	if _, statErr := os.Stat(base.OutputDir); !os.IsNotExist(statErr) {
+		t.Fatalf("missing ledger input published output: %v", statErr)
+	}
+
+	validReceipt.ContractVersion = "filler-temporal-structure-holdout-plan-v5"
+	legacy := writeTemporalHumanJSON(t, t.TempDir(), "receipt.json", validReceipt)
+	base.PlanReceiptPath, base.OutputDir = legacy, filepath.Join(t.TempDir(), "legacy-v5")
+	if _, err := BuildTemporalStructureChallenge(context.Background(), base); err == nil || media.probeCalls != 0 {
+		t.Fatalf("legacy receipt error=%v probes=%d", err, media.probeCalls)
+	}
+	if _, statErr := os.Stat(base.OutputDir); !os.IsNotExist(statErr) {
+		t.Fatalf("legacy receipt published output: %v", statErr)
+	}
+}
+
+func TestBuildTemporalStructureHoldoutPlanRejectsMissingLedgerWithoutPublishing(t *testing.T) {
+	fixture := newTemporalStructureHoldoutFixture(t)
+	config := fixture.config(filepath.Join(t.TempDir(), "output"))
+	config.ReferenceDownloadLedgerPath = filepath.Join(t.TempDir(), "missing-ledger.json")
+	if _, err := BuildTemporalStructureHoldoutPlan(config); err == nil {
+		t.Fatal("accepted missing reference download ledger")
+	}
+	if _, err := os.Stat(config.OutputDir); !os.IsNotExist(err) {
+		t.Fatalf("missing ledger published output: %v", err)
 	}
 }
 
@@ -170,22 +291,19 @@ func TestBuildTemporalStructureHoldoutPlanRejectsRepeatedProgrammeProvenancePare
 }
 
 func TestLoadTemporalStructureHoldoutProgrammeInventoryRejectsProgrammeParentDerivedFromFiller(t *testing.T) {
-	tests := map[string]func(*testing.T, *temporalStructureHoldoutFixture, *TemporalStructureHoldoutProgrammeInventory, *fillerreference.Audit){
-		"same bytes": func(t *testing.T, fixture *temporalStructureHoldoutFixture, inventory *TemporalStructureHoldoutProgrammeInventory, reference *fillerreference.Audit) {
-			reference.Cases[0].ContentSHA256 = inventory.Sources[0].SHA256
-		},
-		"same provenance": func(t *testing.T, fixture *temporalStructureHoldoutFixture, inventory *TemporalStructureHoldoutProgrammeInventory, reference *fillerreference.Audit) {
-			inventory.Sources[0].Provenance.Authority = reference.Cases[0].Source
-			inventory.Sources[0].Provenance.ItemID = reference.Cases[0].SourceItemID
+	tests := map[string]func(*testing.T, *temporalStructureHoldoutFixture, *TemporalStructureHoldoutProgrammeInventory, *fillerreference.DownloadLedger){
+		"same authority item identity": func(t *testing.T, fixture *temporalStructureHoldoutFixture, inventory *TemporalStructureHoldoutProgrammeInventory, ledger *fillerreference.DownloadLedger) {
+			inventory.Sources[0].Provenance.Authority = ledger.Cases[0].Authority
+			inventory.Sources[0].Provenance.ItemID = ledger.Cases[0].ItemID
 			mutateTemporalStructureProgrammeRecord(t, *fixture, inventory, func(record *fillercorpus.Inventory) {
-				record.Cases[0].Authority = reference.Cases[0].Source
-				record.Cases[0].ItemID = reference.Cases[0].SourceItemID
-				record.Cases[0].CaseID = fillercorpus.CaseID(reference.Cases[0].Source, reference.Cases[0].SourceItemID)
+				record.Cases[0].Authority = ledger.Cases[0].Authority
+				record.Cases[0].ItemID = ledger.Cases[0].ItemID
+				record.Cases[0].CaseID = fillercorpus.CaseID(ledger.Cases[0].Authority, ledger.Cases[0].ItemID)
 				record.Captures[0].PredictedMediaBytes -= record.Cases[0].Representation.Bytes
 				record.Captures[0].MaxPredictedMediaBytes = record.Captures[0].PredictedMediaBytes
 				capture := record.Captures[0]
-				capture.CaptureID = fillercorpus.NewCaptureID(reference.Cases[0].Source, "", "programme")
-				capture.Authority = reference.Cases[0].Source
+				capture.CaptureID = fillercorpus.NewCaptureID(ledger.Cases[0].Authority, "", "programme")
+				capture.Authority = ledger.Cases[0].Authority
 				capture.PredictedMediaBytes = record.Cases[0].Representation.Bytes
 				capture.MaxPredictedMediaBytes = capture.PredictedMediaBytes
 				record.Captures = append(record.Captures, capture)
@@ -197,10 +315,10 @@ func TestLoadTemporalStructureHoldoutProgrammeInventoryRejectsProgrammeParentDer
 		t.Run(name, func(t *testing.T) {
 			fixture := newTemporalStructureHoldoutFixture(t)
 			inventory := readStrictTestJSON[TemporalStructureHoldoutProgrammeInventory](t, fixture.inventory)
-			reference := readStrictTestJSON[fillerreference.Audit](t, fixture.referenceAudit)
-			mutate(t, &fixture, &inventory, &reference)
+			ledger := fixture.downloadLedger(t)
+			mutate(t, &fixture, &inventory, &ledger)
 			fixture.inventory = writeTemporalHumanJSON(t, t.TempDir(), "programme-inventory.json", inventory)
-			_, _, err := loadTemporalStructureHoldoutProgrammeInventory(fixture.inventory, fixture.root, reference, fixture.plannedAt)
+			_, _, err := loadTemporalStructureHoldoutProgrammeInventory(fixture.inventory, fixture.root, ledger, fixture.plannedAt)
 			if err == nil || !strings.Contains(err.Error(), "repeats bounded filler") {
 				t.Fatalf("programme parent derived from filler error = %v", err)
 			}
@@ -211,18 +329,18 @@ func TestLoadTemporalStructureHoldoutProgrammeInventoryRejectsProgrammeParentDer
 func TestBuildTemporalStructureHoldoutPlanRejectsProgrammeParentWithReferenceLineage(t *testing.T) {
 	fixture := newTemporalStructureHoldoutFixture(t)
 	inventory := readStrictTestJSON[TemporalStructureHoldoutProgrammeInventory](t, fixture.inventory)
-	reference := readStrictTestJSON[fillerreference.Audit](t, fixture.referenceAudit)
-	inventory.Sources[0].Provenance.Authority = reference.Cases[0].Source
-	inventory.Sources[0].Provenance.ItemID = reference.Cases[0].SourceItemID
+	ledger := fixture.downloadLedger(t)
+	inventory.Sources[0].Provenance.Authority = ledger.Cases[0].Authority
+	inventory.Sources[0].Provenance.ItemID = ledger.Cases[0].ItemID
 	mutateTemporalStructureProgrammeRecord(t, fixture, &inventory, func(record *fillercorpus.Inventory) {
-		record.Cases[0].Authority = reference.Cases[0].Source
-		record.Cases[0].ItemID = reference.Cases[0].SourceItemID
-		record.Cases[0].CaseID = fillercorpus.CaseID(reference.Cases[0].Source, reference.Cases[0].SourceItemID)
+		record.Cases[0].Authority = ledger.Cases[0].Authority
+		record.Cases[0].ItemID = ledger.Cases[0].ItemID
+		record.Cases[0].CaseID = fillercorpus.CaseID(ledger.Cases[0].Authority, ledger.Cases[0].ItemID)
 		record.Captures[0].PredictedMediaBytes -= record.Cases[0].Representation.Bytes
 		record.Captures[0].MaxPredictedMediaBytes = record.Captures[0].PredictedMediaBytes
 		capture := record.Captures[0]
-		capture.CaptureID = fillercorpus.NewCaptureID(reference.Cases[0].Source, "", "programme")
-		capture.Authority = reference.Cases[0].Source
+		capture.CaptureID = fillercorpus.NewCaptureID(ledger.Cases[0].Authority, "", "programme")
+		capture.Authority = ledger.Cases[0].Authority
 		capture.PredictedMediaBytes = record.Cases[0].Representation.Bytes
 		capture.MaxPredictedMediaBytes = capture.PredictedMediaBytes
 		record.Captures = append(record.Captures, capture)
@@ -238,12 +356,13 @@ func TestBuildTemporalStructureHoldoutPlanRejectsProgrammeParentWithReferenceLin
 func TestLoadTemporalStructureHoldoutProgrammeInventoryRejectsProgrammeParentMatchingUnselectedReference(t *testing.T) {
 	fixture := newTemporalStructureHoldoutFixture(t)
 	inventory := readStrictTestJSON[TemporalStructureHoldoutProgrammeInventory](t, fixture.inventory)
-	reference := readStrictTestJSON[fillerreference.Audit](t, fixture.referenceAudit)
-	if len(reference.Cases) != 300 {
-		t.Fatalf("reference cases = %d, want 300", len(reference.Cases))
+	ledger := fixture.downloadLedger(t)
+	if len(ledger.Cases) != 300 {
+		t.Fatalf("ledger cases = %d, want 300", len(ledger.Cases))
 	}
-	reference.Cases[len(reference.Cases)-1].ContentSHA256 = inventory.Sources[0].SHA256
-	_, _, err := loadTemporalStructureHoldoutProgrammeInventory(fixture.inventory, fixture.root, reference, fixture.plannedAt)
+	ledger.Cases[len(ledger.Cases)-1].Authority = inventory.Sources[0].Provenance.Authority
+	ledger.Cases[len(ledger.Cases)-1].ItemID = inventory.Sources[0].Provenance.ItemID
+	_, _, err := loadTemporalStructureHoldoutProgrammeInventory(fixture.inventory, fixture.root, ledger, fixture.plannedAt)
 	if err == nil || !strings.Contains(err.Error(), "repeats bounded filler") {
 		t.Fatalf("unselected reference-lineage error = %v", err)
 	}

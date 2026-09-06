@@ -25,6 +25,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	quality := flags.String("media-quality", "", "full-decode media-quality report JSON")
 	suitability := flags.String("suitability", "", "two-family suitability comparison JSON")
 	referenceAudit := flags.String("reference-audit", "", "reference audit bound by the duplicate-family authority")
+	referenceDownloadLedger := flags.String("reference-download-ledger", "", "exact download ledger digest-bound by the reference audit")
 	families := flags.String("families", "", "duplicate-family audit JSON")
 	transitions := flags.String("transitions", "", "content-bound transition-edge authority JSON")
 	programmes := flags.String("programmes", "", "programme-parent inventory JSON")
@@ -37,8 +38,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	plannedAt, err := time.Parse(time.RFC3339, *plannedText)
-	if err != nil || *selection == "" || *evidence == "" || *evidenceMap == "" || *human == "" || *humanAttestation == "" || *quality == "" || *suitability == "" || *referenceAudit == "" || *families == "" || *transitions == "" || *programmes == "" || *sourceRoot == "" || (*seed == "") == (*seedFile == "") || *output == "" {
-		_, _ = fmt.Fprintln(stderr, "filler-temporal-structure-holdout-plan: selection, evidence, evidence map, human assessment, human attestation, media quality, suitability, reference audit, families, transitions, programmes, source root, private seed, fixed planning time, and output are required")
+	if err != nil || *selection == "" || *evidence == "" || *evidenceMap == "" || *human == "" || *humanAttestation == "" || *quality == "" || *suitability == "" || *referenceAudit == "" || *referenceDownloadLedger == "" || *families == "" || *transitions == "" || *programmes == "" || *sourceRoot == "" || (*seed == "") == (*seedFile == "") || *output == "" {
+		_, _ = fmt.Fprintln(stderr, "filler-temporal-structure-holdout-plan: selection, evidence, evidence map, human assessment, human attestation, media quality, suitability, reference audit, reference download ledger, families, transitions, programmes, source root, private seed, fixed planning time, and output are required")
 		return 2
 	}
 	seedValue := *seed
@@ -52,7 +53,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	result, err := fillerreview.BuildTemporalStructureHoldoutPlan(fillerreview.TemporalStructureHoldoutConfig{
 		SelectionPath: *selection, EvidenceManifestPath: *evidence, EvidencePrivateMapPath: *evidenceMap,
 		HumanAssessmentPath: *human, HumanAttestationPath: *humanAttestation, MediaQualityPath: *quality,
-		SuitabilityPath: *suitability, ReferenceAuditPath: *referenceAudit,
+		SuitabilityPath: *suitability, ReferenceAuditPath: *referenceAudit, ReferenceDownloadLedgerPath: *referenceDownloadLedger,
 		FamilyAuditPath: *families, TransitionAuthorityPath: *transitions, ProgrammeInventoryPath: *programmes,
 		SourceRoot: *sourceRoot, Seed: seedValue, PlannedAt: plannedAt.UTC(), OutputDir: *output,
 	})
