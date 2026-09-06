@@ -161,6 +161,34 @@ not an implication of image vision.
 
 ## Primary sources consulted
 
+### Integration recheck — 2026-09-06 UTC
+
+The named API claims were rechecked against installed Xcode `MacOSX26.5.sdk`
+and `iPhoneOS26.5.sdk` headers during #1116 integration. Header paths are relative
+to each SDK's `System/Library/Frameworks/<framework>.framework/Headers/`:
+
+- `SensitiveContentAnalysis/SCSensitivityAnalyzer.h:15-63` confirms policy gating,
+  image/local-video methods, macOS 14/iOS 17 availability, progress, and completion.
+  `SCSensitivityAnalysis.h:12-18` exposes the Mac result's Boolean sensitivity field;
+  it provides no source interval or category taxonomy.
+- `SensitiveContentAnalysis/SCVideoStreamAnalyzer.h:28-85` confirms iOS 26-only
+  stream support, macOS unavailability, and the client-entitlement requirement.
+- `Speech/SFSpeechRecognitionRequest.h:60-83,123-133` confirms recorded audio input
+  and conditional on-device recognition. `SFTranscriptionSegment.h:19-61` confirms
+  text, confidence, timestamps, and durations.
+- `Vision/VNClassifyImageRequest.h:20-34` and `VNRecognizeTextRequest.h:25-31`
+  describe image classification and text recognition, not complete safety coverage.
+
+Apple's [machine-readable framework documentation](https://developer.apple.com/tutorials/data/documentation/sensitivecontentanalysis.json)
+also identifies the image/video APIs and authorization entitlement; it is an
+accessible first-party counterpart when the HTML documentation requires JavaScript.
+This closes the API-documentation verification gap, not the runtime gate:
+entitlement acquisition, enabled policy, device/locale availability, representative
+recall, and certification remain unproven. No entitlement request, model run,
+private-media analysis, or admission occurred in this recheck.
+
+### Original research sources
+
 - Apple, [Sensitive Content Analysis](https://developer.apple.com/documentation/sensitivecontentanalysis/),
   [SCSensitivityAnalyzer](https://developer.apple.com/documentation/sensitivecontentanalysis/scsensitivityanalyzer),
   and [video-file analysis](https://developer.apple.com/documentation/sensitivecontentanalysis/scsensitivityanalyzer/analyzevideofile%3Acompletionhandler%3A?language=objc).
