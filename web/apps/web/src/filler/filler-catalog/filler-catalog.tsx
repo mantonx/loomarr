@@ -5,7 +5,7 @@ import { isOk, unwrap } from "@loomarr/api/unwrap";
 import { formatClipDuration, pluralize } from "@loomarr/core/format";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { LayoutGrid, List } from "lucide-react";
-import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/loomarr/feedback/empty-state";
 import { ErrorState } from "@/components/loomarr/feedback/error-state";
@@ -165,6 +165,17 @@ const FillerCatalog = ({ isAdmin, onEditTags, onProposePull }: FillerCatalogProp
     parent: parentHash,
   } = useSearch({ strict: false }) as Partial<FillerSearch>;
   const filtered = Boolean(q || kind || audience || taxon || unclassified || withoutAxis || untagged);
+  const resultScope = JSON.stringify({
+    q,
+    kind,
+    audience,
+    taxon,
+    unclassified,
+    withoutAxis,
+    untagged,
+    parentHash,
+    page,
+  });
   // ⚠ **Every filter change RESETS the page, and this is the single highest-risk line on the
   // page** (§10 V51d). `setFilters` merges blindly; without the reset, typing in the search box
   // while on page 7 lands on an empty page 7 of a two-page result and renders "No clips match"
@@ -252,6 +263,7 @@ const FillerCatalog = ({ isAdmin, onEditTags, onProposePull }: FillerCatalogProp
   // transient intent about the rows in front of you, and a shared link that carried it would
   // hand someone else a pre-armed destructive action over clips they never chose.
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const previousResultScope = useRef(resultScope);
   const toggleSelected = (hash: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -259,6 +271,15 @@ const FillerCatalog = ({ isAdmin, onEditTags, onProposePull }: FillerCatalogProp
       return next;
     });
   const clearSelection = () => setSelected(new Set());
+  // Selection is intent over the visible result page. Route navigation can change that page
+  // without going through a control here, so observe the result-defining search state rather
+  // than clearing only in individual filter handlers. View is intentionally excluded: it changes
+  // presentation, not the rows on this page.
+  useEffect(() => {
+    if (previousResultScope.current === resultScope) return;
+    previousResultScope.current = resultScope;
+    setSelected(new Set());
+  }, [resultScope]);
   // Paging (§10 V51d).
   //
   // ⚠ `replace: false`, unlike `setFilters`: paging IS navigation, so the back button should walk
