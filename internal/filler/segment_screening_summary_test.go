@@ -70,12 +70,12 @@ func TestSegmentScreeningSummaryDistinguishesNotScreenedFromUnavailable(t *testi
 	})
 
 	t.Run("attached evidence missing", func(t *testing.T) {
-		service, mediaPath, subject, aggregate := segmentScreeningSummaryFixture(t, true)
+		_, mediaPath, subject, aggregate := segmentScreeningSummaryFixture(t, true)
 		missing, err := NewFileSegmentScreeningEvidenceRepository(filepath.Join(t.TempDir(), "missing"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		service, err = NewSegmentScreeningSummaryService(missing)
+		service, err := NewSegmentScreeningSummaryService(missing)
 		if err != nil {
 			t.Fatal(err)
 		}
